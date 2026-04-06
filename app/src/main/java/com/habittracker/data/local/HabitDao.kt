@@ -9,6 +9,7 @@ import androidx.room.Update
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
+import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.MonthlyStatRow
@@ -19,6 +20,31 @@ import java.time.LocalDate
 
 @Dao
 interface HabitDao {
+    @Query(
+        """
+        SELECT * FROM lotto_draw
+        WHERE (:roundNo IS NULL OR round_no = :roundNo)
+        ORDER BY round_no DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>>
+
+    @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
+    suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
+
+    @Query("SELECT MAX(round_no) FROM lotto_draw")
+    suspend fun getLatestLottoRoundNo(): Int?
+
+    @Query("SELECT COUNT(*) FROM lotto_draw")
+    suspend fun getLottoDrawCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertLottoDraws(draws: List<LottoDrawEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLottoDraw(draw: LottoDrawEntity)
+
     @Query(
         """
         SELECT * FROM task_item_master

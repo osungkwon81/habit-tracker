@@ -7,7 +7,9 @@ import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
+import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
+import com.habittracker.data.lotto.LottoSeedData
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
@@ -20,6 +22,9 @@ class HabitRepository(
     private val database: HabitTrackerDatabase,
     private val habitDao: HabitDao,
 ) {
+    fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
+        habitDao.observeLottoDraws(roundNo, limit)
+
     fun observeActiveTaskItems(): Flow<List<TaskItemMasterEntity>> = habitDao.observeActiveTaskItems()
 
     fun observeMonthlySummaries(startDate: LocalDate, endDate: LocalDate): Flow<List<RecordSummaryRow>> =
@@ -39,6 +44,36 @@ class HabitRepository(
 
     suspend fun getRecordDetails(recordDate: LocalDate): List<RecordDetailRow> =
         habitDao.getRecordDetails(recordDate)
+
+    suspend fun getLatestLottoRoundNo(): Int? =
+        habitDao.getLatestLottoRoundNo()
+
+    suspend fun getAllLottoHistory(): List<List<Int>> =
+        habitDao.getAllLottoDrawsDesc().map(LottoDrawEntity::numbers)
+
+    suspend fun seedLottoDrawsIfEmpty() {
+        if (habitDao.getLottoDrawCount() > 0) return
+        habitDao.insertLottoDraws(
+            LottoSeedData.draws.map { seed ->
+                LottoDrawEntity.from(roundNo = seed.roundNo, numbers = seed.numbers.sorted())
+            },
+        )
+    }
+
+    suspend fun saveLottoDraw(roundNo: Int?, numbers: List<Int>): Int {
+        require(roundNo != null && roundNo > 0) { "회차 번호를 입력해 주세요." }
+        require(numbers.size == 6) { "번호 6개를 모두 입력해 주세요." }
+
+        val sanitizedNumbers = numbers.map { number ->
+            require(number in 1..45) { "번호는 1부터 45 사이여야 합니다." }
+            number
+        }.sorted()
+
+        require(sanitizedNumbers.distinct().size == 6) { "번호는 중복 없이 입력해 주세요." }
+
+        habitDao.upsertLottoDraw(LottoDrawEntity.from(roundNo = roundNo, numbers = sanitizedNumbers))
+        return roundNo
+    }
 
     suspend fun seedDefaultTaskItemsIfEmpty() {
         val defaultTaskItems = listOf(

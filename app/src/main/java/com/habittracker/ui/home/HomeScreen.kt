@@ -117,7 +117,7 @@ private fun QuickMenuSection(onOpenDiary: () -> Unit, onOpenStats: () -> Unit, o
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             QuickMenuCard(title = "\uAD00\uB9AC\uC790", subtitle = "\uC6B4\uB3D9 \uC885\uBAA9\uACFC \uB8E8\uD2F4 \uCD94\uAC00", modifier = Modifier.weight(1f), onClick = onOpenAdmin)
-            QuickMenuCard(title = "\uB85C\uB610", subtitle = "\uCD94\uCCA8 \uBA54\uB274 \uC790\uB9AC\uB9CC \uBA3C\uC800 \uC900\uBE44", modifier = Modifier.weight(1f), onClick = onOpenLotto)
+            QuickMenuCard(title = "\uB85C\uB610", subtitle = "\uC0DD\uC131, \uD68C\uCC28 \uC785\uB825, \uC870\uD68C", modifier = Modifier.weight(1f), onClick = onOpenLotto)
         }
     }
 }

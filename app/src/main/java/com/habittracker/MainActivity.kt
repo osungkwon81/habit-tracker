@@ -27,6 +27,7 @@ import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
 import com.habittracker.ui.lotto.LottoScreen
+import com.habittracker.ui.lotto.LottoViewModel
 import com.habittracker.ui.navigation.AppDestination
 import com.habittracker.ui.stats.MonthlyStatsScreen
 import com.habittracker.ui.stats.MonthlyStatsViewModel
@@ -116,7 +117,8 @@ private fun HabitTrackerApp() {
                 AdminScreen(viewModel = viewModel)
             }
             composable(AppDestination.LOTTO.route) {
-                LottoScreen()
+                val viewModel: LottoViewModel = viewModel(factory = AppViewModelFactory())
+                LottoScreen(viewModel = viewModel)
             }
         }
     }

@@ -9,6 +9,7 @@ import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemAttachmentEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
+import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.TaskItemAttachmentEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 
@@ -20,8 +21,9 @@ import com.habittracker.data.local.entity.TaskItemMasterEntity
         TaskItemAttachmentEntity::class,
         DailyRecordItemAttachmentEntity::class,
         DailyDiaryEntity::class,
+        LottoDrawEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
