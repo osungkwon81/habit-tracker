@@ -1,4 +1,4 @@
-package com.habittracker
+﻿package com.habittracker
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -26,8 +26,12 @@ import com.habittracker.ui.entry.DailyEntryScreen
 import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
+import com.habittracker.ui.learning.LearningScreen
+import com.habittracker.ui.learning.LearningViewModel
 import com.habittracker.ui.lotto.LottoScreen
 import com.habittracker.ui.lotto.LottoViewModel
+import com.habittracker.ui.memo.MemoScreen
+import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.navigation.AppDestination
 import com.habittracker.ui.stats.MonthlyStatsScreen
 import com.habittracker.ui.stats.MonthlyStatsViewModel
@@ -52,6 +56,7 @@ private fun HabitTrackerApp() {
         AppDestination.HOME,
         AppDestination.ENTRY,
         AppDestination.DIARY,
+        AppDestination.MEMO,
         AppDestination.STATS,
         AppDestination.ADMIN,
     )
@@ -91,6 +96,8 @@ private fun HabitTrackerApp() {
                     viewModel = viewModel,
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
                     onOpenDiary = { navController.navigate(AppDestination.DIARY.route) },
+                    onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
+                    onOpenLearning = { navController.navigate(AppDestination.LEARNING.route) },
                     onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                     onOpenAdmin = { navController.navigate(AppDestination.ADMIN.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
@@ -107,6 +114,14 @@ private fun HabitTrackerApp() {
             composable(AppDestination.DIARY.route) {
                 val viewModel: DiaryViewModel = viewModel(factory = AppViewModelFactory())
                 DiaryScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.MEMO.route) {
+                val viewModel: MemoViewModel = viewModel(factory = AppViewModelFactory())
+                MemoScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.LEARNING.route) {
+                val viewModel: LearningViewModel = viewModel(factory = AppViewModelFactory())
+                LearningScreen(viewModel = viewModel)
             }
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = AppViewModelFactory())

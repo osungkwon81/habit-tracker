@@ -1,6 +1,7 @@
-package com.habittracker.data.local
+﻿package com.habittracker.data.local
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -11,7 +12,9 @@ import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
+import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
+import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.MonthlyStatRow
@@ -61,6 +64,77 @@ interface HabitDao {
 
     @Query(
         """
+        SELECT * FROM memo_note
+        ORDER BY updated_at DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeMemoNotes(limit: Int): Flow<List<MemoNoteEntity>>
+
+    @Query(
+        """
+        SELECT * FROM memo_note
+        WHERE title LIKE '%' || :query || '%'
+           OR content LIKE '%' || :query || '%'
+        ORDER BY updated_at DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeMemoNotesByQuery(query: String, limit: Int): Flow<List<MemoNoteEntity>>
+
+    @Query("SELECT * FROM memo_note WHERE id = :memoId LIMIT 1")
+    suspend fun getMemoNoteById(memoId: Long): MemoNoteEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMemoNote(memoNote: MemoNoteEntity): Long
+
+    @Update
+    suspend fun updateMemoNote(memoNote: MemoNoteEntity)
+
+    @Query(
+        """
+        SELECT * FROM vocabulary_word
+        ORDER BY updated_at DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeVocabularyWords(limit: Int): Flow<List<VocabularyWordEntity>>
+
+    @Query(
+        """
+        SELECT * FROM vocabulary_word
+        WHERE word LIKE '%' || :query || '%'
+           OR meaning LIKE '%' || :query || '%'
+           OR COALESCE(pronunciation, '') LIKE '%' || :query || '%'
+        ORDER BY updated_at DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeVocabularyWordsByQuery(query: String, limit: Int): Flow<List<VocabularyWordEntity>>
+
+    @Query("SELECT * FROM vocabulary_word ORDER BY updated_at DESC, id DESC")
+    suspend fun getAllVocabularyWords(): List<VocabularyWordEntity>
+
+    @Query("SELECT * FROM vocabulary_word WHERE id = :wordId LIMIT 1")
+    suspend fun getVocabularyWordById(wordId: Long): VocabularyWordEntity?
+
+    @Query("SELECT COUNT(*) FROM vocabulary_word WHERE word = :word AND meaning = :meaning AND (:excludeId IS NULL OR id != :excludeId)")
+    suspend fun countDuplicateVocabulary(word: String, meaning: String, excludeId: Long?): Int
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertVocabularyWord(word: VocabularyWordEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertVocabularyWords(words: List<VocabularyWordEntity>): List<Long>
+
+    @Update
+    suspend fun updateVocabularyWord(word: VocabularyWordEntity)
+
+    @Delete
+    suspend fun deleteVocabularyWord(word: VocabularyWordEntity)
+
+    @Query(
+        """
         SELECT * FROM task_item_master
         WHERE is_active = 1
         ORDER BY sort_order ASC, name ASC
@@ -106,6 +180,34 @@ interface HabitDao {
 
     @Query("SELECT * FROM daily_diary WHERE diary_date = :diaryDate LIMIT 1")
     suspend fun getDiaryByDate(diaryDate: LocalDate): DailyDiaryEntity?
+
+    @Query(
+        """
+        SELECT diary_date AS diary_date,
+               title AS title,
+               weather AS weather,
+               SUBSTR(body, 1, 80) AS preview
+        FROM daily_diary
+        ORDER BY diary_date DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeDiaryList(limit: Int): Flow<List<DiarySearchRow>>
+
+    @Query(
+        """
+        SELECT diary_date AS diary_date,
+               title AS title,
+               weather AS weather,
+               SUBSTR(body, 1, 80) AS preview
+        FROM daily_diary
+        WHERE title LIKE '%' || :query || '%'
+           OR body LIKE '%' || :query || '%'
+        ORDER BY diary_date DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeDiaryListByQuery(query: String, limit: Int): Flow<List<DiarySearchRow>>
 
     @Query(
         """

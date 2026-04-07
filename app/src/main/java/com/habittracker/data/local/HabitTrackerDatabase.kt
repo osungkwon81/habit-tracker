@@ -1,4 +1,4 @@
-package com.habittracker.data.local
+﻿package com.habittracker.data.local
 
 import android.content.Context
 import androidx.room.Database
@@ -11,8 +11,10 @@ import com.habittracker.data.local.entity.DailyRecordItemAttachmentEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
+import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.TaskItemAttachmentEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
+import com.habittracker.data.local.entity.VocabularyWordEntity
 
 @Database(
     entities = [
@@ -24,8 +26,10 @@ import com.habittracker.data.local.entity.TaskItemMasterEntity
         DailyDiaryEntity::class,
         LottoDrawEntity::class,
         LottoTicketEntity::class,
+        MemoNoteEntity::class,
+        VocabularyWordEntity::class,
     ],
-    version = 5,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -42,3 +46,4 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
         }
     }
 }
+

@@ -54,6 +54,8 @@ fun HomeScreen(
     viewModel: HomeViewModel,
     onOpenRecord: (LocalDate) -> Unit,
     onOpenDiary: () -> Unit,
+    onOpenMemo: () -> Unit,
+    onOpenLearning: () -> Unit,
     onOpenStats: () -> Unit,
     onOpenAdmin: () -> Unit,
     onOpenLotto: () -> Unit,
@@ -92,7 +94,15 @@ fun HomeScreen(
                 )
             }
         }
-        item { QuickMenuSection(onOpenDiary = onOpenDiary, onOpenStats = onOpenStats, onOpenAdmin = onOpenAdmin, onOpenLotto = onOpenLotto) }
+        item {
+            QuickMenuSection(
+                onOpenDiary = onOpenDiary,
+                onOpenMemo = onOpenMemo,
+                onOpenRecord = { selectedDate?.let(onOpenRecord) ?: onOpenRecord(LocalDate.now()) },
+                onOpenLotto = onOpenLotto,
+            )
+        }
+        item { LearningSpotlightSection(onOpenLearning = onOpenLearning) }
         item {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = viewModel::goToPreviousMonth) { Text("이전") }
@@ -124,6 +134,21 @@ fun HomeScreen(
 }
 
 @Composable
+private fun LearningSpotlightSection(onOpenLearning: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenLearning),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = "외국어 학습", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(text = "단어 관리, 암기 카드, 시험, 통계를 한 번에 관리합니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text = "학습 시작", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
 private fun CalendarLegend() {
     Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -146,16 +171,16 @@ private fun LegendChip(label: String, color: Color, modifier: Modifier = Modifie
 }
 
 @Composable
-private fun QuickMenuSection(onOpenDiary: () -> Unit, onOpenStats: () -> Unit, onOpenAdmin: () -> Unit, onOpenLotto: () -> Unit) {
+private fun QuickMenuSection(onOpenDiary: () -> Unit, onOpenMemo: () -> Unit, onOpenRecord: () -> Unit, onOpenLotto: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(text = "빠른 메뉴", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            QuickMenuCard(title = "일기장", subtitle = "사진과 날씨를 함께 기록", modifier = Modifier.weight(1f), onClick = onOpenDiary)
-            QuickMenuCard(title = "통계", subtitle = "월별 비교 확인", modifier = Modifier.weight(1f), onClick = onOpenStats)
+            QuickMenuCard(title = "메모", subtitle = "메모 목록과 작성", modifier = Modifier.weight(1f), onClick = onOpenMemo)
+            QuickMenuCard(title = "일기", subtitle = "사진과 날씨 기록", modifier = Modifier.weight(1f), onClick = onOpenDiary)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            QuickMenuCard(title = "관리자", subtitle = "운동 종목과 루틴 추가", modifier = Modifier.weight(1f), onClick = onOpenAdmin)
-            QuickMenuCard(title = "로또", subtitle = "번호 생성과 이력 관리", modifier = Modifier.weight(1f), onClick = onOpenLotto)
+            QuickMenuCard(title = "로또", subtitle = "번호 생성과 이력", modifier = Modifier.weight(1f), onClick = onOpenLotto)
+            QuickMenuCard(title = "기록", subtitle = "선택 날짜 기록 작성", modifier = Modifier.weight(1f), onClick = onOpenRecord)
         }
     }
 }

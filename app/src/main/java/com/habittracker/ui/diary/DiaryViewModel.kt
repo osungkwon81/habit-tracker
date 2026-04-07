@@ -1,4 +1,4 @@
-package com.habittracker.ui.diary
+﻿package com.habittracker.ui.diary
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,6 +15,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
+private const val diaryListMode = "list"
+private const val diaryEditorMode = "editor"
+private const val diaryPageSize = 20
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class DiaryViewModel(
     private val repository: HabitRepository,
@@ -22,34 +26,52 @@ class DiaryViewModel(
     private val selectedDate = MutableStateFlow(LocalDate.now())
     private val message = MutableStateFlow<String?>(null)
     private val searchQuery = MutableStateFlow("")
-    private val searchResults = MutableStateFlow<List<DiarySearchRow>>(emptyList())
+    private val screenMode = MutableStateFlow(diaryListMode)
 
-    val uiState: StateFlow<DiaryUiState> = selectedDate
-        .flatMapLatest { date ->
-            combine(flow { emit(repository.getDiary(date)) }, message, searchQuery, searchResults) { diary, statusMessage, query, results ->
-                DiaryUiState(
-                    diaryDate = date,
-                    title = diary?.title.orEmpty(),
-                    body = diary?.body.orEmpty(),
-                    weather = diary?.weather ?: "맑음",
-                    imageUris = diary?.imageUris?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
-                    statusMessage = statusMessage,
-                    searchQuery = query,
-                    searchResults = results,
-                )
-            }
+    private val diaryListFlow = searchQuery.flatMapLatest { query ->
+        if (query.isBlank()) {
+            repository.observeDiaryList(diaryPageSize)
+        } else {
+            repository.observeDiaryListByQuery(query, diaryPageSize)
         }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = DiaryUiState(),
+    }
+
+    val uiState: StateFlow<DiaryUiState> = combine(
+        selectedDate.flatMapLatest { date -> flow { emit(repository.getDiary(date)) } },
+        message,
+        searchQuery,
+        diaryListFlow,
+        screenMode,
+    ) { values ->
+        val diary = values[0] as com.habittracker.data.local.entity.DailyDiaryEntity?
+        val statusMessage = values[1] as String?
+        val query = values[2] as String
+        val diaryList = values[3] as List<DiarySearchRow>
+        val mode = values[4] as String
+
+        DiaryUiState(
+            diaryDate = diary?.diaryDate ?: selectedDate.value,
+            title = diary?.title.orEmpty(),
+            body = diary?.body.orEmpty(),
+            weather = diary?.weather ?: "맑음",
+            imageUris = diary?.imageUris?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
+            statusMessage = statusMessage,
+            searchQuery = query,
+            searchResults = diaryList,
+            screenMode = mode,
         )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = DiaryUiState(),
+    )
 
     fun loadDiary(rawDate: String) {
         runCatching { LocalDate.parse(rawDate) }
             .onSuccess {
                 selectedDate.value = it
                 message.value = null
+                screenMode.value = diaryEditorMode
             }
             .onFailure {
                 message.value = "날짜 형식은 YYYY-MM-DD로 입력해 주세요."
@@ -61,27 +83,24 @@ class DiaryViewModel(
     }
 
     fun searchDiaries() {
-        viewModelScope.launch {
-            val trimmedQuery = searchQuery.value.trim()
-            if (trimmedQuery.isBlank()) {
-                searchResults.value = emptyList()
-                message.value = null
-                return@launch
-            }
-            runCatching {
-                repository.searchDiaries(trimmedQuery)
-            }.onSuccess { results ->
-                searchResults.value = results
-                message.value = if (results.isEmpty()) "검색 결과가 없습니다." else "${results.size}건의 일기를 찾았습니다."
-            }.onFailure { error ->
-                message.value = error.message ?: "일기 검색에 실패했습니다."
-            }
-        }
+        message.value = null
     }
 
     fun openSearchResult(diaryDate: LocalDate) {
         selectedDate.value = diaryDate
         message.value = null
+        screenMode.value = diaryEditorMode
+    }
+
+    fun showList() {
+        screenMode.value = diaryListMode
+        message.value = null
+    }
+
+    fun startNewDiary() {
+        selectedDate.value = LocalDate.now()
+        message.value = null
+        screenMode.value = diaryEditorMode
     }
 
     fun saveDiary(rawDate: String, title: String, body: String, weather: String, imageUris: List<String>) {
@@ -91,6 +110,7 @@ class DiaryViewModel(
                 repository.saveDiary(diaryDate = diaryDate, title = title, body = body, weather = weather, imageUris = imageUris)
                 selectedDate.value = diaryDate
             }.onSuccess {
+                screenMode.value = diaryListMode
                 message.value = "일기를 저장했습니다."
             }.onFailure { error ->
                 message.value = error.message ?: "일기 저장에 실패했습니다."
@@ -108,4 +128,5 @@ data class DiaryUiState(
     val statusMessage: String? = null,
     val searchQuery: String = "",
     val searchResults: List<DiarySearchRow> = emptyList(),
+    val screenMode: String = diaryListMode,
 )

@@ -1,4 +1,4 @@
-package com.habittracker.data.repository
+﻿package com.habittracker.data.repository
 
 import androidx.room.withTransaction
 import com.habittracker.data.local.HabitDao
@@ -9,7 +9,9 @@ import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
+import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
+import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.MonthlyStatRow
@@ -17,6 +19,7 @@ import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
 import kotlinx.coroutines.flow.Flow
+import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -29,6 +32,18 @@ class HabitRepository(
 
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTickets(limit)
+
+    fun observeMemoNotes(limit: Int): Flow<List<MemoNoteEntity>> =
+        habitDao.observeMemoNotes(limit)
+
+    fun observeMemoNotesByQuery(query: String, limit: Int): Flow<List<MemoNoteEntity>> =
+        habitDao.observeMemoNotesByQuery(query.trim(), limit)
+
+    fun observeVocabularyWords(limit: Int): Flow<List<VocabularyWordEntity>> =
+        habitDao.observeVocabularyWords(limit)
+
+    fun observeVocabularyWordsByQuery(query: String, limit: Int): Flow<List<VocabularyWordEntity>> =
+        habitDao.observeVocabularyWordsByQuery(query.trim(), limit)
 
     fun observeActiveTaskItems(): Flow<List<TaskItemMasterEntity>> = habitDao.observeActiveTaskItems()
 
@@ -46,6 +61,29 @@ class HabitRepository(
 
     suspend fun getDiary(recordDate: LocalDate): DailyDiaryEntity? =
         habitDao.getDiaryByDate(recordDate)
+
+    fun observeDiaryList(limit: Int): Flow<List<DiarySearchRow>> =
+        habitDao.observeDiaryList(limit)
+
+    fun observeDiaryListByQuery(query: String, limit: Int): Flow<List<DiarySearchRow>> =
+        habitDao.observeDiaryListByQuery(query.trim(), limit)
+
+    suspend fun getMemoNote(memoId: Long): MemoNoteEntity? =
+        habitDao.getMemoNoteById(memoId)
+
+    suspend fun getVocabularyWord(wordId: Long): VocabularyWordEntity? =
+        habitDao.getVocabularyWordById(wordId)
+
+    suspend fun getAllVocabularyWords(): List<VocabularyWordEntity> =
+        habitDao.getAllVocabularyWords()
+
+    suspend fun verifyMemoPassword(memoId: Long, password: String): MemoNoteEntity {
+        val memoNote = habitDao.getMemoNoteById(memoId) ?: throw IllegalArgumentException("메모를 찾을 수 없습니다.")
+        require(memoNote.isLocked) { "잠금 메모가 아닙니다." }
+        require(password.matches(Regex("\\d{4}"))) { "비밀번호는 4자리 숫자로 입력해 주세요." }
+        require(memoNote.passwordHash == hashPin(password)) { "비밀번호가 올바르지 않습니다." }
+        return memoNote
+    }
 
     suspend fun searchDiaries(query: String, limit: Int = 20): List<DiarySearchRow> =
         habitDao.searchDiaries(query.trim(), limit)
@@ -97,6 +135,165 @@ class HabitRepository(
                 note = note?.trim()?.takeIf(String::isNotEmpty),
             ),
         )
+    }
+
+    suspend fun saveMemoNote(memoId: Long?, title: String, content: String, isLocked: Boolean, password: String?) {
+        val sanitizedTitle = title.trim()
+        val sanitizedContent = content.trim()
+        require(sanitizedTitle.isNotEmpty() || sanitizedContent.isNotEmpty()) { "제목 또는 내용을 입력해 주세요." }
+
+        val passwordHash = if (isLocked) {
+            require(!password.isNullOrBlank()) { "잠금 메모는 4자리 비밀번호를 입력해 주세요." }
+            require(password.matches(Regex("\\d{4}"))) { "비밀번호는 4자리 숫자로 입력해 주세요." }
+            hashPin(password)
+        } else {
+            null
+        }
+
+        val now = LocalDateTime.now()
+        val existingMemo = if (memoId != null) {
+            habitDao.getMemoNoteById(memoId)
+        } else {
+            null
+        }
+        if (existingMemo == null) {
+            habitDao.insertMemoNote(
+                MemoNoteEntity(
+                    title = sanitizedTitle.ifEmpty { "제목 없음" },
+                    content = sanitizedContent,
+                    isLocked = isLocked,
+                    passwordHash = passwordHash,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+        } else {
+            habitDao.updateMemoNote(
+                existingMemo.copy(
+                    title = sanitizedTitle.ifEmpty { "제목 없음" },
+                    content = sanitizedContent,
+                    isLocked = isLocked,
+                    passwordHash = passwordHash,
+                    updatedAt = now,
+                ),
+            )
+        }
+    }
+
+    suspend fun saveVocabularyWord(wordId: Long?, word: String, meaning: String, pronunciation: String?) {
+        val sanitizedWord = word.trim()
+        val sanitizedMeaning = meaning.trim()
+        val sanitizedPronunciation = pronunciation?.trim()?.takeIf(String::isNotEmpty)
+        require(sanitizedWord.isNotEmpty()) { "단어를 입력해 주세요." }
+        require(sanitizedMeaning.isNotEmpty()) { "뜻을 입력해 주세요." }
+        require(habitDao.countDuplicateVocabulary(sanitizedWord, sanitizedMeaning, wordId) == 0) { "이미 같은 단어와 뜻이 등록되어 있습니다." }
+
+        val now = LocalDateTime.now()
+        val existingWord = if (wordId != null) habitDao.getVocabularyWordById(wordId) else null
+        if (existingWord == null) {
+            habitDao.insertVocabularyWord(
+                VocabularyWordEntity(
+                    word = sanitizedWord,
+                    meaning = sanitizedMeaning,
+                    pronunciation = sanitizedPronunciation,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+        } else {
+            habitDao.updateVocabularyWord(
+                existingWord.copy(
+                    word = sanitizedWord,
+                    meaning = sanitizedMeaning,
+                    pronunciation = sanitizedPronunciation,
+                    updatedAt = now,
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteVocabularyWord(wordId: Long) {
+        val existingWord = habitDao.getVocabularyWordById(wordId) ?: throw IllegalArgumentException("삭제할 단어를 찾을 수 없습니다.")
+        habitDao.deleteVocabularyWord(existingWord)
+    }
+
+    suspend fun bulkInsertVocabulary(rawInput: String): BulkVocabularyInsertResult {
+        val lines = rawInput.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+        require(lines.isNotEmpty()) { "등록할 단어를 입력해 주세요." }
+
+        val now = LocalDateTime.now()
+        val entries = lines.map { line ->
+            val parts = line.split('\t', ',', '|').map(String::trim)
+            require(parts.size >= 2) { "대량 등록 형식은 단어,뜻,발음 입니다." }
+            val word = parts[0]
+            val meaning = parts[1]
+            val pronunciation = parts.getOrNull(2)?.takeIf(String::isNotBlank)
+            require(word.isNotBlank() && meaning.isNotBlank()) { "단어와 뜻은 비워둘 수 없습니다." }
+            VocabularyWordEntity(
+                word = word,
+                meaning = meaning,
+                pronunciation = pronunciation,
+                createdAt = now,
+                updatedAt = now,
+            )
+        }
+
+        val insertResults = habitDao.insertVocabularyWords(entries)
+        val insertedCount = insertResults.count { it > 0L }
+        val duplicateCount = insertResults.size - insertedCount
+        return BulkVocabularyInsertResult(insertedCount = insertedCount, duplicateCount = duplicateCount)
+    }
+
+    suspend fun recordVocabularyExposure(wordId: Long, isCorrect: Boolean) {
+        recordVocabularyStudySession(
+            records = listOf(VocabularyStudyRecord(wordId = wordId, isCorrect = isCorrect)),
+        )
+    }
+
+    suspend fun recordVocabularyStudySession(
+        records: List<VocabularyStudyRecord>,
+        flashcardSeconds: Int = 0,
+        testSeconds: Int = 0,
+    ) {
+        if (records.isEmpty()) return
+
+        val flashcardShares = distributeStudySeconds(records.size, flashcardSeconds)
+        val testShares = distributeStudySeconds(records.size, testSeconds)
+        val aggregates = linkedMapOf<Long, VocabularyStudyAggregate>()
+
+        records.forEachIndexed { index, record ->
+            val aggregate = aggregates.getOrPut(record.wordId) { VocabularyStudyAggregate() }
+            when (record.isCorrect) {
+                true -> {
+                    aggregate.correctCount += 1
+                    aggregate.exposureCount += 1
+                }
+                false -> {
+                    aggregate.wrongCount += 1
+                    aggregate.exposureCount += 1
+                }
+                null -> Unit
+            }
+            aggregate.flashcardStudySeconds += flashcardShares[index]
+            aggregate.testStudySeconds += testShares[index]
+        }
+
+        val now = LocalDateTime.now()
+        database.withTransaction {
+            aggregates.forEach { (wordId, aggregate) ->
+                val existingWord = habitDao.getVocabularyWordById(wordId) ?: return@forEach
+                habitDao.updateVocabularyWord(
+                    existingWord.copy(
+                        correctCount = existingWord.correctCount + aggregate.correctCount,
+                        wrongCount = existingWord.wrongCount + aggregate.wrongCount,
+                        exposureCount = existingWord.exposureCount + aggregate.exposureCount,
+                        flashcardStudySeconds = existingWord.flashcardStudySeconds + aggregate.flashcardStudySeconds,
+                        testStudySeconds = existingWord.testStudySeconds + aggregate.testStudySeconds,
+                        updatedAt = now,
+                    ),
+                )
+            }
+        }
     }
 
     suspend fun seedDefaultTaskItemsIfEmpty() {
@@ -199,7 +396,26 @@ class HabitRepository(
             }
         }
     }
+
+    private fun distributeStudySeconds(itemCount: Int, totalSeconds: Int): List<Int> {
+        if (itemCount <= 0 || totalSeconds <= 0) return List(itemCount.coerceAtLeast(0)) { 0 }
+        val baseSeconds = totalSeconds / itemCount
+        val remainder = totalSeconds % itemCount
+        return List(itemCount) { index ->
+            baseSeconds + if (index < remainder) 1 else 0
+        }
+    }
+
+    private fun hashPin(pin: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(pin.toByteArray()).joinToString(separator = "") { byte -> "%02x".format(byte) }
+    }
 }
+
+data class BulkVocabularyInsertResult(
+    val insertedCount: Int,
+    val duplicateCount: Int,
+)
 
 data class DailyRecordItemInput(
     val taskItemMasterId: Long,
@@ -214,3 +430,16 @@ data class DailyRecordItemInput(
         return checked || booleanValue == true || (numberValue != null && numberValue > 0) || (durationMinutes != null && durationMinutes > 0) || !textValue.isNullOrBlank() || !note.isNullOrBlank()
     }
 }
+
+data class VocabularyStudyRecord(
+    val wordId: Long,
+    val isCorrect: Boolean?,
+)
+
+private data class VocabularyStudyAggregate(
+    var correctCount: Int = 0,
+    var wrongCount: Int = 0,
+    var exposureCount: Int = 0,
+    var flashcardStudySeconds: Int = 0,
+    var testStudySeconds: Int = 0,
+)
