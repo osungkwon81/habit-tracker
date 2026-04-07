@@ -1,4 +1,4 @@
-package com.habittracker.ui.home
+﻿package com.habittracker.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.model.DiarySummaryRow
+import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -73,6 +74,10 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(selectedDate) {
+        viewModel.selectDate(selectedDate)
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -80,7 +85,11 @@ fun HomeScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(text = "습관 트래커", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(text = "오늘 날짜는 강조되고, 내용을 입력한 날짜는 색상으로 구분됩니다.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    text = "오늘 날짜를 강조하고, 입력된 내용은 날짜 색상으로 구분합니다.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         item { QuickMenuSection(onOpenDiary = onOpenDiary, onOpenStats = onOpenStats, onOpenAdmin = onOpenAdmin, onOpenLotto = onOpenLotto) }
@@ -107,6 +116,7 @@ fun HomeScreen(
                 selectedDate = selectedDate,
                 summary = selectedDate?.let(uiState.summaries::get),
                 diarySummary = selectedDate?.let(uiState.diarySummaries::get),
+                recordDetails = uiState.selectedRecordDetails,
                 onOpenRecord = onOpenRecord,
             )
         }
@@ -173,7 +183,13 @@ private fun CalendarGrid(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             val labels = listOf("일", "월", "화", "수", "목", "금", "토")
             labels.forEachIndexed { index, label ->
-                Text(text = label, modifier = Modifier.weight(1f), color = if (index == 0 || index == 6) WeekendColor else MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = label,
+                    modifier = Modifier.weight(1f),
+                    color = if (index == 0 || index == 6) WeekendColor else MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
         days.chunked(7).forEach { week ->
@@ -194,7 +210,11 @@ private fun CalendarGrid(
                         else -> MaterialTheme.colorScheme.surface
                     }
                     Box(
-                        modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(backgroundColor)
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(backgroundColor)
                             .border(width = if (isToday) 2.dp else 0.dp, color = if (isToday) MaterialTheme.colorScheme.primary else Color.Transparent, shape = RoundedCornerShape(18.dp))
                             .border(width = if (isSelected) 2.dp else 0.dp, color = if (isSelected) MaterialTheme.colorScheme.tertiary else Color.Transparent, shape = RoundedCornerShape(18.dp))
                             .let { base -> if (date != null) base.clickable { onSelectDate(date) } else base }
@@ -202,15 +222,19 @@ private fun CalendarGrid(
                     ) {
                         if (date != null) {
                             Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(text = date.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, color = if (summary?.isHoliday == true) WeekendColor else dayColor, fontWeight = FontWeight.Bold)
-                                    diarySummary?.let { Text(text = "${it.weather} ${it.title}", style = MaterialTheme.typography.labelSmall, maxLines = 2) }
-                                }
+                                Text(
+                                    text = date.dayOfMonth.toString(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = if (summary?.isHoliday == true) WeekendColor else dayColor,
+                                    fontWeight = FontWeight.Bold,
+                                )
                                 if (summary != null) {
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Spacer(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (summary.isHoliday) WeekendColor else MaterialTheme.colorScheme.secondary))
                                         Text(text = if (summary.isHoliday) "휴일" else "${summary.completedCount}/${summary.itemCount}", style = MaterialTheme.typography.labelSmall)
                                     }
+                                } else if (diarySummary != null) {
+                                    Text(text = "일기", style = MaterialTheme.typography.labelSmall)
                                 }
                             }
                         }
@@ -222,29 +246,38 @@ private fun CalendarGrid(
 }
 
 @Composable
-private fun SelectedDateSection(selectedDate: LocalDate?, summary: RecordSummaryRow?, diarySummary: DiarySummaryRow?, onOpenRecord: (LocalDate) -> Unit) {
+private fun SelectedDateSection(
+    selectedDate: LocalDate?,
+    summary: RecordSummaryRow?,
+    diarySummary: DiarySummaryRow?,
+    recordDetails: List<RecordDetailRow>,
+    onOpenRecord: (LocalDate) -> Unit,
+) {
+    val exerciseItems = recordDetails.filter { it.category == "운동" }
+    val routineItems = recordDetails.filter { it.category != "운동" }
+
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(text = "기록 미리보기", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (selectedDate == null) {
-                Text(text = "이 월에 표시할 기록이 아직 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = "달력에서 날짜를 선택해 주세요.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 Text(text = "${selectedDate.year}년 ${selectedDate.monthValue}월 ${selectedDate.dayOfMonth}일", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 if (summary == null && diarySummary == null) {
-                    Text(text = "선택한 날짜에 기록이 없습니다. 아래 버튼으로 새 기록을 작성할 수 있습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(text = "선택한 날짜에는 아직 기록이 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 diarySummary?.let {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(text = "일기장", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text(text = "${it.weather} ${it.title}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(text = "일기가 작성되어 있습니다.", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
                 summary?.let {
                     Card(colors = CardDefaults.cardColors(containerColor = if (it.isHoliday) HolidayColor else MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f))) {
                         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(text = if (it.isHoliday) "일일 기록 · 휴일" else "일일 기록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(text = if (it.isHoliday) "일일 기록 및 휴일" else "일일 기록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(text = "등록 항목")
                                 Text(text = it.itemCount.toString(), fontWeight = FontWeight.Bold)
@@ -256,12 +289,43 @@ private fun SelectedDateSection(selectedDate: LocalDate?, summary: RecordSummary
                         }
                     }
                 }
+                if (exerciseItems.isNotEmpty()) {
+                    Card(colors = CardDefaults.cardColors(containerColor = RecordOnlyColor)) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(text = "운동 내역", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            exerciseItems.forEach { item ->
+                                Text(text = buildRecordLine(item), style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+                if (routineItems.isNotEmpty()) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(text = "기타 기록", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            routineItems.forEach { item ->
+                                Text(text = buildRecordLine(item), style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
                 Button(onClick = { onOpenRecord(selectedDate) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     Text(text = if (summary == null && diarySummary == null) "이 날짜 기록 작성" else "이 날짜 기록 열기")
                 }
             }
         }
     }
+}
+
+private fun buildRecordLine(item: RecordDetailRow): String {
+    val value = when {
+        item.numberValue != null -> if (item.unit.isNullOrBlank()) item.numberValue.toInt().toString() else "${item.numberValue.toInt()} ${item.unit}"
+        item.durationMinutes != null -> "${item.durationMinutes}분"
+        item.booleanValue == true || item.checked -> "완료"
+        !item.textValue.isNullOrBlank() -> item.textValue
+        else -> item.note.orEmpty().ifBlank { "기록됨" }
+    }
+    return "${item.taskName}: $value"
 }
 
 private fun buildCalendarDays(currentMonth: YearMonth): List<LocalDate?> {
