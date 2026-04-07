@@ -10,7 +10,9 @@ import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
+import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
@@ -30,6 +32,15 @@ interface HabitDao {
     )
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>>
 
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        ORDER BY created_at DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>>
+
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
 
@@ -44,6 +55,9 @@ interface HabitDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLottoDraw(draw: LottoDrawEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLottoTicket(ticket: LottoTicketEntity): Long
 
     @Query(
         """
@@ -105,6 +119,21 @@ interface HabitDao {
     )
     fun observeMonthlyDiarySummaries(startDate: LocalDate, endDate: LocalDate): Flow<List<DiarySummaryRow>>
 
+    @Query(
+        """
+        SELECT diary_date AS diary_date,
+               title AS title,
+               weather AS weather,
+               SUBSTR(body, 1, 80) AS preview
+        FROM daily_diary
+        WHERE title LIKE '%' || :query || '%'
+           OR body LIKE '%' || :query || '%'
+        ORDER BY diary_date DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchDiaries(query: String, limit: Int): List<DiarySearchRow>
+
     @Transaction
     @Query(
         """
@@ -118,11 +147,12 @@ interface HabitDao {
                            OR COALESCE(dri.text_value, '') <> ''
                        THEN 1
                        ELSE 0
-                   END) AS completed_count
+                   END) AS completed_count,
+               dr.is_holiday AS is_holiday
         FROM daily_record dr
         LEFT JOIN daily_record_item dri ON dri.daily_record_id = dr.id
         WHERE dr.record_date BETWEEN :startDate AND :endDate
-        GROUP BY dr.record_date
+        GROUP BY dr.record_date, dr.is_holiday
         ORDER BY dr.record_date ASC
         """,
     )

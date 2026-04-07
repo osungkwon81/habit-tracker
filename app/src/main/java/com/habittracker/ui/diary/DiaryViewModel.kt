@@ -2,6 +2,7 @@ package com.habittracker.ui.diary
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,17 +21,21 @@ class DiaryViewModel(
 ) : ViewModel() {
     private val selectedDate = MutableStateFlow(LocalDate.now())
     private val message = MutableStateFlow<String?>(null)
+    private val searchQuery = MutableStateFlow("")
+    private val searchResults = MutableStateFlow<List<DiarySearchRow>>(emptyList())
 
     val uiState: StateFlow<DiaryUiState> = selectedDate
         .flatMapLatest { date ->
-            combine(flow { emit(repository.getDiary(date)) }, message) { diary, statusMessage ->
+            combine(flow { emit(repository.getDiary(date)) }, message, searchQuery, searchResults) { diary, statusMessage, query, results ->
                 DiaryUiState(
                     diaryDate = date,
                     title = diary?.title.orEmpty(),
                     body = diary?.body.orEmpty(),
-                    weather = diary?.weather ?: "\uB9D1\uC74C",
+                    weather = diary?.weather ?: "맑음",
                     imageUris = diary?.imageUris?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
                     statusMessage = statusMessage,
+                    searchQuery = query,
+                    searchResults = results,
                 )
             }
         }
@@ -42,8 +47,41 @@ class DiaryViewModel(
 
     fun loadDiary(rawDate: String) {
         runCatching { LocalDate.parse(rawDate) }
-            .onSuccess { selectedDate.value = it }
-            .onFailure { message.value = "\uB0A0\uC9DC \uD615\uC2DD\uC740 YYYY-MM-DD\uB85C \uC785\uB825\uD574 \uC8FC\uC138\uC694." }
+            .onSuccess {
+                selectedDate.value = it
+                message.value = null
+            }
+            .onFailure {
+                message.value = "날짜 형식은 YYYY-MM-DD로 입력해 주세요."
+            }
+    }
+
+    fun updateSearchQuery(query: String) {
+        searchQuery.value = query
+    }
+
+    fun searchDiaries() {
+        viewModelScope.launch {
+            val trimmedQuery = searchQuery.value.trim()
+            if (trimmedQuery.isBlank()) {
+                searchResults.value = emptyList()
+                message.value = null
+                return@launch
+            }
+            runCatching {
+                repository.searchDiaries(trimmedQuery)
+            }.onSuccess { results ->
+                searchResults.value = results
+                message.value = if (results.isEmpty()) "검색 결과가 없습니다." else "${results.size}건의 일기를 찾았습니다."
+            }.onFailure { error ->
+                message.value = error.message ?: "일기 검색에 실패했습니다."
+            }
+        }
+    }
+
+    fun openSearchResult(diaryDate: LocalDate) {
+        selectedDate.value = diaryDate
+        message.value = null
     }
 
     fun saveDiary(rawDate: String, title: String, body: String, weather: String, imageUris: List<String>) {
@@ -53,9 +91,9 @@ class DiaryViewModel(
                 repository.saveDiary(diaryDate = diaryDate, title = title, body = body, weather = weather, imageUris = imageUris)
                 selectedDate.value = diaryDate
             }.onSuccess {
-                message.value = "\uC77C\uAE30\uB97C \uC800\uC7A5\uD588\uC2B5\uB2C8\uB2E4."
+                message.value = "일기를 저장했습니다."
             }.onFailure { error ->
-                message.value = error.message ?: "\uC77C\uAE30 \uC800\uC7A5\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4."
+                message.value = error.message ?: "일기 저장에 실패했습니다."
             }
         }
     }
@@ -65,7 +103,9 @@ data class DiaryUiState(
     val diaryDate: LocalDate = LocalDate.now(),
     val title: String = "",
     val body: String = "",
-    val weather: String = "\uB9D1\uC74C",
+    val weather: String = "맑음",
     val imageUris: List<String> = emptyList(),
     val statusMessage: String? = null,
+    val searchQuery: String = "",
+    val searchResults: List<DiarySearchRow> = emptyList(),
 )

@@ -9,24 +9,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.lotto.LottoGeneratedTicket
 
 @Composable
@@ -34,92 +36,85 @@ fun LottoScreen(viewModel: LottoViewModel) {
     val uiState by viewModel.uiState.collectAsState()
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "로또 관리",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "1218회차를 최신 데이터로 시드하고, 다음 회차 입력과 생성 결과 확인을 한 화면에서 처리합니다.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Text(text = "로또 관리", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(text = "번호 생성과 저장 목록, 실제 당첨 번호 이력을 분리해서 관리합니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
-            StatusCard(
-                latestRoundNo = uiState.latestSavedRoundNo,
-                nextRoundNo = uiState.nextRoundNo,
-                message = uiState.statusMessage,
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilterChip(selected = uiState.selectedTab == "generator", onClick = viewModel::selectGeneratorTab, label = { Text("번호 생성") })
+                FilterChip(selected = uiState.selectedTab == "history", onClick = viewModel::selectHistoryTab, label = { Text("당첨 이력") })
+            }
         }
-        item {
-            GeneratorSection(
-                onGenerateChatGpt = viewModel::generateChatGpt,
-                onGenerateGemini = viewModel::generateGemini,
-            )
-        }
-        item {
-            GeneratedTicketSection(
-                title = "챗GPT 생성 결과",
-                tickets = uiState.chatGptResults,
-                onApply = viewModel::applyGeneratedNumbers,
-            )
-        }
-        item {
-            GeneratedTicketSection(
-                title = "제미니 생성 결과",
-                tickets = uiState.geminiResults,
-                onApply = viewModel::applyGeneratedNumbers,
-            )
-        }
-        item {
-            SaveSection(
-                roundInput = uiState.roundInput,
-                numberInputs = uiState.numberInputs,
-                onRoundChange = viewModel::updateRoundInput,
-                onNumberChange = viewModel::updateNumberInput,
-                onSave = viewModel::saveDraw,
-            )
-        }
-        item {
-            SearchSection(
-                queryRoundInput = uiState.queryRoundInput,
-                onQueryChange = viewModel::updateQueryRoundInput,
-            )
-        }
-        item {
-            Text(
-                text = if (uiState.queryRoundInput.isBlank()) "최근 10건" else "${uiState.queryRoundInput}회차 조회 결과",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        items(uiState.savedDraws, key = { it.roundNo }) { draw ->
-            LottoDrawCard(draw = draw)
+        item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }
+        if (uiState.selectedTab == "generator") {
+            item { GeneratorSection(onGenerateChatGpt = viewModel::generateChatGpt, onGenerateGemini = viewModel::generateGemini) }
+            item {
+                GeneratedTicketSection(
+                    title = "ChatGPT 추천 번호",
+                    sourceLabel = "ChatGPT",
+                    tickets = uiState.chatGptResults,
+                    onApply = viewModel::applyGeneratedNumbers,
+                    onSave = viewModel::saveGeneratedTicket,
+                    onSaveAll = viewModel::saveAllGeneratedTickets,
+                )
+            }
+            item {
+                GeneratedTicketSection(
+                    title = "Gemini 추천 번호",
+                    sourceLabel = "Gemini",
+                    tickets = uiState.geminiResults,
+                    onApply = viewModel::applyGeneratedNumbers,
+                    onSave = viewModel::saveGeneratedTicket,
+                    onSaveAll = viewModel::saveAllGeneratedTickets,
+                )
+            }
+            item { Text(text = "저장한 생성 번호", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            if (uiState.savedTickets.isEmpty()) {
+                item { EmptyCard(message = "저장된 생성 번호가 없습니다.") }
+            } else {
+                items(uiState.savedTickets, key = { it.id }) { ticket ->
+                    SavedTicketCard(ticket = ticket)
+                }
+            }
+        } else {
+            item {
+                SaveSection(
+                    roundInput = uiState.roundInput,
+                    numberInputs = uiState.numberInputs,
+                    onRoundChange = viewModel::updateRoundInput,
+                    onNumberChange = viewModel::updateNumberInput,
+                    onSave = viewModel::saveDraw,
+                )
+            }
+            item { SearchSection(queryRoundInput = uiState.queryRoundInput, onQueryChange = viewModel::updateQueryRoundInput) }
+            item {
+                Text(
+                    text = if (uiState.queryRoundInput.isBlank()) "최근 당첨 번호" else "${uiState.queryRoundInput}회차 조회 결과",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            if (uiState.savedDraws.isEmpty()) {
+                item { EmptyCard(message = "저장된 당첨 번호가 없습니다.") }
+            } else {
+                items(uiState.savedDraws, key = { it.roundNo }) { draw ->
+                    LottoDrawCard(draw = draw)
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun StatusCard(latestRoundNo: Int?, nextRoundNo: Int?, message: String?) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = "저장 상태", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(text = "최신 저장 회차: ${latestRoundNo ?: "-"}")
             Text(text = "다음 입력 권장 회차: ${nextRoundNo ?: "-"}")
@@ -131,28 +126,13 @@ private fun StatusCard(latestRoundNo: Int?, nextRoundNo: Int?, message: String?)
 }
 
 @Composable
-private fun GeneratorSection(
-    onGenerateChatGpt: () -> Unit,
-    onGenerateGemini: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+private fun GeneratorSection(onGenerateChatGpt: () -> Unit, onGenerateGemini: () -> Unit) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "번호 생성", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onGenerateChatGpt, modifier = Modifier.weight(1f)) {
-                    Text("챗GPT 생성")
-                }
-                Button(onClick = onGenerateGemini, modifier = Modifier.weight(1f)) {
-                    Text("제미니 생성")
-                }
+                Button(onClick = onGenerateChatGpt, modifier = Modifier.weight(1f)) { Text("ChatGPT 생성") }
+                Button(onClick = onGenerateGemini, modifier = Modifier.weight(1f)) { Text("Gemini 생성") }
             }
         }
     }
@@ -161,47 +141,30 @@ private fun GeneratorSection(
 @Composable
 private fun GeneratedTicketSection(
     title: String,
+    sourceLabel: String,
     tickets: List<LottoGeneratedTicket>,
     onApply: (List<Int>) -> Unit,
+    onSave: (List<Int>, String) -> Unit,
+    onSaveAll: (String, List<LottoGeneratedTicket>) -> Unit,
 ) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             if (tickets.isEmpty()) {
-                Text(text = "아직 생성 결과가 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text = "아직 생성한 번호가 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
+                Button(onClick = { onSaveAll(sourceLabel, tickets) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(text = "전체 번호 저장")
+                }
                 tickets.forEachIndexed { index, ticket ->
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(text = "${index + 1}조합", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                text = ticket.numbers.joinToString("  "),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            if (!ticket.comment.isNullOrBlank()) {
-                                Text(
-                                    text = ticket.comment,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            Button(onClick = { onApply(ticket.numbers) }, modifier = Modifier.fillMaxWidth()) {
-                                Text("입력 칸에 적용")
+                        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(text = "${index + 1}번 조합", fontWeight = FontWeight.SemiBold)
+                            LottoNumberRow(numbers = ticket.numbers)
+                            ticket.comment?.let { Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                Button(onClick = { onApply(ticket.numbers) }, modifier = Modifier.weight(1f)) { Text("이력 입력칸 반영") }
+                                Button(onClick = { onSave(ticket.numbers, sourceLabel) }, modifier = Modifier.weight(1f)) { Text("번호 저장") }
                             }
                         }
                     }
@@ -212,103 +175,71 @@ private fun GeneratedTicketSection(
 }
 
 @Composable
-private fun SaveSection(
-    roundInput: String,
-    numberInputs: List<String>,
-    onRoundChange: (String) -> Unit,
-    onNumberChange: (Int, String) -> Unit,
-    onSave: () -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(text = "회차 저장", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            OutlinedTextField(
-                value = roundInput,
-                onValueChange = onRoundChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("회차 번호") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
+private fun SaveSection(roundInput: String, numberInputs: List<String>, onRoundChange: (String) -> Unit, onNumberChange: (Int, String) -> Unit, onSave: () -> Unit) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = "당첨 번호 저장", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            OutlinedTextField(value = roundInput, onValueChange = onRoundChange, modifier = Modifier.fillMaxWidth(), label = { Text("회차 번호") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
             numberInputs.chunked(3).forEachIndexed { rowIndex, row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                     row.forEachIndexed { columnIndex, value ->
                         val inputIndex = rowIndex * 3 + columnIndex
-                        OutlinedTextField(
-                            value = value,
-                            onValueChange = { onNumberChange(inputIndex, it) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("${inputIndex + 1}번") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                        )
+                        OutlinedTextField(value = value, onValueChange = { onNumberChange(inputIndex, it) }, modifier = Modifier.weight(1f), label = { Text("${inputIndex + 1}번") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                     }
                 }
             }
-            Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
-                Text("저장")
-            }
+            Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("당첨 번호 저장") }
         }
     }
 }
 
 @Composable
-private fun SearchSection(
-    queryRoundInput: String,
-    onQueryChange: (String) -> Unit,
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(text = "회차 조회", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            OutlinedTextField(
-                value = queryRoundInput,
-                onValueChange = onQueryChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("회차 번호 입력, 비우면 최근 10건") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
+private fun SearchSection(queryRoundInput: String, onQueryChange: (String) -> Unit) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(text = "당첨 번호 조회", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            OutlinedTextField(value = queryRoundInput, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(), label = { Text("회차 번호 입력, 비우면 최근 목록") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         }
     }
 }
 
 @Composable
 private fun LottoDrawCard(draw: LottoDrawEntity) {
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = "${draw.roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                text = draw.numbers().joinToString("  "),
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.Start,
-            )
-            Text(
-                text = "저장 시각 ${draw.savedAt}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
+            LottoNumberRow(numbers = draw.numbers())
+            Text(text = "저장 시각 ${draw.savedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+@Composable
+private fun SavedTicketCard(ticket: LottoTicketEntity) {
+    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = ticket.sourceLabel, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            LottoNumberRow(numbers = ticket.numbers())
+            ticket.note?.let { Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(text = "저장 시각 ${ticket.createdAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun LottoNumberRow(numbers: List<Int>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        numbers.forEach { number ->
+            Card(shape = CircleShape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))) {
+                Text(text = number.toString(), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyCard(message: String) {
+    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Text(text = message, modifier = Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

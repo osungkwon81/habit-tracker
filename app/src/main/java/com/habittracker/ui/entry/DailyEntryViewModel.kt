@@ -26,16 +26,14 @@ class DailyEntryViewModel(
 
     val uiState: StateFlow<DailyEntryUiState> = selectedDate
         .flatMapLatest { date ->
-            combine(
-                repository.observeActiveTaskItems(),
-                statusMessage,
-            ) { taskItems, message ->
+            combine(repository.observeActiveTaskItems(), statusMessage) { taskItems, message ->
                 val existingRecord = repository.getDailyRecord(date)
                 val details = repository.getRecordDetails(date)
                 DailyEntryUiState(
                     selectedDate = date,
                     hasExistingRecord = existingRecord != null,
                     memo = existingRecord?.memo.orEmpty(),
+                    isHoliday = existingRecord?.isHoliday == true,
                     taskItems = mergeTaskItems(taskItems, details),
                     statusMessage = message,
                 )
@@ -60,20 +58,17 @@ class DailyEntryViewModel(
                 statusMessage.value = null
             }
             .onFailure {
-                statusMessage.value = "\uB0A0\uC9DC \uD615\uC2DD\uC740 YYYY-MM-DD\uB85C \uC785\uB825\uD574 \uC8FC\uC138\uC694."
+                statusMessage.value = "날짜 형식은 YYYY-MM-DD로 입력해 주세요."
             }
     }
 
-    fun saveDailyRecord(
-        recordDate: LocalDate,
-        memo: String,
-        items: List<TaskItemInputState>,
-    ) {
+    fun saveDailyRecord(recordDate: LocalDate, memo: String, isHoliday: Boolean, items: List<TaskItemInputState>) {
         viewModelScope.launch {
             runCatching {
                 repository.saveDailyRecord(
                     recordDate = recordDate,
                     memo = memo.trim().takeIf(String::isNotEmpty),
+                    isHoliday = isHoliday,
                     itemInputs = items.map { item ->
                         DailyRecordItemInput(
                             taskItemMasterId = item.taskItemMasterId,
@@ -88,17 +83,18 @@ class DailyEntryViewModel(
                 )
             }.onSuccess {
                 selectedDate.value = recordDate
-                statusMessage.value = "${recordDate} \uAE30\uB85D\uC744 \uC800\uC7A5\uD588\uC2B5\uB2C8\uB2E4."
+                statusMessage.value = if (isHoliday) {
+                    "$recordDate 기록과 휴일 표시를 저장했습니다."
+                } else {
+                    "$recordDate 기록을 저장했습니다."
+                }
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "\uC800\uC7A5\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4."
+                statusMessage.value = error.message ?: "저장에 실패했습니다."
             }
         }
     }
 
-    private fun mergeTaskItems(
-        taskItems: List<TaskItemMasterEntity>,
-        details: List<RecordDetailRow>,
-    ): List<TaskItemInputState> {
+    private fun mergeTaskItems(taskItems: List<TaskItemMasterEntity>, details: List<RecordDetailRow>): List<TaskItemInputState> {
         val detailMap = details.associateBy(RecordDetailRow::taskItemMasterId)
         return taskItems.map { taskItem ->
             val detail = detailMap[taskItem.id]
@@ -124,6 +120,7 @@ data class DailyEntryUiState(
     val selectedDate: LocalDate = LocalDate.now(),
     val hasExistingRecord: Boolean = false,
     val memo: String = "",
+    val isHoliday: Boolean = false,
     val taskItems: List<TaskItemInputState> = emptyList(),
     val statusMessage: String? = null,
 )

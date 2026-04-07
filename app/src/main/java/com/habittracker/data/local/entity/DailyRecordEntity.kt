@@ -18,6 +18,8 @@ data class DailyRecordEntity(
     val recordDate: LocalDate,
     @ColumnInfo(name = "memo")
     val memo: String?,
+    @ColumnInfo(name = "is_holiday")
+    val isHoliday: Boolean = false,
     @ColumnInfo(name = "created_at")
     val createdAt: LocalDateTime,
     @ColumnInfo(name = "updated_at")

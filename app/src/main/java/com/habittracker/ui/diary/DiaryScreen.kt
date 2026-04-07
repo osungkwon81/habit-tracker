@@ -1,17 +1,19 @@
 package com.habittracker.ui.diary
 
 import android.app.DatePickerDialog
+import android.net.Uri
+import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,8 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,12 +36,22 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import java.time.LocalDate
+
+private val imageTokenRegex = Regex("!\\[image]\\((.*?)\\)")
+
+private data class WeatherOption(
+    val label: String,
+    val accentColor: Color,
+)
 
 @Composable
 fun DiaryScreen(viewModel: DiaryViewModel) {
@@ -46,8 +60,19 @@ fun DiaryScreen(viewModel: DiaryViewModel) {
     var dateInput by remember(uiState.diaryDate) { mutableStateOf(TextFieldValue(uiState.diaryDate.toString())) }
     var title by remember(uiState.diaryDate, uiState.title) { mutableStateOf(TextFieldValue(uiState.title)) }
     var body by remember(uiState.diaryDate, uiState.body) { mutableStateOf(TextFieldValue(uiState.body)) }
+    var searchQuery by remember(uiState.searchQuery) { mutableStateOf(TextFieldValue(uiState.searchQuery)) }
     var selectedWeather by remember(uiState.diaryDate, uiState.weather) { mutableStateOf(uiState.weather) }
     val imageUris = remember(uiState.diaryDate, uiState.imageUris) { mutableStateListOf<String>().apply { addAll(uiState.imageUris) } }
+    var expandedImageUri by remember { mutableStateOf<String?>(null) }
+    val weatherOptions = listOf(
+        WeatherOption("맑음", Color(0xFFFFD36E)),
+        WeatherOption("흐림", Color(0xFFD8DEE9)),
+        WeatherOption("비", Color(0xFFB8D8FF)),
+        WeatherOption("눈", Color(0xFFF2F7FF)),
+        WeatherOption("바람", Color(0xFFD9F2E6)),
+    )
+    val currentWeatherOption = weatherOptions.firstOrNull { it.label == selectedWeather } ?: weatherOptions.first()
+
     val openDatePicker = {
         DatePickerDialog(
             context,
@@ -61,6 +86,7 @@ fun DiaryScreen(viewModel: DiaryViewModel) {
             uiState.diaryDate.dayOfMonth,
         ).show()
     }
+
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         uris.forEach { uri ->
             val imageToken = "\n![image](${uri})\n"
@@ -71,60 +97,177 @@ fun DiaryScreen(viewModel: DiaryViewModel) {
             imageUris.add(uri.toString())
         }
     }
-    val weatherOptions = listOf("\uB9D1\uC74C", "\uD750\uB9BC", "\uBE44", "\uB208", "\uBC14\uB78C")
-    val dateFieldInteraction = remember { MutableInteractionSource() }
+
+    val previewBlocks = remember(body.text) { parseDiaryBlocks(body.text) }
 
     LaunchedEffect(uiState.diaryDate) {
         viewModel.loadDiary(uiState.diaryDate.toString())
     }
 
+    if (expandedImageUri != null) {
+        Dialog(onDismissRequest = { expandedImageUri = null }) {
+            Surface(shape = RoundedCornerShape(24.dp), color = Color.Black.copy(alpha = 0.92f)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    DiaryImage(uri = expandedImageUri.orEmpty(), modifier = Modifier.fillMaxWidth().height(420.dp))
+                    Button(onClick = { expandedImageUri = null }, modifier = Modifier.fillMaxWidth()) {
+                        Text("닫기")
+                    }
+                }
+            }
+        }
+    }
+
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { Text(text = "\uC77C\uAE30\uC7A5", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item { Text(text = "일기장", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "일기 검색", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            viewModel.updateSearchQuery(it.text)
+                        },
+                        label = { Text("제목 또는 내용 검색") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Button(onClick = viewModel::searchDiaries, modifier = Modifier.fillMaxWidth()) {
+                        Text("검색")
+                    }
+                    if (uiState.searchResults.isNotEmpty()) {
+                        uiState.searchResults.forEach { result ->
+                            Card(modifier = Modifier.fillMaxWidth().clickable {
+                                dateInput = TextFieldValue(result.diaryDate.toString())
+                                viewModel.openSearchResult(result.diaryDate)
+                            }) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(text = "${result.diaryDate} · ${result.weather}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    Text(text = result.title, fontWeight = FontWeight.Bold)
+                                    Text(text = result.preview, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Box(modifier = Modifier.weight(1f)) {
-                    OutlinedTextField(
-                        value = dateInput,
-                        onValueChange = { },
-                        readOnly = true,
-                        label = { Text("\uC791\uC131 \uB0A0\uC9DC") },
-                        modifier = Modifier.fillMaxWidth(),
-                        interactionSource = dateFieldInteraction,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .clickable(onClick = openDatePicker),
-                    )
+                    OutlinedTextField(value = dateInput, onValueChange = { }, readOnly = true, label = { Text("작성 날짜") }, modifier = Modifier.fillMaxWidth())
+                    Box(modifier = Modifier.fillMaxSize().clickable(onClick = openDatePicker))
                 }
-                Button(onClick = openDatePicker) { Text("\uB2EC\uB825") }
+                Button(onClick = openDatePicker) { Text("달력") }
             }
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "\uB0A0\uC528")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    weatherOptions.take(3).forEach { weather -> AssistChip(onClick = { selectedWeather = weather }, label = { Text(weather) }) }
+            Card(colors = CardDefaults.cardColors(containerColor = currentWeatherOption.accentColor.copy(alpha = 0.65f))) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "날씨", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Box(modifier = Modifier.fillMaxWidth().height(88.dp).background(currentWeatherOption.accentColor, RoundedCornerShape(18.dp)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        Text(text = currentWeatherOption.label, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        weatherOptions.take(3).forEach { weather ->
+                            AssistChip(onClick = { selectedWeather = weather.label }, label = { Text(weather.label) })
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        weatherOptions.drop(3).forEach { weather ->
+                            AssistChip(onClick = { selectedWeather = weather.label }, label = { Text(weather.label) })
+                        }
+                    }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    weatherOptions.drop(3).forEach { weather -> AssistChip(onClick = { selectedWeather = weather }, label = { Text(weather) }) }
-                }
-                Text(text = "\uC120\uD0DD\uB428: $selectedWeather", color = MaterialTheme.colorScheme.primary)
             }
         }
-        item { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("\uC81C\uBAA9") }, modifier = Modifier.fillMaxWidth()) }
-        item { OutlinedTextField(value = body, onValueChange = { body = it }, label = { Text("\uC77C\uAE30 \uB0B4\uC6A9") }, modifier = Modifier.fillMaxWidth(), minLines = 10) }
-        item { Text(text = "\uCEF4\uC11C\uAC00 \uC788\uB294 \uC704\uCE58\uC5D0 \uC774\uBBF8\uC9C0 \uD1A0\uD070\uC744 \uB123\uC2B5\uB2C8\uB2E4.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-        item { TextButton(onClick = { imagePicker.launch("image/*") }) { Text("\uC0AC\uC9C4 \uCCA8\uBD80") } }
-        item { Button(onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.toList()) }, modifier = Modifier.fillMaxWidth()) { Text("\uC77C\uAE30 \uC800\uC7A5") } }
+        item { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("제목") }, modifier = Modifier.fillMaxWidth()) }
+        item { OutlinedTextField(value = body, onValueChange = { body = it }, label = { Text("일기 내용") }, modifier = Modifier.fillMaxWidth(), minLines = 10) }
+        item { Text(text = "커서가 있는 위치에 이미지를 넣고, 아래 미리보기에서 실제 이미지로 확인할 수 있습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        item { TextButton(onClick = { imagePicker.launch("image/*") }) { Text("사진 첨부") } }
+        item { Button(onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) }, modifier = Modifier.fillMaxWidth()) { Text("일기 저장") } }
         item { uiState.statusMessage?.let { message -> Text(text = message, color = MaterialTheme.colorScheme.primary) } }
-        item { Text(text = "\uCCA8\uBD80\uB41C \uC774\uBBF8\uC9C0", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        items(imageUris) { uri -> Card(shape = RoundedCornerShape(18.dp)) { Text(text = uri, modifier = Modifier.padding(16.dp)) } }
+        item { Text(text = "내용 미리보기", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        items(previewBlocks) { block ->
+            when (block) {
+                is DiaryBlock.TextBlock -> {
+                    if (block.text.isNotBlank()) {
+                        Card(shape = RoundedCornerShape(18.dp)) {
+                            Text(text = block.text, modifier = Modifier.fillMaxWidth().padding(14.dp))
+                        }
+                    }
+                }
+                is DiaryBlock.ImageBlock -> {
+                    Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().clickable { expandedImageUri = block.uri }) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DiaryImage(uri = block.uri, modifier = Modifier.fillMaxWidth().height(220.dp))
+                            Text(text = "이미지 크게 보기", color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
+        if (imageUris.isNotEmpty()) {
+            item { Text(text = "첨부 이미지", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            items(imageUris.distinct()) { uri ->
+                Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().clickable { expandedImageUri = uri }) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        DiaryImage(uri = uri, modifier = Modifier.fillMaxWidth().height(200.dp))
+                        Text(text = uri, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun DiaryImage(uri: String, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            ImageView(context).apply {
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                clipToOutline = true
+            }
+        },
+        update = { imageView ->
+            imageView.setImageURI(Uri.parse(uri))
+        },
+    )
+}
+
+private sealed interface DiaryBlock {
+    data class TextBlock(val text: String) : DiaryBlock
+    data class ImageBlock(val uri: String) : DiaryBlock
+}
+
+private fun parseDiaryBlocks(body: String): List<DiaryBlock> {
+    if (body.isBlank()) return emptyList()
+    val blocks = mutableListOf<DiaryBlock>()
+    var lastIndex = 0
+
+    imageTokenRegex.findAll(body).forEach { match ->
+        val text = body.substring(lastIndex, match.range.first).trim()
+        if (text.isNotBlank()) {
+            blocks += DiaryBlock.TextBlock(text)
+        }
+        val uri = match.groupValues.getOrNull(1).orEmpty()
+        if (uri.isNotBlank()) {
+            blocks += DiaryBlock.ImageBlock(uri)
+        }
+        lastIndex = match.range.last + 1
+    }
+
+    val trailingText = body.substring(lastIndex).trim()
+    if (trailingText.isNotBlank()) {
+        blocks += DiaryBlock.TextBlock(trailingText)
+    }
+
+    return blocks
 }

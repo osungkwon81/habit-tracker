@@ -10,4 +10,6 @@ data class RecordSummaryRow(
     val itemCount: Int,
     @ColumnInfo(name = "completed_count")
     val completedCount: Int,
+    @ColumnInfo(name = "is_holiday")
+    val isHoliday: Boolean,
 )
