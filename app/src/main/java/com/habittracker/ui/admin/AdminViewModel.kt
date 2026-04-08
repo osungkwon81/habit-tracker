@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 class AdminViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
+    val supportedValueTypes = listOf(ValueType.NUMBER, ValueType.BOOLEAN, ValueType.EXERCISE)
     private val message = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<AdminUiState> = combine(repository.observeActiveTaskItems(), message) { taskItems, statusMessage ->
@@ -49,6 +50,7 @@ class AdminViewModel(
         return when (valueType) {
             ValueType.NUMBER -> "\uC22B\uC790"
             ValueType.BOOLEAN -> "\uCCB4\uD06C"
+            ValueType.EXERCISE -> "\uC6B4\uB3D9 \uAE30\uB85D"
             ValueType.TEXT -> "\uD14D\uC2A4\uD2B8"
             ValueType.DURATION -> "\uC2DC\uAC04"
         }

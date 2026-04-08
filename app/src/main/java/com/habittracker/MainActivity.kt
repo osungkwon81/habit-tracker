@@ -3,14 +3,28 @@
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
@@ -63,24 +77,40 @@ private fun HabitTrackerApp() {
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentDestination = navBackStackEntry?.destination
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            val currentDestination = navBackStackEntry?.destination
 
-                bottomDestinations.forEach { destination ->
-                    NavigationBarItem(
-                        selected = currentDestination?.hierarchy?.any { route -> route.route == destination.route || route.route?.startsWith("${destination.route}/") == true } == true,
-                        onClick = {
-                            val popped = navController.popBackStack(destination.route, false)
-                            if (!popped) {
-                                navController.navigate(destination.route) {
-                                    launchSingleTop = true
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 18.dp),
+                shape = RoundedCornerShape(30.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFDFBF6)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    bottomDestinations.forEach { destination ->
+                        val selected = currentDestination?.hierarchy?.any { route ->
+                            route.route == destination.route || route.route?.startsWith("${destination.route}/") == true
+                        } == true
+                        FloatingNavItem(
+                            emoji = destination.emoji,
+                            label = destination.label,
+                            selected = selected,
+                            onClick = {
+                                val popped = navController.popBackStack(destination.route, false)
+                                if (!popped) {
+                                    navController.navigate(destination.route) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            }
-                        },
-                        icon = { Text(destination.label.take(1)) },
-                        label = { Text(destination.label) },
-                    )
+                            },
+                        )
+                    }
                 }
             }
         },
@@ -136,5 +166,43 @@ private fun HabitTrackerApp() {
                 LottoScreen(viewModel = viewModel)
             }
         }
+    }
+}
+
+@Composable
+private fun FloatingNavItem(
+    emoji: String,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(22.dp))
+            .clickable(onClick = onClick)
+            .background(if (selected) Color(0xFF2F6B57) else Color.Transparent)
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (selected) Color.White.copy(alpha = 0.18f) else Color(0xFFF3EEE3))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        ) {
+            Text(
+                text = emoji,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Text(
+            text = label,
+            color = if (selected) Color.White else Color(0xFF5B6C69),
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            textAlign = TextAlign.Center,
+        )
     }
 }

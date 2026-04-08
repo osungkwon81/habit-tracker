@@ -18,6 +18,7 @@ import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
+import com.habittracker.data.lotto.LottoGeneratedTicket
 import kotlinx.coroutines.flow.Flow
 import java.security.MessageDigest
 import java.time.LocalDate
@@ -27,6 +28,10 @@ class HabitRepository(
     private val database: HabitTrackerDatabase,
     private val habitDao: HabitDao,
 ) {
+    private companion object {
+        const val lottoRoundNotePrefix = "ROUND:"
+    }
+
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
         habitDao.observeLottoDraws(roundNo, limit)
 
@@ -137,6 +142,46 @@ class HabitRepository(
         )
     }
 
+    suspend fun hasSavedLottoBatch(roundNo: Int, sourceLabel: String): Boolean {
+        require(roundNo > 0) { "회차 번호가 올바르지 않습니다." }
+        return habitDao.getLottoTicketsBySourceAndNote(
+            sourceLabel = sourceLabel,
+            note = buildLottoRoundNote(roundNo),
+        ).isNotEmpty()
+    }
+
+    suspend fun deleteLottoTicket(ticketId: Long) {
+        habitDao.deleteLottoTicketById(ticketId)
+    }
+
+    suspend fun deleteLottoRound(roundNo: Int) {
+        require(roundNo > 0) { "삭제할 회차를 확인해 주세요." }
+        habitDao.deleteLottoTicketsByNote(buildLottoRoundNote(roundNo))
+    }
+
+    suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>, overwrite: Boolean) {
+        require(roundNo > 0) { "저장할 회차를 확인해 주세요." }
+        require(tickets.isNotEmpty()) { "저장할 생성 번호가 없습니다." }
+
+        val limitedTickets = tickets.take(5)
+        val roundNote = buildLottoRoundNote(roundNo)
+
+        database.withTransaction {
+            val existingTickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel = sourceLabel, note = roundNote)
+            require(existingTickets.isEmpty() || overwrite) { "${roundNo}회차 ${sourceLabel} 번호가 이미 저장되어 있습니다." }
+            if (existingTickets.isNotEmpty()) {
+                habitDao.deleteLottoTicketsBySourceAndNote(sourceLabel = sourceLabel, note = roundNote)
+            }
+            limitedTickets.forEach { ticket ->
+                saveLottoTicket(
+                    numbers = ticket.numbers,
+                    sourceLabel = sourceLabel,
+                    note = roundNote,
+                )
+            }
+        }
+    }
+
     suspend fun saveMemoNote(memoId: Long?, title: String, content: String, isLocked: Boolean, password: String?) {
         val sanitizedTitle = title.trim()
         val sanitizedContent = content.trim()
@@ -222,25 +267,39 @@ class HabitRepository(
         require(lines.isNotEmpty()) { "등록할 단어를 입력해 주세요." }
 
         val now = LocalDateTime.now()
-        val entries = lines.map { line ->
+        val existingPairs = habitDao.getAllVocabularyWords()
+            .asSequence()
+            .map { it.word.trim().lowercase() to it.meaning.trim().lowercase() }
+            .toMutableSet()
+        val seenPairs = mutableSetOf<Pair<String, String>>()
+
+        var skippedDuplicateCount = 0
+        val entries = lines.mapNotNull { line ->
             val parts = line.split('\t', ',', '|').map(String::trim)
             require(parts.size >= 2) { "대량 등록 형식은 단어,뜻,발음 입니다." }
             val word = parts[0]
             val meaning = parts[1]
             val pronunciation = parts.getOrNull(2)?.takeIf(String::isNotBlank)
             require(word.isNotBlank() && meaning.isNotBlank()) { "단어와 뜻은 비워둘 수 없습니다." }
-            VocabularyWordEntity(
+            val pair = word.lowercase() to meaning.lowercase()
+            if (pair in existingPairs || !seenPairs.add(pair)) {
+                skippedDuplicateCount += 1
+                null
+            } else {
+                VocabularyWordEntity(
                 word = word,
                 meaning = meaning,
                 pronunciation = pronunciation,
                 createdAt = now,
                 updatedAt = now,
             )
+            }
         }
 
+        require(entries.isNotEmpty()) { "이미 등록된 단어만 포함되어 있습니다." }
         val insertResults = habitDao.insertVocabularyWords(entries)
         val insertedCount = insertResults.count { it > 0L }
-        val duplicateCount = insertResults.size - insertedCount
+        val duplicateCount = skippedDuplicateCount + (insertResults.size - insertedCount)
         return BulkVocabularyInsertResult(insertedCount = insertedCount, duplicateCount = duplicateCount)
     }
 
@@ -312,13 +371,18 @@ class HabitRepository(
         val codeBase = sanitizedName.uppercase().replace(" ", "_").replace(Regex("[^A-Z0-9_가-힣]"), "").take(24).ifEmpty { "TASK" }
         val code = "${codeBase}_${System.currentTimeMillis() % 100000}"
         val nextSortOrder = habitDao.getMaxSortOrder() + 10
+        val normalizedUnit = when (valueType) {
+            ValueType.NUMBER -> unit?.trim()?.takeIf(String::isNotEmpty)
+            ValueType.EXERCISE -> "km/min"
+            else -> null
+        }
         habitDao.insertTaskItem(
             TaskItemMasterEntity(
                 code = code,
                 name = sanitizedName,
                 category = sanitizedCategory,
                 valueType = valueType,
-                unit = unit?.trim()?.takeIf(String::isNotEmpty),
+                unit = normalizedUnit,
                 description = description?.trim()?.takeIf(String::isNotEmpty),
                 sortOrder = nextSortOrder,
             ),
@@ -333,7 +397,11 @@ class HabitRepository(
                 name = name.trim(),
                 category = category.trim().ifEmpty { "기타" },
                 valueType = valueType,
-                unit = unit?.trim()?.takeIf(String::isNotEmpty),
+                unit = when (valueType) {
+                    ValueType.NUMBER -> unit?.trim()?.takeIf(String::isNotEmpty)
+                    ValueType.EXERCISE -> "km/min"
+                    else -> null
+                },
                 description = description?.trim()?.takeIf(String::isNotEmpty),
             ),
         )
@@ -410,6 +478,8 @@ class HabitRepository(
         val digest = MessageDigest.getInstance("SHA-256")
         return digest.digest(pin.toByteArray()).joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
+
+    private fun buildLottoRoundNote(roundNo: Int): String = "$lottoRoundNotePrefix$roundNo"
 }
 
 data class BulkVocabularyInsertResult(

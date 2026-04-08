@@ -67,6 +67,12 @@ private data class WeatherOption(
 
 private val WeatherPrimaryTextColor = Color(0xFF132A2F)
 private val WeatherSecondaryTextColor = Color(0xFF355158)
+private val DiaryTitleCardColor = Color(0xFFFFF2D8)
+private val DiaryBodyCardColor = Color(0xFFEAF4FF)
+private val DiaryHeroColor = Color(0xFF10242A)
+private val DiaryHeroSubColor = Color(0xFFE5D8B8)
+private val DiaryTextStrongColor = Color(0xFF182126)
+private val DiaryTextMutedColor = Color(0xFF33464D)
 private const val DiaryImageTokenPrefix = "![image]("
 private const val DiaryImageTokenSuffix = ")"
 
@@ -87,22 +93,27 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(text = "일기장", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Button(onClick = viewModel::startNewDiary) {
-                    Text("작성")
+            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = DiaryHeroColor)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(text = "📔 일기장", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(text = "사진과 감정, 날씨를 하루 단위로 정리합니다.", color = DiaryHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Button(onClick = viewModel::startNewDiary, modifier = Modifier.fillMaxWidth()) { Text("작성") }
                 }
             }
         }
         item {
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = viewModel::updateSearchQuery,
-                label = { Text("제목 또는 내용 검색") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-            )
+            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = viewModel::updateSearchQuery,
+                    label = { Text("제목 또는 내용 검색") },
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                )
+            }
         }
         item {
             uiState.statusMessage?.let { message ->
@@ -112,19 +123,19 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
         if (uiState.searchResults.isEmpty()) {
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
-                    Text(text = "저장된 일기가 없습니다.", modifier = Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(text = "저장된 일기가 없습니다.", modifier = Modifier.fillMaxWidth().padding(16.dp), color = DiaryTextMutedColor)
                 }
             }
         } else {
             items(uiState.searchResults, key = { it.diaryDate }) { result ->
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable { viewModel.openSearchResult(result.diaryDate) },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
                 ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(text = result.title.ifBlank { "무제" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(text = "${result.diaryDate} · ${result.weather}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text = "${result.diaryDate} · ${result.weather}", style = MaterialTheme.typography.bodySmall, color = DiaryTextMutedColor)
                     }
                 }
             }
@@ -198,18 +209,23 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(text = "일기 작성", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                TextButton(onClick = viewModel::showList) { Text("목록") }
+            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = DiaryHeroColor)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(text = "✍️ 일기 작성", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(text = "하루의 장면을 차분하게 남겨보세요.", color = DiaryHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    TextButton(onClick = viewModel::showList, modifier = Modifier.fillMaxWidth()) { Text("목록") }
+                }
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Box(modifier = Modifier.weight(1f)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(value = dateInput, onValueChange = { }, readOnly = true, label = { Text("작성 날짜") }, modifier = Modifier.fillMaxWidth())
                     Box(modifier = Modifier.fillMaxSize().clickable(onClick = openDatePicker))
                 }
-                Button(onClick = openDatePicker) { Text("달력") }
+                Button(onClick = openDatePicker, modifier = Modifier.fillMaxWidth()) { Text("달력") }
             }
         }
         item {
@@ -260,7 +276,7 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item {
             Text(
                 text = "편집 화면에서는 이미지 위치가 토큰으로 저장되고, 상세 화면에서 본문 중간 이미지로 렌더링됩니다.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = DiaryTextMutedColor,
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -302,24 +318,28 @@ private fun DiaryDetailScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
     ) {
         item {
             Row(
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(text = "일기 상세", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = viewModel::showList) { Text("목록") }
-                    Button(onClick = viewModel::editCurrentDiary) { Text("수정") }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(text = "📔 일기 상세", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = DiaryTextStrongColor)
+                    Text(text = "날짜와 본문을 읽기 편한 카드로 분리했습니다.", color = DiaryTextMutedColor, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
         item {
-            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = viewModel::showList, modifier = Modifier.weight(1f)) { Text("목록") }
+                Button(onClick = viewModel::editCurrentDiary, modifier = Modifier.weight(1f)) { Text("수정") }
+            }
+        }
+        item {
+            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = DiaryTitleCardColor)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = uiState.title.ifBlank { "무제" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(text = uiState.title.ifBlank { "무제" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = DiaryTextStrongColor)
                     Text(
                         text = "${uiState.diaryDate} · ${uiState.weather}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = DiaryTextMutedColor,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -369,7 +389,7 @@ private fun DiaryContentPreview(
 
     Card(
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = DiaryBodyCardColor),
     ) {
         Column(
             modifier = Modifier
@@ -377,15 +397,10 @@ private fun DiaryContentPreview(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = "본문 미리보기",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
             if (blocks.isEmpty()) {
                 Text(
                     text = "아직 본문 내용이 없습니다.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = DiaryTextMutedColor,
                 )
             } else {
                 blocks.forEach { block ->
@@ -394,6 +409,7 @@ private fun DiaryContentPreview(
                             Text(
                                 text = block.text,
                                 style = MaterialTheme.typography.bodyLarge,
+                                color = DiaryTextStrongColor,
                             )
                         }
 

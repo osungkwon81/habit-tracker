@@ -110,6 +110,7 @@ class DailyEntryViewModel(
                 durationMinutes = detail?.durationMinutes?.toString().orEmpty(),
                 checked = detail?.checked == true || detail?.booleanValue == true,
                 note = detail?.note.orEmpty(),
+                description = taskItem.description.orEmpty(),
                 hasExistingValue = detail != null,
             )
         }
@@ -137,5 +138,6 @@ data class TaskItemInputState(
     val durationMinutes: String = "",
     val checked: Boolean = false,
     val note: String = "",
+    val description: String = "",
     val hasExistingValue: Boolean = false,
 )

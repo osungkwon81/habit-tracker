@@ -33,6 +33,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.VocabularyWordEntity
 
+private val LearningHeroColor = androidx.compose.ui.graphics.Color(0xFF12252B)
+private val LearningHeroSubColor = androidx.compose.ui.graphics.Color(0xFFF0E7D1)
+private val LearningTitleColor = androidx.compose.ui.graphics.Color(0xFF182126)
+private val LearningSubtitleColor = androidx.compose.ui.graphics.Color(0xFF34464D)
+
 @Composable
 fun LearningScreen(viewModel: LearningViewModel) {
     val uiState by viewModel.uiState.collectAsState()
@@ -45,9 +50,11 @@ fun LearningScreen(viewModel: LearningViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text = "외국어 학습", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(text = "암기, 시험, 단어 등록, 통계를 한 화면에서 관리합니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = LearningHeroColor)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(text = "🧠 외국어 학습", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+                    Text(text = "암기, 시험, 단어 등록, 통계를 한 화면에서 관리합니다.", color = LearningHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
         item {
@@ -175,9 +182,9 @@ private fun FlashcardRow(
     ) {
         Text(text = "${index + 1}", modifier = Modifier.width(24.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(text = promptText, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = promptText, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = LearningTitleColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (showPronunciation && !word.pronunciation.isNullOrBlank()) {
-                Text(text = word.pronunciation.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(text = word.pronunciation.orEmpty(), style = MaterialTheme.typography.bodySmall, color = LearningSubtitleColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(
                 text = if (revealed || answer != null || finished) hiddenText else if (isWordBlind) "단어를 가렸습니다" else "뜻을 가렸습니다",
@@ -284,7 +291,7 @@ private fun TestRow(
     ) {
         Text(text = "${index + 1}", modifier = Modifier.width(24.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(text = word.word, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text = word.word, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = LearningTitleColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!word.pronunciation.isNullOrBlank()) {
                 Text(text = word.pronunciation.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -483,4 +490,3 @@ private fun formatDuration(totalSeconds: Int): String {
         "${seconds}초"
     }
 }
-

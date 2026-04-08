@@ -38,7 +38,7 @@ class LearningViewModel(
     private val bulkMode = MutableStateFlow(false)
     private val message = MutableStateFlow<String?>(null)
     private val flashcardCount = MutableStateFlow("10")
-    private val flashcardShowPronunciation = MutableStateFlow(true)
+    private val flashcardShowPronunciation = MutableStateFlow(false)
     private val flashcardBlindMode = MutableStateFlow(BlindMode.MEANING)
     private val flashcardWeighted = MutableStateFlow(true)
     private val flashcardSession = MutableStateFlow<FlashcardSession?>(null)
@@ -371,10 +371,11 @@ class LearningViewModel(
     private fun buildStudySet(words: List<VocabularyWordEntity>, count: Int, weighted: Boolean): List<VocabularyWordEntity> {
         if (words.isEmpty()) return emptyList()
         val safeCount = max(1, count)
+        val uniqueTargetCount = safeCount.coerceAtMost(words.size)
         return if (!weighted) {
-            buildRandomStudySet(words, safeCount)
+            buildRandomStudySet(words, uniqueTargetCount)
         } else {
-            List(safeCount) { pickWeightedWord(words) }
+            buildWeightedStudySet(words, uniqueTargetCount)
         }
     }
 
@@ -389,8 +390,19 @@ class LearningViewModel(
         return results.take(count)
     }
 
+    private fun buildWeightedStudySet(words: List<VocabularyWordEntity>, count: Int): List<VocabularyWordEntity> {
+        val pool = words.toMutableList()
+        val results = mutableListOf<VocabularyWordEntity>()
+        repeat(count.coerceAtMost(pool.size)) {
+            val selected = pickWeightedWord(pool)
+            results += selected
+            pool.remove(selected)
+        }
+        return results
+    }
+
     private fun pickWeightedWord(words: List<VocabularyWordEntity>): VocabularyWordEntity {
-        val weights = words.map { calculateWeight(it) }
+        val weights = words.map(::calculateWeight)
         val totalWeight = weights.sum()
         var target = Random.nextDouble(totalWeight)
         words.forEachIndexed { index, word ->
@@ -449,7 +461,7 @@ data class LearningUiState(
     val bulkMode: Boolean = false,
     val statusMessage: String? = null,
     val flashcardCount: String = "10",
-    val flashcardShowPronunciation: Boolean = true,
+    val flashcardShowPronunciation: Boolean = false,
     val flashcardBlindMode: BlindMode = BlindMode.MEANING,
     val flashcardWeighted: Boolean = true,
     val flashcardSession: FlashcardSession? = null,
@@ -466,4 +478,3 @@ data class LearningUiState(
 )
 
 private fun Double.reciprocal(): Double = 1.0 / this
-

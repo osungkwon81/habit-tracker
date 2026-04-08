@@ -2,8 +2,10 @@
 
 import androidx.compose.ui.graphics.Color
 
-val Slate900 = Color(0xFF132A2F)
-val Teal600 = Color(0xFF2B7A78)
-val Sand100 = Color(0xFFF3EFE7)
-val Coral500 = Color(0xFFE07A5F)
-val Mint200 = Color(0xFFD8F3DC)
+val Ink900 = Color(0xFF182126)
+val Forest600 = Color(0xFF2F6B57)
+val Amber500 = Color(0xFFD08A2E)
+val Cream50 = Color(0xFFF8F4EC)
+val Cream100 = Color(0xFFF1E8D8)
+val Navy700 = Color(0xFF24404A)
+val Mint300 = Color(0xFFCCE8DA)

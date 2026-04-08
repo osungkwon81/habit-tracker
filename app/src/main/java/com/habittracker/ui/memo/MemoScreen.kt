@@ -36,6 +36,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.MemoNoteEntity
 
+private val MemoHeroColor = androidx.compose.ui.graphics.Color(0xFF1F262D)
+private val MemoHeroSubColor = androidx.compose.ui.graphics.Color(0xFFE5D9C6)
+private val MemoCardColor = androidx.compose.ui.graphics.Color(0xFFFFFBF4)
+private val MemoTextStrongColor = androidx.compose.ui.graphics.Color(0xFF172126)
+private val MemoTextMutedColor = androidx.compose.ui.graphics.Color(0xFF34464D)
+
 @Composable
 fun MemoScreen(viewModel: MemoViewModel) {
     val uiState by viewModel.uiState.collectAsState()
@@ -114,21 +120,26 @@ private fun MemoListScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(text = "메모장", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Button(onClick = onNewMemo) {
-                    Text("작성")
+            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = MemoHeroColor)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(text = "📝 메모장", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+                        Text(text = "짧은 생각부터 잠금 메모까지 빠르게 정리합니다.", color = MemoHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Button(onClick = onNewMemo, modifier = Modifier.fillMaxWidth()) { Text("작성") }
                 }
             }
         }
         item {
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = onSearchQueryChange,
-                label = { Text("제목 또는 내용 검색") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
+            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    label = { Text("제목 또는 내용 검색") },
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    singleLine = true,
+                )
+            }
         }
         uiState.statusMessage?.let { message ->
             item {
@@ -137,8 +148,8 @@ private fun MemoListScreen(
         }
         if (uiState.memoNotes.isEmpty()) {
             item {
-                Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Text(text = "검색 결과가 없습니다.", modifier = Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MemoCardColor)) {
+                    Text(text = "검색 결과가 없습니다.", modifier = Modifier.fillMaxWidth().padding(16.dp), color = MemoTextMutedColor)
                 }
             }
         } else {
@@ -161,15 +172,18 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(text = if (uiState.selectedMemoId == null) "메모 작성" else "메모 수정", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                TextButton(onClick = viewModel::showList) {
-                    Text("목록")
+            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = MemoHeroColor)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(text = if (uiState.selectedMemoId == null) "📝 메모 작성" else "🛠️ 메모 수정", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+                        Text(text = "텍스트를 깔끔하게 쌓아두는 공간입니다.", color = MemoHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    TextButton(onClick = viewModel::showList, modifier = Modifier.fillMaxWidth()) { Text("목록") }
                 }
             }
         }
         item {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MemoCardColor)) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
                         value = uiState.title,
@@ -187,7 +201,7 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = uiState.isLocked, onCheckedChange = viewModel::updateLocked)
-                        Text("잠금")
+                        Text("잠금", color = MemoTextStrongColor)
                     }
                     if (uiState.isLocked) {
                         OutlinedTextField(
@@ -202,7 +216,7 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                         Text(
                             text = "잠금 메모는 저장 시 4자리 숫자 비밀번호가 필수입니다.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MemoTextMutedColor,
                         )
                     }
                     Button(onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth()) {
@@ -221,14 +235,15 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
 private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MemoCardColor),
     ) {
         Text(
             text = memoNote.title,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
+            color = MemoTextStrongColor,
         )
     }
 }

@@ -64,6 +64,36 @@ interface HabitDao {
 
     @Query(
         """
+        SELECT * FROM lotto_ticket
+        WHERE source_label = :sourceLabel
+          AND note = :note
+        ORDER BY id ASC
+        """,
+    )
+    suspend fun getLottoTicketsBySourceAndNote(sourceLabel: String, note: String): List<LottoTicketEntity>
+
+    @Query(
+        """
+        DELETE FROM lotto_ticket
+        WHERE source_label = :sourceLabel
+          AND note = :note
+        """,
+    )
+    suspend fun deleteLottoTicketsBySourceAndNote(sourceLabel: String, note: String)
+
+    @Query("DELETE FROM lotto_ticket WHERE id = :ticketId")
+    suspend fun deleteLottoTicketById(ticketId: Long)
+
+    @Query(
+        """
+        DELETE FROM lotto_ticket
+        WHERE note = :note
+        """,
+    )
+    suspend fun deleteLottoTicketsByNote(note: String)
+
+    @Query(
+        """
         SELECT * FROM memo_note
         ORDER BY updated_at DESC, id DESC
         LIMIT :limit
@@ -291,8 +321,10 @@ interface HabitDao {
         SELECT tim.name AS task_name,
                tim.value_type AS value_type,
                SUM(dri.number_value) AS total_number,
+               SUM(dri.duration_minutes) AS total_duration,
                SUM(CASE
                        WHEN dri.checked = 1 OR dri.boolean_value = 1 THEN 1
+                       WHEN COALESCE(dri.number_value, 0) > 0 OR COALESCE(dri.duration_minutes, 0) > 0 THEN 1
                        ELSE 0
                    END) AS completed_count
         FROM daily_record dr

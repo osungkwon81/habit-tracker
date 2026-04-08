@@ -23,6 +23,19 @@ import kotlinx.coroutines.withContext
 
 private const val generatorTab = "generator"
 private const val historyTab = "history"
+private const val sourceChatGpt = "ChatGPT"
+private const val sourceGemini = "Gemini"
+
+private data class PendingLottoBatchSave(
+    val roundNo: Int,
+    val sourceLabel: String,
+    val tickets: List<LottoGeneratedTicket>,
+)
+
+private data class PendingLottoDelete(
+    val roundNo: Int? = null,
+    val ticketId: Long? = null,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LottoViewModel(
@@ -40,6 +53,9 @@ class LottoViewModel(
     private val generatedChatGpt = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val generatedGemini = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val latestRoundNo = MutableStateFlow<Int?>(null)
+    private val pendingBatchSave = MutableStateFlow<PendingLottoBatchSave?>(null)
+    private val pendingDelete = MutableStateFlow<PendingLottoDelete?>(null)
+    private val lastGeneratedSource = MutableStateFlow<String?>(null)
 
     private val observedDraws = appliedQueryRoundInput.flatMapLatest { query ->
         repository.observeLottoDraws(query.toIntOrNull(), limit = 20)
@@ -61,6 +77,9 @@ class LottoViewModel(
         generatedChatGpt,
         generatedGemini,
         latestRoundNo,
+        pendingBatchSave,
+        pendingDelete,
+        lastGeneratedSource,
     ) { values ->
         val tab = values[0] as String
         val draws = values[1] as List<LottoDrawEntity>
@@ -75,6 +94,9 @@ class LottoViewModel(
         val chatGpt = values[10] as List<LottoGeneratedTicket>
         val gemini = values[11] as List<LottoGeneratedTicket>
         val latestRound = values[12] as Int?
+        val pendingSave = values[13] as PendingLottoBatchSave?
+        val pendingDeleteState = values[14] as PendingLottoDelete?
+        val recentSource = values[15] as String?
 
         LottoUiState(
             selectedTab = tab,
@@ -91,6 +113,11 @@ class LottoViewModel(
             savedTickets = tickets,
             latestSavedRoundNo = latestRound,
             nextRoundNo = latestRound?.plus(1),
+            pendingOverwriteRoundNo = pendingSave?.roundNo,
+            pendingOverwriteSourceLabel = pendingSave?.sourceLabel,
+            pendingDeleteRoundNo = pendingDeleteState?.roundNo,
+            pendingDeleteTicketId = pendingDeleteState?.ticketId,
+            lastGeneratedSource = recentSource,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -142,32 +169,75 @@ class LottoViewModel(
         statusMessage.value = "생성한 번호를 당첨 번호 입력 칸으로 복사했습니다."
     }
 
-    fun saveGeneratedTicket(numbers: List<Int>, sourceLabel: String) {
-        viewModelScope.launch {
-            runCatching {
-                repository.saveLottoTicket(numbers = numbers, sourceLabel = sourceLabel)
-            }.onSuccess {
-                statusMessage.value = "생성 번호를 저장했습니다."
-            }.onFailure { error ->
-                statusMessage.value = error.message ?: "생성 번호 저장에 실패했습니다."
-            }
-        }
-    }
-
-    fun saveAllGeneratedTickets(sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
+    fun saveGeneratedBatch(sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
         viewModelScope.launch {
             if (tickets.isEmpty()) {
                 statusMessage.value = "저장할 생성 번호가 없습니다."
                 return@launch
             }
+            val targetRoundNo = roundInput.value.toIntOrNull() ?: latestRoundNo.value?.plus(1)
+            if (targetRoundNo == null || targetRoundNo <= 0) {
+                statusMessage.value = "저장할 회차를 먼저 확인해 주세요."
+                return@launch
+            }
+            if (repository.hasSavedLottoBatch(roundNo = targetRoundNo, sourceLabel = sourceLabel)) {
+                pendingBatchSave.value = PendingLottoBatchSave(
+                    roundNo = targetRoundNo,
+                    sourceLabel = sourceLabel,
+                    tickets = tickets.take(5),
+                )
+                statusMessage.value = "${targetRoundNo}회차 ${sourceLabel} 번호가 이미 저장되어 있습니다."
+                return@launch
+            }
+            saveGeneratedBatchInternal(roundNo = targetRoundNo, sourceLabel = sourceLabel, tickets = tickets, overwrite = false)
+        }
+    }
+
+    fun confirmOverwriteGeneratedBatch() {
+        val pendingSave = pendingBatchSave.value ?: return
+        viewModelScope.launch {
+            saveGeneratedBatchInternal(
+                roundNo = pendingSave.roundNo,
+                sourceLabel = pendingSave.sourceLabel,
+                tickets = pendingSave.tickets,
+                overwrite = true,
+            )
+        }
+    }
+
+    fun dismissOverwriteGeneratedBatch() {
+        pendingBatchSave.value = null
+    }
+
+    fun requestDeleteSavedRound(roundNo: Int) {
+        pendingDelete.value = PendingLottoDelete(roundNo = roundNo)
+    }
+
+    fun requestDeleteSavedTicket(ticketId: Long) {
+        pendingDelete.value = PendingLottoDelete(ticketId = ticketId)
+    }
+
+    fun dismissDeleteRequest() {
+        pendingDelete.value = null
+    }
+
+    fun confirmDeleteRequest() {
+        val target = pendingDelete.value ?: return
+        viewModelScope.launch {
             runCatching {
-                tickets.forEach { ticket ->
-                    repository.saveLottoTicket(numbers = ticket.numbers, sourceLabel = sourceLabel)
+                when {
+                    target.ticketId != null -> repository.deleteLottoTicket(target.ticketId)
+                    target.roundNo != null -> repository.deleteLottoRound(target.roundNo)
                 }
             }.onSuccess {
-                statusMessage.value = "${tickets.size}개 조합을 모두 저장했습니다."
+                statusMessage.value = when {
+                    target.ticketId != null -> "선택한 번호를 삭제했습니다."
+                    target.roundNo != null -> "${target.roundNo}회차 저장 번호를 삭제했습니다."
+                    else -> null
+                }
+                pendingDelete.value = null
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "전체 번호 저장에 실패했습니다."
+                statusMessage.value = error.message ?: "삭제에 실패했습니다."
             }
         }
     }
@@ -177,6 +247,7 @@ class LottoViewModel(
             val history = repository.getAllLottoHistory()
             val mode = generationMode.value
             isGenerating.value = true
+            lastGeneratedSource.value = sourceChatGpt
             delay(16)
             runCatching {
                 withContext(Dispatchers.Default) {
@@ -197,6 +268,7 @@ class LottoViewModel(
             val history = repository.getAllLottoHistory()
             val mode = generationMode.value
             isGenerating.value = true
+            lastGeneratedSource.value = sourceGemini
             delay(16)
             runCatching {
                 withContext(Dispatchers.Default) {
@@ -239,6 +311,22 @@ class LottoViewModel(
             roundInput.value = (latest + 1).toString()
         }
     }
+
+    private suspend fun saveGeneratedBatchInternal(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>, overwrite: Boolean) {
+        runCatching {
+            repository.saveLottoBatch(
+                roundNo = roundNo,
+                sourceLabel = sourceLabel,
+                tickets = tickets,
+                overwrite = overwrite,
+            )
+        }.onSuccess {
+            pendingBatchSave.value = null
+            statusMessage.value = "${roundNo}회차 ${sourceLabel} 번호 5게임을 저장했습니다."
+        }.onFailure { error ->
+            statusMessage.value = error.message ?: "생성 번호 저장에 실패했습니다."
+        }
+    }
 }
 
 data class LottoUiState(
@@ -256,4 +344,9 @@ data class LottoUiState(
     val savedTickets: List<LottoTicketEntity> = emptyList(),
     val latestSavedRoundNo: Int? = null,
     val nextRoundNo: Int? = null,
+    val pendingOverwriteRoundNo: Int? = null,
+    val pendingOverwriteSourceLabel: String? = null,
+    val pendingDeleteRoundNo: Int? = null,
+    val pendingDeleteTicketId: Long? = null,
+    val lastGeneratedSource: String? = null,
 )
