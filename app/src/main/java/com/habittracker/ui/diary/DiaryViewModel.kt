@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 private const val diaryListMode = "list"
+private const val diaryDetailMode = "detail"
 private const val diaryEditorMode = "editor"
 private const val diaryPageSize = 20
 
@@ -24,6 +25,7 @@ class DiaryViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
     private val selectedDate = MutableStateFlow(LocalDate.now())
+    private val reloadToken = MutableStateFlow(0)
     private val message = MutableStateFlow<String?>(null)
     private val searchQuery = MutableStateFlow("")
     private val screenMode = MutableStateFlow(diaryListMode)
@@ -37,7 +39,8 @@ class DiaryViewModel(
     }
 
     val uiState: StateFlow<DiaryUiState> = combine(
-        selectedDate.flatMapLatest { date -> flow { emit(repository.getDiary(date)) } },
+        combine(selectedDate, reloadToken) { date, token -> date to token }
+            .flatMapLatest { (date, _) -> flow { emit(repository.getDiary(date)) } },
         message,
         searchQuery,
         diaryListFlow,
@@ -70,8 +73,9 @@ class DiaryViewModel(
         runCatching { LocalDate.parse(rawDate) }
             .onSuccess {
                 selectedDate.value = it
+                reloadToken.value += 1
                 message.value = null
-                screenMode.value = diaryEditorMode
+                screenMode.value = diaryDetailMode
             }
             .onFailure {
                 message.value = "날짜 형식은 YYYY-MM-DD로 입력해 주세요."
@@ -88,8 +92,9 @@ class DiaryViewModel(
 
     fun openSearchResult(diaryDate: LocalDate) {
         selectedDate.value = diaryDate
+        reloadToken.value += 1
         message.value = null
-        screenMode.value = diaryEditorMode
+        screenMode.value = diaryDetailMode
     }
 
     fun showList() {
@@ -97,8 +102,14 @@ class DiaryViewModel(
         message.value = null
     }
 
+    fun editCurrentDiary() {
+        screenMode.value = diaryEditorMode
+        message.value = null
+    }
+
     fun startNewDiary() {
         selectedDate.value = LocalDate.now()
+        reloadToken.value += 1
         message.value = null
         screenMode.value = diaryEditorMode
     }
@@ -109,8 +120,9 @@ class DiaryViewModel(
                 val diaryDate = LocalDate.parse(rawDate)
                 repository.saveDiary(diaryDate = diaryDate, title = title, body = body, weather = weather, imageUris = imageUris)
                 selectedDate.value = diaryDate
+                reloadToken.value += 1
             }.onSuccess {
-                screenMode.value = diaryListMode
+                screenMode.value = diaryDetailMode
                 message.value = "일기를 저장했습니다."
             }.onFailure { error ->
                 message.value = error.message ?: "일기 저장에 실패했습니다."

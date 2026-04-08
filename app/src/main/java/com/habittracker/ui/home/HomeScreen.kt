@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.RecordDetailRow
@@ -43,11 +44,14 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
 
-private val WeekendColor = Color(0xFFD94F4F)
-private val RecordOnlyColor = Color(0xFFDCEBFF)
-private val DiaryOnlyColor = Color(0xFFFFE9C7)
-private val BothContentColor = Color(0xFFDDF4E4)
-private val HolidayColor = Color(0xFFFFD9D9)
+private val WeekendColor = Color(0xFFB53A3A)
+private val RecordOnlyColor = Color(0xFFEAF3FF)
+private val DiaryOnlyColor = Color(0xFFFFF3DD)
+private val BothContentColor = Color(0xFFE9F7ED)
+private val HolidayColor = Color(0xFFFFEAEA)
+private val CalendarTextColor = Color(0xFF08161A)
+private val CalendarSubTextColor = Color(0xFF24383E)
+private val EmptyDayColor = Color(0xFFFFFCF8)
 
 @Composable
 fun HomeScreen(
@@ -166,7 +170,13 @@ private fun CalendarLegend() {
 @Composable
 private fun LegendChip(label: String, color: Color, modifier: Modifier = Modifier) {
     Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = color), shape = RoundedCornerShape(16.dp)) {
-        Text(text = label, modifier = Modifier.padding(vertical = 10.dp), fontWeight = FontWeight.Medium)
+        Text(
+            text = label,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            fontWeight = FontWeight.Medium,
+            color = CalendarTextColor,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -214,6 +224,7 @@ private fun CalendarGrid(
                     color = if (index == 0 || index == 6) WeekendColor else MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -226,13 +237,13 @@ private fun CalendarGrid(
                     val hasDiary = diarySummary != null
                     val isSelected = date != null && date == selectedDate
                     val isToday = date == today
-                    val dayColor = if (date != null && (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY)) WeekendColor else MaterialTheme.colorScheme.onSurface
+                    val dayColor = if (date != null && (date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY)) WeekendColor else CalendarTextColor
                     val backgroundColor = when {
                         summary?.isHoliday == true -> HolidayColor
                         hasRecord && hasDiary -> BothContentColor
                         hasRecord -> RecordOnlyColor
                         hasDiary -> DiaryOnlyColor
-                        else -> MaterialTheme.colorScheme.surface
+                        else -> EmptyDayColor
                     }
                     Box(
                         modifier = Modifier
@@ -246,20 +257,43 @@ private fun CalendarGrid(
                             .padding(8.dp),
                     ) {
                         if (date != null) {
-                            Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.SpaceBetween,
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
                                 Text(
                                     text = date.dayOfMonth.toString(),
+                                    modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = if (summary?.isHoliday == true) WeekendColor else dayColor,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = if (summary?.isHoliday == true || date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY) FontWeight.ExtraBold else FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
                                 )
                                 if (summary != null) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                    ) {
                                         Spacer(modifier = Modifier.size(8.dp).clip(CircleShape).background(if (summary.isHoliday) WeekendColor else MaterialTheme.colorScheme.secondary))
-                                        Text(text = if (summary.isHoliday) "휴일" else "${summary.completedCount}/${summary.itemCount}", style = MaterialTheme.typography.labelSmall)
+                                        Text(
+                                            text = if (summary.isHoliday) "휴일" else "${summary.completedCount}/${summary.itemCount}",
+                                            modifier = Modifier.fillMaxWidth(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (summary.isHoliday) WeekendColor else CalendarSubTextColor,
+                                            fontWeight = FontWeight.Medium,
+                                            textAlign = TextAlign.Center,
+                                        )
                                     }
                                 } else if (diarySummary != null) {
-                                    Text(text = "일기", style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        text = "일기",
+                                        modifier = Modifier.fillMaxWidth(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = CalendarSubTextColor,
+                                        fontWeight = FontWeight.Medium,
+                                        textAlign = TextAlign.Center,
+                                    )
                                 }
                             }
                         }

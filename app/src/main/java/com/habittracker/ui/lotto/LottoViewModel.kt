@@ -5,16 +5,21 @@ import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.repository.HabitRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val generatorTab = "generator"
 private const val historyTab = "history"
@@ -26,14 +31,20 @@ class LottoViewModel(
     private val selectedTab = MutableStateFlow(generatorTab)
     private val roundInput = MutableStateFlow("")
     private val queryRoundInput = MutableStateFlow("")
+    private val appliedQueryRoundInput = MutableStateFlow("")
     private val numberInputs = MutableStateFlow(List(6) { "" })
+    private val generationMode = MutableStateFlow(LottoGenerationMode.BASIC)
+    private val isGenerating = MutableStateFlow(false)
+    private val isHistoryLoading = MutableStateFlow(false)
     private val statusMessage = MutableStateFlow<String?>(null)
     private val generatedChatGpt = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val generatedGemini = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val latestRoundNo = MutableStateFlow<Int?>(null)
 
-    private val observedDraws = queryRoundInput.flatMapLatest { query ->
+    private val observedDraws = appliedQueryRoundInput.flatMapLatest { query ->
         repository.observeLottoDraws(query.toIntOrNull(), limit = 20)
+    }.onEach {
+        isHistoryLoading.value = false
     }
 
     val uiState: StateFlow<LottoUiState> = combine(
@@ -43,6 +54,9 @@ class LottoViewModel(
         roundInput,
         queryRoundInput,
         numberInputs,
+        generationMode,
+        isGenerating,
+        isHistoryLoading,
         statusMessage,
         generatedChatGpt,
         generatedGemini,
@@ -54,16 +68,22 @@ class LottoViewModel(
         val round = values[3] as String
         val query = values[4] as String
         val numbers = values[5] as List<String>
-        val message = values[6] as String?
-        val chatGpt = values[7] as List<LottoGeneratedTicket>
-        val gemini = values[8] as List<LottoGeneratedTicket>
-        val latestRound = values[9] as Int?
+        val mode = values[6] as LottoGenerationMode
+        val generating = values[7] as Boolean
+        val historyLoading = values[8] as Boolean
+        val message = values[9] as String?
+        val chatGpt = values[10] as List<LottoGeneratedTicket>
+        val gemini = values[11] as List<LottoGeneratedTicket>
+        val latestRound = values[12] as Int?
 
         LottoUiState(
             selectedTab = tab,
             roundInput = round,
             queryRoundInput = query,
             numberInputs = numbers,
+            generationMode = mode,
+            isGenerating = generating,
+            isHistoryLoading = historyLoading,
             statusMessage = message,
             chatGptResults = chatGpt,
             geminiResults = gemini,
@@ -83,6 +103,7 @@ class LottoViewModel(
             repository.seedLottoDrawsIfEmpty()
             refreshLatestRound()
         }
+        isHistoryLoading.value = true
     }
 
     fun selectGeneratorTab() {
@@ -101,10 +122,19 @@ class LottoViewModel(
         queryRoundInput.value = value.filter(Char::isDigit)
     }
 
+    fun submitDrawQuery() {
+        isHistoryLoading.value = true
+        appliedQueryRoundInput.value = queryRoundInput.value
+    }
+
     fun updateNumberInput(index: Int, value: String) {
         numberInputs.value = numberInputs.value.toMutableList().also { list ->
             list[index] = value.filter(Char::isDigit).take(2)
         }
+    }
+
+    fun updateGenerationMode(mode: LottoGenerationMode) {
+        generationMode.value = mode
     }
 
     fun applyGeneratedNumbers(numbers: List<Int>) {
@@ -145,16 +175,40 @@ class LottoViewModel(
     fun generateChatGpt() {
         viewModelScope.launch {
             val history = repository.getAllLottoHistory()
-            generatedChatGpt.value = LottoNumberGenerator.generateChatGpt(history)
-            statusMessage.value = "ChatGPT 방식 번호를 생성했습니다."
+            val mode = generationMode.value
+            isGenerating.value = true
+            delay(16)
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    LottoNumberGenerator.generateChatGpt(history, mode = mode)
+                }
+            }.onSuccess { tickets ->
+                generatedChatGpt.value = tickets
+                statusMessage.value = "ChatGPT 방식 번호를 ${mode.label} 모드로 생성했습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "ChatGPT 번호 생성에 실패했습니다."
+            }
+            isGenerating.value = false
         }
     }
 
     fun generateGemini() {
         viewModelScope.launch {
             val history = repository.getAllLottoHistory()
-            generatedGemini.value = LottoNumberGenerator.generateGemini(history)
-            statusMessage.value = "Gemini 방식 번호를 생성했습니다."
+            val mode = generationMode.value
+            isGenerating.value = true
+            delay(16)
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    LottoNumberGenerator.generateGemini(history, mode = mode)
+                }
+            }.onSuccess { tickets ->
+                generatedGemini.value = tickets
+                statusMessage.value = "Gemini 방식 번호를 ${mode.label} 모드로 생성했습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "Gemini 번호 생성에 실패했습니다."
+            }
+            isGenerating.value = false
         }
     }
 
@@ -192,6 +246,9 @@ data class LottoUiState(
     val roundInput: String = "",
     val queryRoundInput: String = "",
     val numberInputs: List<String> = List(6) { "" },
+    val generationMode: LottoGenerationMode = LottoGenerationMode.BASIC,
+    val isGenerating: Boolean = false,
+    val isHistoryLoading: Boolean = false,
     val statusMessage: String? = null,
     val chatGptResults: List<LottoGeneratedTicket> = emptyList(),
     val geminiResults: List<LottoGeneratedTicket> = emptyList(),

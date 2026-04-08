@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import com.habittracker.data.lotto.LottoGenerationMode
 import java.time.LocalDate
 
 @Composable
@@ -58,7 +60,15 @@ fun LottoScreen(viewModel: LottoViewModel) {
         }
         item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }
         if (uiState.selectedTab == "generator") {
-            item { GeneratorSection(onGenerateChatGpt = viewModel::generateChatGpt, onGenerateGemini = viewModel::generateGemini) }
+            item {
+                GeneratorSection(
+                    selectedMode = uiState.generationMode,
+                    isGenerating = uiState.isGenerating,
+                    onModeSelected = viewModel::updateGenerationMode,
+                    onGenerateChatGpt = viewModel::generateChatGpt,
+                    onGenerateGemini = viewModel::generateGemini,
+                )
+            }
             item {
                 GeneratedTicketSection(
                     title = "ChatGPT 추천 번호",
@@ -100,7 +110,14 @@ fun LottoScreen(viewModel: LottoViewModel) {
                     onSave = viewModel::saveDraw,
                 )
             }
-            item { SearchSection(queryRoundInput = uiState.queryRoundInput, onQueryChange = viewModel::updateQueryRoundInput) }
+            item {
+                SearchSection(
+                    queryRoundInput = uiState.queryRoundInput,
+                    isLoading = uiState.isHistoryLoading,
+                    onQueryChange = viewModel::updateQueryRoundInput,
+                    onSearch = viewModel::submitDrawQuery,
+                )
+            }
             item {
                 Text(
                     text = if (uiState.queryRoundInput.isBlank()) "최신 당첨 번호" else "${uiState.queryRoundInput}회차 조회 결과",
@@ -108,7 +125,9 @@ fun LottoScreen(viewModel: LottoViewModel) {
                     fontWeight = FontWeight.Bold,
                 )
             }
-            if (uiState.savedDraws.isEmpty()) {
+            if (uiState.isHistoryLoading) {
+                item { LoadingCard(message = "당첨 번호를 조회하고 있습니다.") }
+            } else if (uiState.savedDraws.isEmpty()) {
                 item { EmptyCard(message = "저장된 당첨 번호가 없습니다.") }
             } else {
                 items(uiState.savedDraws, key = { it.roundNo }) { draw ->
@@ -134,13 +153,42 @@ private fun StatusCard(latestRoundNo: Int?, nextRoundNo: Int?, message: String?)
 }
 
 @Composable
-private fun GeneratorSection(onGenerateChatGpt: () -> Unit, onGenerateGemini: () -> Unit) {
+private fun GeneratorSection(
+    selectedMode: LottoGenerationMode,
+    isGenerating: Boolean,
+    onModeSelected: (LottoGenerationMode) -> Unit,
+    onGenerateChatGpt: () -> Unit,
+    onGenerateGemini: () -> Unit,
+) {
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "번호 생성", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                LottoGenerationMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = selectedMode == mode,
+                        onClick = { onModeSelected(mode) },
+                        label = { Text(mode.label) },
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onGenerateChatGpt, modifier = Modifier.weight(1f)) { Text("ChatGPT 생성") }
-                Button(onClick = onGenerateGemini, modifier = Modifier.weight(1f)) { Text("Gemini 생성") }
+                Button(onClick = onGenerateChatGpt, modifier = Modifier.weight(1f), enabled = !isGenerating) {
+                    Text("ChatGPT 생성")
+                }
+                Button(onClick = onGenerateGemini, modifier = Modifier.weight(1f), enabled = !isGenerating) {
+                    Text("Gemini 생성")
+                }
+            }
+            if (isGenerating) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator()
+                    Text(text = "추천 번호를 계산하고 있습니다.")
+                }
             }
         }
     }
@@ -202,11 +250,19 @@ private fun SaveSection(roundInput: String, numberInputs: List<String>, onRoundC
 }
 
 @Composable
-private fun SearchSection(queryRoundInput: String, onQueryChange: (String) -> Unit) {
+private fun SearchSection(
+    queryRoundInput: String,
+    isLoading: Boolean,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+) {
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(text = "당첨 번호 조회", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             OutlinedTextField(value = queryRoundInput, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(), label = { Text("회차 번호 입력, 비우면 최신 목록") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+            Button(onClick = onSearch, modifier = Modifier.fillMaxWidth(), enabled = !isLoading) {
+                Text(if (isLoading) "조회 중..." else "조회")
+            }
         }
     }
 }
@@ -292,5 +348,19 @@ private fun LottoNumberRow(numbers: List<Int>) {
 private fun EmptyCard(message: String) {
     Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Text(text = message, modifier = Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun LoadingCard(message: String) {
+    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator()
+            Text(text = message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
