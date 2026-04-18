@@ -7,22 +7,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,14 +34,25 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.ValueType
+import com.habittracker.ui.components.AppHeroCard
+import com.habittracker.ui.components.AppNoticeDialog
+import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppSectionCard
+import com.habittracker.ui.components.AppSectionHeader
+import com.habittracker.ui.components.AppSelectableChip
+import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.AppTextField
+import com.habittracker.ui.components.actionNoticeDialogTitle
+import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import java.time.LocalDate
 
-private val EntryHeroColor = androidx.compose.ui.graphics.Color(0xFF13242A)
-private val EntryHeroSubColor = androidx.compose.ui.graphics.Color(0xFFE4D8BF)
-private val EntryCardColor = androidx.compose.ui.graphics.Color(0xFFFFFBF5)
-private val EntryExerciseCardColor = androidx.compose.ui.graphics.Color(0xFFE9F4ED)
-private val EntryTextStrongColor = androidx.compose.ui.graphics.Color(0xFF172126)
-private val EntryTextMutedColor = androidx.compose.ui.graphics.Color(0xFF34464D)
+private val EntryHeroColor = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
+private val EntryHeroSubColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
+private val EntryCardColor = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
+private val EntryExerciseCardColor = androidx.compose.ui.graphics.Color(0xFFF2F4F3)
+private val EntryTextStrongColor = androidx.compose.ui.graphics.Color(0xFF171C19)
+private val EntryTextMutedColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
 
 @Composable
 fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
@@ -58,12 +63,19 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
     var isHoliday by remember(uiState.selectedDate, uiState.isHoliday) { mutableStateOf(uiState.isHoliday) }
     var expanded by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf(false) }
     var selectedCategory by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf("전체") }
+    var noticeMessage by remember { mutableStateOf<String?>(null) }
     val editableItems = remember(uiState.selectedDate, uiState.taskItems) { mutableStateListOf<TaskItemEditorState>().apply { addAll(uiState.taskItems.map(TaskItemEditorState.Companion::from)) } }
     val visibleItemIds = remember(uiState.selectedDate, uiState.taskItems) {
         mutableStateOf(uiState.taskItems.map(TaskItemInputState::taskItemMasterId).toMutableSet())
     }
 
     LaunchedEffect(initialDate) { viewModel.loadRecord(initialDate) }
+    LaunchedEffect(uiState.statusMessage) {
+        val message = uiState.statusMessage.orEmpty()
+        if (message.shouldShowActionNoticeDialog()) {
+            noticeMessage = message
+        }
+    }
 
     val categories = remember(uiState.taskItems) { listOf("전체") + uiState.taskItems.map(TaskItemInputState::category).distinct() }
     val hiddenItems = editableItems.filterNot { visibleItemIds.value.contains(it.taskItemMasterId) }
@@ -85,90 +97,70 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
         ).show()
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Card(shape = RoundedCornerShape(30.dp), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = EntryHeroColor)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "✍️ 일일 기록", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
-                    Text(
-                        text = if (uiState.hasExistingRecord) "기존 기록을 불러와 이어서 수정할 수 있습니다." else "오늘의 루틴과 메모를 한 번에 정리하세요.",
-                        color = EntryHeroSubColor,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-        }
-        item {
-            Card(shape = RoundedCornerShape(24.dp), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = dateInput,
-                            onValueChange = { },
-                            readOnly = true,
-                            label = { Text("기록 날짜") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                        )
-                        Box(modifier = Modifier.fillMaxSize().clickable(onClick = openDatePicker))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(onClick = openDatePicker, modifier = Modifier.weight(1f)) { Text("달력") }
-                        Button(onClick = { viewModel.loadRecord(dateInput.text) }, modifier = Modifier.weight(1f)) { Text("불러오기") }
-                    }
-                }
-            }
-        }
-        item {
-            Card(shape = RoundedCornerShape(24.dp), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                OutlinedTextField(
-                    value = memo,
-                    onValueChange = { memo = it },
-                    label = { Text("메모") },
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    minLines = 3,
+    AppScreen {
+        noticeMessage?.let { message ->
+            item {
+                AppNoticeDialog(
+                    message = message,
+                    onDismiss = { noticeMessage = null },
+                    title = message.actionNoticeDialogTitle(),
                 )
             }
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Checkbox(checked = isHoliday, onCheckedChange = { isHoliday = it })
-                Column {
-                    Text(text = "휴일")
-                    Text(
-                        text = "체크하면 달력에서 빨간색으로 표시됩니다.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = EntryTextMutedColor,
-                    )
+            AppHeroCard(
+                title = "일일 기록",
+                description = null,
+            )
+        }
+        item {
+            AppSectionCard {
+                AppTextField(
+                    value = dateInput.text,
+                    onValueChange = { },
+                    label = "기록 날짜",
+                    readOnly = true,
+                    singleLine = true,
+                    trailingOverlay = {
+                        Box(modifier = Modifier.matchParentSize().clickable(onClick = openDatePicker))
+                    },
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Checkbox(checked = isHoliday, onCheckedChange = { isHoliday = it })
+                    Text(text = "휴일", color = MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = "카테고리별 보기", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                AppSectionHeader(title = "항목 필터")
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     items(categories, key = { it }) { category ->
-                        FilterChip(
-                            selected = selectedCategory == category,
-                            onClick = { selectedCategory = category },
-                            label = { Text(category) },
-                        )
+                        AppSelectableChip(label = category, selected = selectedCategory == category, onClick = { selectedCategory = category })
                     }
                 }
+            }
+        }
+        item {
+            AppSectionCard {
+                AppTextField(
+                    value = memo.text,
+                    onValueChange = { memo = TextFieldValue(it) },
+                    label = "메모",
+                    minLines = 3,
+                )
             }
         }
         if (hiddenItems.isNotEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
+                    AppTextField(
                         value = selectedHiddenLabel,
                         onValueChange = {},
+                        label = "추가할 항목",
                         readOnly = true,
-                        label = { Text("항목 추가") },
-                        modifier = Modifier.fillMaxWidth().clickable { expanded = true },
+                        singleLine = true,
+                        modifier = Modifier.clickable { expanded = true },
                     )
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                         hiddenItems
@@ -196,7 +188,8 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
             )
         }
         item {
-            Button(
+            AppPrimaryButton(
+                text = "기록 저장",
                 onClick = {
                     val parsedDate = runCatching { LocalDate.parse(dateInput.text) }.getOrNull()
                     if (parsedDate != null) {
@@ -211,13 +204,11 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("기록 저장")
-            }
+            )
         }
         item {
             uiState.statusMessage?.let { message ->
-                Text(text = message, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                AppStatusText(message)
             }
         }
     }
@@ -225,87 +216,115 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
 
 @Composable
 private fun TaskInputCard(item: TaskItemEditorState, onItemChanged: (TaskItemEditorState) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp),
-        colors = androidx.compose.material3.CardDefaults.cardColors(
-            containerColor = if (item.valueType == ValueType.EXERCISE) EntryExerciseCardColor else EntryCardColor,
-        ),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(text = item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = EntryTextStrongColor)
-            Text(text = item.category, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
-            if (!item.description.isBlank()) {
-                Text(text = item.description, style = MaterialTheme.typography.bodySmall, color = EntryTextMutedColor)
-            }
-            when (item.valueType) {
-                ValueType.NUMBER -> OutlinedTextField(
-                    value = item.numberValue,
-                    onValueChange = { input -> onItemChanged(item.copy(numberValue = input, checked = input.text.isNotBlank())) },
-                    label = { Text(if (item.unit == null) "수치" else "수치 (${item.unit})") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                )
-                ValueType.BOOLEAN -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = item.booleanValue || item.checked,
-                        onCheckedChange = { checked -> onItemChanged(item.copy(booleanValue = checked, checked = checked)) },
-                    )
-                    Text("완료 여부")
-                }
-                ValueType.EXERCISE -> {
+    var isExpanded by remember(item.taskItemMasterId) { mutableStateOf(item.hasExistingValue) }
+    AppSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                    .clickable { isExpanded = !isExpanded }
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "거리와 시간을 함께 입력합니다.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = EntryTextMutedColor,
+                        text = item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = androidx.compose.ui.graphics.Color.White,
                     )
-                    OutlinedTextField(
-                        value = item.numberValue,
-                        onValueChange = { input -> onItemChanged(item.copy(numberValue = input, checked = input.text.isNotBlank() || item.durationMinutes.text.isNotBlank())) },
-                        label = { Text("거리(km)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    Text(
+                        text = item.category,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.86f),
+                    )
+                }
+                Text(
+                    text = if (isExpanded) "접기" else "펼치기",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = androidx.compose.ui.graphics.Color.White,
+                )
+            }
+            if (isExpanded) {
+                when (item.valueType) {
+                    ValueType.NUMBER -> AppTextField(
+                        value = item.numberValue.text,
+                        onValueChange = { input -> onItemChanged(item.copy(numberValue = TextFieldValue(input), checked = input.isNotBlank())) },
+                        label = if (item.unit == null) "수치" else "수치 (${item.unit})",
                         singleLine = true,
                     )
-                    OutlinedTextField(
-                        value = item.durationMinutes,
-                        onValueChange = { input -> onItemChanged(item.copy(durationMinutes = input, checked = input.text.isNotBlank() || item.numberValue.text.isNotBlank())) },
-                        label = { Text("시간(분)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    ValueType.BOOLEAN -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = item.booleanValue || item.checked,
+                            onCheckedChange = { checked -> onItemChanged(item.copy(booleanValue = checked, checked = checked)) },
+                        )
+                        Text("완료 여부")
+                    }
+                    ValueType.EXERCISE -> {
+                        AppTextField(
+                            value = item.numberValue.text,
+                            onValueChange = { input -> onItemChanged(item.copy(numberValue = TextFieldValue(input), checked = input.isNotBlank() || item.durationMinutes.text.isNotBlank())) },
+                            label = "거리(km)",
+                            singleLine = true,
+                        )
+                        AppTextField(
+                            value = item.durationMinutes.text,
+                            onValueChange = { input -> onItemChanged(item.copy(durationMinutes = TextFieldValue(input), checked = input.isNotBlank() || item.numberValue.text.isNotBlank())) },
+                            label = "시간(분)",
+                            singleLine = true,
+                        )
+                    }
+                    ValueType.TEXT -> AppTextField(
+                        value = item.textValue.text,
+                        onValueChange = { input -> onItemChanged(item.copy(textValue = TextFieldValue(input), checked = input.isNotBlank())) },
+                        label = "상세 내용",
+                        minLines = 2,
+                    )
+                    ValueType.DURATION -> AppTextField(
+                        value = item.durationMinutes.text,
+                        onValueChange = { input -> onItemChanged(item.copy(durationMinutes = TextFieldValue(input), checked = input.isNotBlank())) },
+                        label = "시간(분)",
                         singleLine = true,
                     )
                 }
-                ValueType.TEXT -> OutlinedTextField(
-                    value = item.textValue,
-                    onValueChange = { input -> onItemChanged(item.copy(textValue = input, checked = input.text.isNotBlank())) },
-                    label = { Text("상세 내용") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                )
-                ValueType.DURATION -> OutlinedTextField(
-                    value = item.durationMinutes,
-                    onValueChange = { input -> onItemChanged(item.copy(durationMinutes = input, checked = input.text.isNotBlank())) },
-                    label = { Text("시간(분)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                )
-            }
-            if (item.valueType != ValueType.BOOLEAN && item.valueType != ValueType.EXERCISE) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = item.checked, onCheckedChange = { checked -> onItemChanged(item.copy(checked = checked)) })
-                    Text("완료로 표시")
+                if (item.valueType != ValueType.BOOLEAN && item.valueType != ValueType.EXERCISE) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = item.checked, onCheckedChange = { checked -> onItemChanged(item.copy(checked = checked)) })
+                        Text("완료로 표시")
+                    }
                 }
+                AppTextField(
+                    value = item.note.text,
+                    onValueChange = { note -> onItemChanged(item.copy(note = TextFieldValue(note))) },
+                    label = "메모",
+                )
+            } else {
+                Text(
+                    text = summarizeTaskItem(item),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            OutlinedTextField(
-                value = item.note,
-                onValueChange = { note -> onItemChanged(item.copy(note = note)) },
-                label = { Text("메모") },
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
+    }
+}
+
+private fun summarizeTaskItem(item: TaskItemEditorState): String {
+    return when (item.valueType) {
+        ValueType.NUMBER -> item.numberValue.text.takeIf { it.isNotBlank() }?.let {
+            if (item.unit.isNullOrBlank()) it else "$it ${item.unit}"
+        } ?: "입력 전"
+        ValueType.BOOLEAN -> if (item.booleanValue || item.checked) "완료" else "미완료"
+        ValueType.EXERCISE -> {
+            val distance = item.numberValue.text.takeIf { it.isNotBlank() }?.let { "$it km" }
+            val duration = item.durationMinutes.text.takeIf { it.isNotBlank() }?.let { "$it 분" }
+            listOfNotNull(distance, duration).joinToString(" / ").ifBlank { "입력 전" }
+        }
+        ValueType.TEXT -> item.textValue.text.takeIf { it.isNotBlank() } ?: "입력 전"
+        ValueType.DURATION -> item.durationMinutes.text.takeIf { it.isNotBlank() }?.let { "$it 분" } ?: "입력 전"
     }
 }
 

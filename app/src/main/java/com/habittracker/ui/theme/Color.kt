@@ -2,10 +2,16 @@
 
 import androidx.compose.ui.graphics.Color
 
-val Ink900 = Color(0xFF182126)
-val Forest600 = Color(0xFF2F6B57)
-val Amber500 = Color(0xFFD08A2E)
-val Cream50 = Color(0xFFF8F4EC)
-val Cream100 = Color(0xFFF1E8D8)
-val Navy700 = Color(0xFF24404A)
-val Mint300 = Color(0xFFCCE8DA)
+val Primary600 = Color(0xFF256A52)
+val Primary700 = Color(0xFF1F5844)
+val Primary100 = Color(0xFFD9E8E1)
+
+val Gray0 = Color(0xFFFFFFFF)
+val Gray25 = Color(0xFFF7F8F7)
+val Gray50 = Color(0xFFF2F4F3)
+val Gray100 = Color(0xFFE7EBE9)
+val Gray200 = Color(0xFFD6DDDA)
+val Gray400 = Color(0xFF8B9691)
+val Gray600 = Color(0xFF5C6661)
+val Gray800 = Color(0xFF28302C)
+val Gray900 = Color(0xFF171C19)

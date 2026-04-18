@@ -2,6 +2,7 @@ package com.habittracker.ui.admin
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.habittracker.data.TaskColorPalette
 import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.repository.HabitRepository
@@ -15,49 +16,78 @@ import kotlinx.coroutines.launch
 class AdminViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
-    val supportedValueTypes = listOf(ValueType.NUMBER, ValueType.BOOLEAN, ValueType.EXERCISE)
+    val supportedValueTypes = repository.managedTaskValueTypes
+    val colorOptions: List<String> = TaskColorPalette.presets
     private val message = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<AdminUiState> = combine(repository.observeActiveTaskItems(), message) { taskItems, statusMessage ->
-        AdminUiState(taskItems = taskItems, statusMessage = statusMessage)
-    }.stateIn(scope = viewModelScope, started = SharingStarted.WhileSubscribed(5_000), initialValue = AdminUiState())
+        AdminUiState(
+            taskItems = taskItems
+                .filter { it.valueType in supportedValueTypes }
+                .map { item ->
+                    AdminTaskItemUi(
+                        item = item,
+                        colorHex = repository.getTaskColorHex(item.id, item.name),
+                    )
+                },
+            statusMessage = statusMessage,
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = AdminUiState(),
+    )
 
-    fun addTaskItem(name: String, category: String, valueType: ValueType, unit: String, description: String) {
+    init {
         viewModelScope.launch {
-            runCatching { repository.addTaskItem(name = name, category = category, valueType = valueType, unit = unit, description = description) }
-                .onSuccess { message.value = "\uC0C8 \uD56D\uBAA9\uC744 \uCD94\uAC00\uD588\uC2B5\uB2C8\uB2E4." }
-                .onFailure { error -> message.value = error.message ?: "\uD56D\uBAA9 \uCD94\uAC00\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4." }
+            repository.syncManagedTaskItems()
         }
     }
 
-    fun updateTaskItem(taskItemId: Long, name: String, category: String, valueType: ValueType, unit: String, description: String) {
+    fun addTaskItem(name: String, category: String, valueType: ValueType, unit: String, description: String, colorHex: String) {
         viewModelScope.launch {
-            runCatching { repository.updateTaskItem(taskItemId = taskItemId, name = name, category = category, valueType = valueType, unit = unit, description = description) }
-                .onSuccess { message.value = "\uD56D\uBAA9\uC744 \uC218\uC815\uD588\uC2B5\uB2C8\uB2E4." }
-                .onFailure { error -> message.value = error.message ?: "\uD56D\uBAA9 \uC218\uC815\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4." }
+            runCatching {
+                repository.addTaskItem(
+                    name = name,
+                    category = category,
+                    valueType = valueType,
+                    unit = unit,
+                    description = description,
+                    colorHex = colorHex,
+                )
+            }.onSuccess {
+                message.value = "새 항목을 추가했습니다."
+            }.onFailure { error ->
+                message.value = error.message ?: "항목 추가에 실패했습니다."
+            }
         }
     }
 
     fun deleteTaskItem(taskItemId: Long) {
         viewModelScope.launch {
             runCatching { repository.deleteTaskItem(taskItemId) }
-                .onSuccess { message.value = "\uD56D\uBAA9\uC744 \uC0AD\uC81C\uD588\uC2B5\uB2C8\uB2E4." }
-                .onFailure { error -> message.value = error.message ?: "\uD56D\uBAA9 \uC0AD\uC81C\uC5D0 \uC2E4\uD328\uD588\uC2B5\uB2C8\uB2E4." }
+                .onSuccess { message.value = "항목을 삭제했습니다." }
+                .onFailure { error -> message.value = error.message ?: "항목 삭제에 실패했습니다." }
         }
     }
 
     fun getValueTypeLabel(valueType: ValueType): String {
         return when (valueType) {
-            ValueType.NUMBER -> "\uC22B\uC790"
-            ValueType.BOOLEAN -> "\uCCB4\uD06C"
-            ValueType.EXERCISE -> "\uC6B4\uB3D9 \uAE30\uB85D"
-            ValueType.TEXT -> "\uD14D\uC2A4\uD2B8"
-            ValueType.DURATION -> "\uC2DC\uAC04"
+            ValueType.NUMBER -> "숫자"
+            ValueType.EXERCISE -> "걷기 기록"
+            ValueType.BOOLEAN -> "체크"
+            ValueType.TEXT -> "텍스트"
+            ValueType.DURATION -> "시간"
         }
     }
 }
 
+data class AdminTaskItemUi(
+    val item: TaskItemMasterEntity,
+    val colorHex: String,
+)
+
 data class AdminUiState(
-    val taskItems: List<TaskItemMasterEntity> = emptyList(),
+    val taskItems: List<AdminTaskItemUi> = emptyList(),
     val statusMessage: String? = null,
 )

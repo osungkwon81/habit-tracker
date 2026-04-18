@@ -17,6 +17,7 @@ import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
+import com.habittracker.data.local.model.DailyTaskStatRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
@@ -187,6 +188,16 @@ interface HabitDao {
     @Query("UPDATE task_item_master SET is_active = 0 WHERE id = :taskItemId")
     suspend fun deactivateTaskItem(taskItemId: Long)
 
+    @Query(
+        """
+        UPDATE task_item_master
+        SET is_active = 0
+        WHERE is_active = 1
+          AND value_type NOT IN (:allowedValueTypes)
+        """,
+    )
+    suspend fun deactivateTaskItemsByUnsupportedValueTypes(allowedValueTypes: List<String>): Int
+
     @Query("SELECT COALESCE(MAX(sort_order), 0) FROM task_item_master")
     suspend fun getMaxSortOrder(): Int
 
@@ -318,7 +329,8 @@ interface HabitDao {
     @Transaction
     @Query(
         """
-        SELECT tim.name AS task_name,
+        SELECT tim.id AS task_item_master_id,
+               tim.name AS task_name,
                tim.value_type AS value_type,
                SUM(dri.number_value) AS total_number,
                SUM(dri.duration_minutes) AS total_duration,
@@ -336,4 +348,28 @@ interface HabitDao {
         """,
     )
     fun observeMonthlyStats(startDate: LocalDate, endDate: LocalDate): Flow<List<MonthlyStatRow>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT tim.id AS task_item_master_id,
+               tim.name AS task_name,
+               tim.value_type AS value_type,
+               dr.record_date AS record_date,
+               SUM(dri.number_value) AS total_number,
+               SUM(dri.duration_minutes) AS total_duration,
+               SUM(CASE
+                       WHEN dri.checked = 1 OR dri.boolean_value = 1 THEN 1
+                       WHEN COALESCE(dri.number_value, 0) > 0 OR COALESCE(dri.duration_minutes, 0) > 0 THEN 1
+                       ELSE 0
+                   END) AS completed_count
+        FROM daily_record dr
+        JOIN daily_record_item dri ON dri.daily_record_id = dr.id
+        JOIN task_item_master tim ON tim.id = dri.task_item_master_id
+        WHERE dr.record_date BETWEEN :startDate AND :endDate
+        GROUP BY tim.id, tim.name, tim.value_type, dr.record_date
+        ORDER BY tim.sort_order ASC, tim.name ASC, dr.record_date ASC
+        """,
+    )
+    fun observeDailyTaskStats(startDate: LocalDate, endDate: LocalDate): Flow<List<DailyTaskStatRow>>
 }

@@ -30,20 +30,23 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         VocabularyWordEntity::class,
     ],
     version = 8,
-    exportSchema = false,
+    exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class HabitTrackerDatabase : RoomDatabase() {
     abstract fun habitDao(): HabitDao
 
     companion object {
-        fun create(context: Context): HabitTrackerDatabase {
-            return Room.databaseBuilder(
+        const val DB_NAME = "habit-tracker.db"
+
+        fun builder(context: Context) =
+            Room.databaseBuilder(
                 context.applicationContext,
                 HabitTrackerDatabase::class.java,
-                "habit-tracker.db",
-            ).fallbackToDestructiveMigration().build()
-        }
+                DB_NAME,
+            ).addMigrations(*HabitTrackerMigrations.all)
+
+        fun create(context: Context): HabitTrackerDatabase =
+            builder(context).build()
     }
 }
-

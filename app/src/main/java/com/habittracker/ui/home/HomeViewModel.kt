@@ -53,7 +53,7 @@ class HomeViewModel(
 
     init {
         viewModelScope.launch {
-            repository.seedDefaultTaskItemsIfEmpty()
+            repository.syncManagedTaskItems()
         }
     }
 

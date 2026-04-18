@@ -1,156 +1,231 @@
 package com.habittracker.ui.stats
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.habittracker.data.local.model.MonthlyStatRow
-
-private val StatsHeroColor = Color(0xFF12252B)
-private val StatsHeroSubColor = Color(0xFFE4D8BD)
-private val StatsCardColor = Color(0xFFFFFBF4)
-private val StatsTextStrongColor = Color(0xFF172126)
-private val StatsTextMutedColor = Color(0xFF45575E)
+import com.habittracker.ui.components.AppEmptyCard
+import com.habittracker.ui.components.AppHeroCard
+import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppSectionCard
+import com.habittracker.ui.components.AppSectionHeader
+import com.habittracker.ui.components.AppSpacing
+import com.habittracker.ui.components.AppSecondaryButton
+import kotlin.math.roundToInt
 
 @Composable
 fun MonthlyStatsScreen(
     viewModel: MonthlyStatsViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val maxValue = uiState.stats.maxOfOrNull { stat -> stat.totalNumber ?: stat.completedCount.toDouble() } ?: 1.0
+    val totalCompleted = uiState.stats.sumOf(TaskStatSummary::completedCount)
+    val totalDistance = uiState.stats.filter { it.valueType == "EXERCISE" }.sumOf { it.totalNumber ?: 0.0 }
+    val totalDuration = uiState.stats.filter { it.valueType == "EXERCISE" }.sumOf { it.totalDuration ?: 0 }
+    val focusStat = uiState.stats.maxByOrNull { it.totalNumber ?: it.completedCount.toDouble() }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    AppScreen {
         item {
-            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = StatsHeroColor)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "📊 월간 통계", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text(text = "반복 기록과 운동 흐름을 한 달 단위로 확인합니다.", color = StatsHeroSubColor, style = MaterialTheme.typography.bodyMedium)
+            AppHeroCard(
+                title = "통계",
+                description = null,
+                action = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
                     ) {
-                        TextButton(onClick = viewModel::goToPreviousMonth) { Text("이전") }
+                        AppSecondaryButton(text = "이전", onClick = viewModel::goToPreviousMonth, modifier = Modifier.weight(1f))
                         Text(
                             text = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
-                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
-                        TextButton(onClick = viewModel::goToNextMonth) { Text("다음") }
+                        AppSecondaryButton(text = "다음", onClick = viewModel::goToNextMonth, modifier = Modifier.weight(1f))
                     }
-                }
-            }
-        }
-
-        item {
-            StatsChart(
-                stats = uiState.stats,
-                maxValue = maxValue,
-                primaryColor = MaterialTheme.colorScheme.primary,
-                secondaryColor = MaterialTheme.colorScheme.secondary,
+                },
             )
         }
-
-        items(uiState.stats) { stat ->
-            StatsCard(stat = stat)
-        }
-    }
-}
-
-@Composable
-private fun StatsChart(
-    stats: List<MonthlyStatRow>,
-    maxValue: Double,
-    primaryColor: Color,
-    secondaryColor: Color,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = StatsCardColor),
-    ) {
-        if (stats.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("\uC774\uBC88 \uB2EC \uD1B5\uACC4\uAC00 \uC544\uC9C1 \uC5C6\uC2B5\uB2C8\uB2E4.", color = StatsTextStrongColor)
-            }
-        } else {
-            Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                val barWidth = size.width / (stats.size * 1.8f)
-                stats.forEachIndexed { index, stat ->
-                    val rawValue = stat.totalNumber ?: stat.completedCount.toDouble()
-                    val barHeight = (rawValue / maxValue).toFloat() * size.height
-                    val left = index * barWidth * 1.8f
-                    drawRoundRect(
-                        color = if (index % 2 == 0) primaryColor else secondaryColor,
-                        topLeft = Offset(left, size.height - barHeight),
-                        size = Size(barWidth, barHeight),
-                        cornerRadius = CornerRadius(18f, 18f),
+        item {
+            AppSectionCard {
+                AppSectionHeader(title = "이번 달 핵심 수치")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                ) {
+                    StatsHighlightCard(title = "완료", value = "${totalCompleted}회", modifier = Modifier.weight(1f))
+                    StatsHighlightCard(title = "걸은거리", value = formatDistance(totalDistance), modifier = Modifier.weight(1f))
+                    StatsHighlightCard(title = "걸은시간", value = formatDuration(totalDuration), modifier = Modifier.weight(1f))
+                }
+                focusStat?.let {
+                    Text(
+                        text = "가장 많이 기록한 항목: ${it.taskName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun StatsCard(
-    stat: MonthlyStatRow,
-) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = StatsCardColor)) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text = stat.taskName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = StatsTextStrongColor)
-            Text(text = "타입: ${stat.valueType}", color = StatsTextMutedColor)
-            if (stat.valueType == "EXERCISE") {
-                Text(text = "\uCD1D \uAC70\uB9AC: ${formatDistance(stat.totalNumber)}", color = StatsTextStrongColor)
-                Text(text = "\uCD1D \uC2DC\uAC04: ${formatDuration(stat.totalDuration)}", color = StatsTextStrongColor)
-                Text(text = "\uD3C9\uADE0 \uD398\uC774\uC2A4: ${formatPace(stat.totalDuration, stat.totalNumber)}", color = StatsTextStrongColor)
-                Text(text = "\uAE30\uB85D \uD69F\uC218: ${stat.completedCount}", color = StatsTextStrongColor)
-            } else {
-                Text(text = "\uCD1D \uC218\uB7C9: ${stat.totalNumber ?: 0.0}", color = StatsTextStrongColor)
-                Text(text = "\uC644\uB8CC \uD69F\uC218: ${stat.completedCount}", color = StatsTextStrongColor)
+        if (uiState.taskCharts.isEmpty()) {
+            item { AppEmptyCard("이번 달 통계가 아직 없습니다.") }
+        } else {
+            uiState.taskCharts.forEach { chart ->
+                item {
+                    TaskLineChartCard(chart = chart)
+                }
             }
         }
     }
 }
 
+@Composable
+private fun TaskLineChartCard(
+    chart: TaskSeriesChart,
+) {
+    val lineColor = colorFromHex(chart.colorHex)
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    AppSectionCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = chart.taskName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = if (chart.valueType == "EXERCISE") {
+                        "누적 ${formatDistance(chart.totalNumber)} / ${formatDuration(chart.totalDuration)}"
+                    } else {
+                        "누적 ${formatSeriesValue(chart.points.sumOf { it.value }, chart.valueType)}"
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text(
+                text = "${chart.completedCount}회",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = lineColor,
+            )
+        }
+        if (chart.points.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                Text("기록이 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            Canvas(modifier = Modifier.fillMaxWidth().height(180.dp)) {
+                val maxValue = chart.points.maxOfOrNull { it.value }?.coerceAtLeast(1.0) ?: 1.0
+                val leftPadding = 20.dp.toPx()
+                val rightPadding = 20.dp.toPx()
+                val topPadding = 28.dp.toPx()
+                val bottomPadding = 28.dp.toPx()
+                val chartWidth = (size.width - leftPadding - rightPadding).coerceAtLeast(0f)
+                val chartHeight = (size.height - topPadding - bottomPadding).coerceAtLeast(0f)
+                val horizontalStep = if (chart.points.size == 1) 0f else chartWidth / (chart.points.size - 1)
+                val points = chart.points.mapIndexed { index, point ->
+                    val progress = (point.value / maxValue).toFloat()
+                    Offset(
+                        x = leftPadding + (horizontalStep * index),
+                        y = topPadding + chartHeight - (chartHeight * progress),
+                    )
+                }
+                drawLine(
+                    color = outlineColor,
+                    start = Offset(leftPadding, size.height - bottomPadding),
+                    end = Offset(size.width - rightPadding, size.height - bottomPadding),
+                    strokeWidth = 2f,
+                )
+                val path = Path().apply {
+                    points.forEachIndexed { index, point ->
+                        if (index == 0) moveTo(point.x, point.y) else lineTo(point.x, point.y)
+                    }
+                }
+                drawPath(path = path, color = lineColor, style = Stroke(width = 6f))
+                points.forEach { point ->
+                    drawCircle(color = lineColor, radius = 8f, center = point)
+                }
+                val textPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.DKGRAY
+                    textSize = 28f
+                    textAlign = android.graphics.Paint.Align.CENTER
+                    isAntiAlias = true
+                }
+                drawIntoCanvas { canvas ->
+                    points.forEachIndexed { index, point ->
+                        canvas.nativeCanvas.drawText(
+                            formatSeriesValue(chart.points[index].value, chart.valueType),
+                            point.x,
+                            (point.y - 14f).coerceAtLeast(24f),
+                            textPaint,
+                        )
+                        canvas.nativeCanvas.drawText(
+                            "${chart.points[index].date.dayOfMonth}일",
+                            point.x,
+                            size.height - 4f,
+                            textPaint,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsHighlightCard(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
 private fun formatDistance(distance: Double?): String {
-    if (distance == null) return "0km"
-    val asLong = distance.toLong()
-    return if (distance == asLong.toDouble()) "${asLong}km" else "${distance}km"
+    if (distance == null || distance <= 0.0) return "0km"
+    val rounded = (distance * 10).roundToInt() / 10.0
+    val asLong = rounded.toLong()
+    return if (rounded == asLong.toDouble()) "${asLong}km" else "${rounded}km"
 }
 
 private fun formatDuration(duration: Int?): String {
@@ -160,11 +235,17 @@ private fun formatDuration(duration: Int?): String {
     return if (hours > 0) "${hours}시간 ${minutes}분" else "${minutes}분"
 }
 
-private fun formatPace(totalDuration: Int?, totalDistance: Double?): String {
-    if (totalDuration == null || totalDuration <= 0 || totalDistance == null || totalDistance <= 0.0) return "-"
-    val totalSeconds = totalDuration * 60
-    val secondsPerKm = (totalSeconds / totalDistance).toInt()
-    val minutes = secondsPerKm / 60
-    val seconds = secondsPerKm % 60
-    return "${minutes}분 ${seconds.toString().padStart(2, '0')}초/km"
+private fun formatSeriesValue(value: Double, valueType: String): String {
+    return if (valueType == "EXERCISE") {
+        val rounded = (value * 10).roundToInt() / 10.0
+        val asLong = rounded.toLong()
+        if (rounded == asLong.toDouble()) "${asLong}km" else "${rounded}km"
+    } else {
+        "${value.roundToInt()}회"
+    }
+}
+
+private fun colorFromHex(colorHex: String): Color {
+    return runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
+        .getOrDefault(Color(0xFF256A52))
 }

@@ -1,41 +1,47 @@
 package com.habittracker.ui.admin
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.ValueType
-import com.habittracker.data.local.entity.TaskItemMasterEntity
-
-private val AdminHeroColor = androidx.compose.ui.graphics.Color(0xFF1C262C)
-private val AdminHeroSubColor = androidx.compose.ui.graphics.Color(0xFFE7DCC7)
-private val AdminCardColor = androidx.compose.ui.graphics.Color(0xFFFFFBF5)
-private val AdminTextStrongColor = androidx.compose.ui.graphics.Color(0xFF172126)
-private val AdminTextMutedColor = androidx.compose.ui.graphics.Color(0xFF34464D)
+import com.habittracker.ui.components.AppHeroCard
+import com.habittracker.ui.components.AppNoticeDialog
+import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppSectionCard
+import com.habittracker.ui.components.AppSectionHeader
+import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.AppTextField
+import com.habittracker.ui.components.actionNoticeDialogTitle
+import com.habittracker.ui.components.shouldShowActionNoticeDialog
 
 @Composable
 fun AdminScreen(viewModel: AdminViewModel) {
@@ -43,121 +49,226 @@ fun AdminScreen(viewModel: AdminViewModel) {
     var category by remember { mutableStateOf(TextFieldValue("운동")) }
     var name by remember { mutableStateOf(TextFieldValue("")) }
     var unit by remember { mutableStateOf(TextFieldValue("")) }
-    var description by remember { mutableStateOf(TextFieldValue("")) }
     var selectedValueType by remember { mutableStateOf(ValueType.NUMBER) }
+    var selectedColorHex by remember { mutableStateOf(viewModel.colorOptions.first()) }
+    var noticeMessage by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = AdminHeroColor)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = "⚙️ 관리자 화면", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
-                    Text(text = "기록에 사용할 항목과 입력 방식을 정리합니다.", color = AdminHeroSubColor, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
+    LaunchedEffect(uiState.statusMessage) {
+        val message = uiState.statusMessage.orEmpty()
+        if (message.shouldShowActionNoticeDialog()) {
+            noticeMessage = message
         }
-        item { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) { OutlinedTextField(value = category, onValueChange = { category = it }, label = { Text("카테고리") }, modifier = Modifier.fillMaxWidth().padding(12.dp)) } }
-        item { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("항목 이름") }, modifier = Modifier.fillMaxWidth().padding(12.dp)) } }
-        item {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) {
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                    viewModel.supportedValueTypes.forEachIndexed { index, valueType ->
-                        SegmentedButton(selected = selectedValueType == valueType, onClick = { selectedValueType = valueType }, shape = SegmentedButtonDefaults.itemShape(index = index, count = viewModel.supportedValueTypes.size)) {
-                            Text(text = viewModel.getValueTypeLabel(valueType))
-                        }
-                    }
-                }
-            }
-        }
-        if (selectedValueType == ValueType.NUMBER) {
-            item { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) { OutlinedTextField(value = unit, onValueChange = { unit = it }, label = { Text("단위") }, modifier = Modifier.fillMaxWidth().padding(12.dp)) } }
-        } else if (selectedValueType == ValueType.EXERCISE) {
+    }
+
+    AppScreen {
+        noticeMessage?.let { message ->
             item {
-                Text(
-                    text = "운동 기록은 거리(km)와 시간(분)을 함께 입력합니다.",
-                    color = AdminTextMutedColor,
+                AppNoticeDialog(
+                    message = message,
+                    onDismiss = { noticeMessage = null },
+                    title = message.actionNoticeDialogTitle(),
                 )
             }
         }
-        item { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) { OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("설명") }, modifier = Modifier.fillMaxWidth().padding(12.dp), minLines = 2) } }
         item {
-            Button(onClick = {
-                viewModel.addTaskItem(
-                    name = name.text,
-                    category = category.text,
-                    valueType = selectedValueType,
-                    unit = if (selectedValueType == ValueType.NUMBER) unit.text else "",
-                    description = description.text,
-                )
-                name = TextFieldValue("")
-                description = TextFieldValue("")
-                unit = TextFieldValue("")
-            }, modifier = Modifier.fillMaxWidth()) { Text("\uD56D\uBAA9 \uCD94\uAC00") }
+            AppHeroCard(
+                title = "관리",
+                description = null,
+            )
         }
-        item { uiState.statusMessage?.let { message -> Text(text = message, color = MaterialTheme.colorScheme.primary) } }
-        item { Text(text = "\uD604\uC7AC \uD56D\uBAA9", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        items(uiState.taskItems, key = { it.id }) { item ->
-            EditableTaskItemCard(item = item, viewModel = viewModel, onSave = { updatedName, updatedCategory, updatedValueType, updatedUnit, updatedDescription ->
-                viewModel.updateTaskItem(taskItemId = item.id, name = updatedName, category = updatedCategory, valueType = updatedValueType, unit = updatedUnit, description = updatedDescription)
-            }, onDelete = { viewModel.deleteTaskItem(item.id) })
+        item {
+            AppSectionCard {
+                AppSectionHeader(title = "새 항목")
+                AppTextField(
+                    value = category.text,
+                    onValueChange = { category = TextFieldValue(it) },
+                    label = "카테고리",
+                    singleLine = true,
+                )
+                ValueTypeSelector(
+                    supportedValueTypes = viewModel.supportedValueTypes,
+                    selectedValueType = selectedValueType,
+                    getLabel = viewModel::getValueTypeLabel,
+                    onSelected = { selectedValueType = it },
+                )
+                if (selectedValueType == ValueType.NUMBER) {
+                    AppTextField(
+                        value = name.text,
+                        onValueChange = { name = TextFieldValue(it) },
+                        label = "항목 이름",
+                        singleLine = true,
+                    )
+                    AppTextField(
+                        value = unit.text,
+                        onValueChange = { unit = TextFieldValue(it) },
+                        label = "단위",
+                        singleLine = true,
+                    )
+                } else {
+                    WalkingRecordInputFields()
+                }
+                ColorSelectorRow(
+                    colors = viewModel.colorOptions,
+                    selectedColorHex = selectedColorHex,
+                    onSelect = { selectedColorHex = it },
+                )
+                AppPrimaryButton(
+                    text = "항목 추가",
+                    onClick = {
+                        viewModel.addTaskItem(
+                            name = if (selectedValueType == ValueType.EXERCISE) "걷기 기록" else name.text,
+                            category = category.text,
+                            valueType = selectedValueType,
+                            unit = if (selectedValueType == ValueType.NUMBER) unit.text else "",
+                            description = "",
+                            colorHex = selectedColorHex,
+                        )
+                        name = TextFieldValue("")
+                        unit = TextFieldValue("")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        item {
+            uiState.statusMessage?.let { message -> AppStatusText(message) }
+        }
+        item {
+            AppSectionHeader(title = "현재 항목")
+        }
+        items(uiState.taskItems, key = { it.item.id }) { item ->
+            TaskItemCard(
+                item = item,
+                onDelete = { viewModel.deleteTaskItem(item.item.id) },
+            )
         }
     }
 }
 
 @Composable
-private fun EditableTaskItemCard(item: TaskItemMasterEntity, viewModel: AdminViewModel, onSave: (String, String, ValueType, String, String) -> Unit, onDelete: () -> Unit) {
-    var isEditing by remember(item.id) { mutableStateOf(false) }
-    var editName by remember(item.id, item.name) { mutableStateOf(TextFieldValue(item.name)) }
-    var editCategory by remember(item.id, item.category) { mutableStateOf(TextFieldValue(item.category)) }
-    var editUnit by remember(item.id, item.unit) { mutableStateOf(TextFieldValue(item.unit.orEmpty())) }
-    var editDescription by remember(item.id, item.description) { mutableStateOf(TextFieldValue(item.description.orEmpty())) }
-    var editValueType by remember(item.id, item.valueType) {
-        mutableStateOf(if (item.valueType in viewModel.supportedValueTypes) item.valueType else ValueType.NUMBER)
-    }
-
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = AdminCardColor)) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (isEditing) {
-                OutlinedTextField(value = editName, onValueChange = { editName = it }, label = { Text("\uD56D\uBAA9 \uC774\uB984") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = editCategory, onValueChange = { editCategory = it }, label = { Text("\uCE74\uD14C\uACE0\uB9AC") }, modifier = Modifier.fillMaxWidth())
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    viewModel.supportedValueTypes.forEachIndexed { index, valueType ->
-                        SegmentedButton(selected = editValueType == valueType, onClick = { editValueType = valueType }, shape = SegmentedButtonDefaults.itemShape(index = index, count = viewModel.supportedValueTypes.size)) {
-                            Text(text = viewModel.getValueTypeLabel(valueType))
-                        }
-                    }
-                }
-                if (editValueType == ValueType.NUMBER) {
-                    OutlinedTextField(value = editUnit, onValueChange = { editUnit = it }, label = { Text("\uB2E8\uC704") }, modifier = Modifier.fillMaxWidth())
-                } else if (editValueType == ValueType.EXERCISE) {
+private fun TaskItemCard(
+    item: AdminTaskItemUi,
+    onDelete: () -> Unit,
+) {
+    AppSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "운동 기록은 거리(km)와 시간(분)을 함께 입력합니다.",
-                        color = AdminTextMutedColor,
+                        text = item.item.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "카테고리: ${item.item.category}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                OutlinedTextField(value = editDescription, onValueChange = { editDescription = it }, label = { Text("\uC124\uBA85") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                Button(onClick = {
-                    onSave(
-                        editName.text,
-                        editCategory.text,
-                        editValueType,
-                        if (editValueType == ValueType.NUMBER) editUnit.text else "",
-                        editDescription.text,
-                    )
-                    isEditing = false
-                }, modifier = Modifier.fillMaxWidth()) { Text("\uC218\uC815 \uC800\uC7A5") }
-            } else {
-                Text(text = item.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = AdminTextStrongColor)
-                Text(text = "\uCE74\uD14C\uACE0\uB9AC: ${item.category}", color = AdminTextMutedColor)
-                Text(text = "\uD0C0\uC785: ${viewModel.getValueTypeLabel(item.valueType)}", color = AdminTextMutedColor)
-                if (item.valueType == ValueType.NUMBER) {
-                    Text(text = "\uB2E8\uC704: ${item.unit ?: "\uC5C6\uC74C"}", color = AdminTextMutedColor)
-                } else if (item.valueType == ValueType.EXERCISE) {
-                    Text(text = "\uAE30\uB85D: \uAC70\uB9AC(km) + \uC2DC\uAC04(\uBD84)", color = AdminTextMutedColor)
-                }
-                Text(text = "\uC124\uBA85: ${item.description ?: "-"}", color = AdminTextMutedColor)
-                Button(onClick = { isEditing = true }, modifier = Modifier.fillMaxWidth()) { Text("\uD56D\uBAA9 \uC218\uC815") }
-                Button(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("\uD56D\uBAA9 \uC0AD\uC81C") }
+                ColorPreview(colorHex = item.colorHex)
+            }
+            Text(
+                text = if (item.item.valueType == ValueType.NUMBER) {
+                    "입력: 숫자 / ${item.item.unit ?: "단위 없음"}"
+                } else {
+                    "입력: KM / 시간"
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = "삭제",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .clickable(onClick = onDelete)
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.08f))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ValueTypeSelector(
+    supportedValueTypes: List<ValueType>,
+    selectedValueType: ValueType,
+    getLabel: (ValueType) -> String,
+    onSelected: (ValueType) -> Unit,
+) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        supportedValueTypes.forEachIndexed { index, valueType ->
+            SegmentedButton(
+                selected = selectedValueType == valueType,
+                onClick = { onSelected(valueType) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = supportedValueTypes.size),
+            ) {
+                Text(text = getLabel(valueType))
             }
         }
     }
+}
+
+@Composable
+private fun ColorSelectorRow(
+    colors: List<String>,
+    selectedColorHex: String,
+    onSelect: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "통계 선 색상",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            colors.forEach { colorHex ->
+                val selected = selectedColorHex == colorHex
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(colorFromHex(colorHex))
+                        .clickable { onSelect(colorHex) }
+                        .border(
+                            width = if (selected) 3.dp else 1.dp,
+                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape,
+                        ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorPreview(colorHex: String) {
+    Box(
+        modifier = Modifier
+            .size(18.dp)
+            .clip(CircleShape)
+            .background(colorFromHex(colorHex)),
+    )
+}
+
+@Composable
+private fun WalkingRecordInputFields() {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppTextField(value = "KM", onValueChange = {}, label = "거리 입력", readOnly = true, singleLine = true)
+        AppTextField(value = "시간", onValueChange = {}, label = "시간 입력", readOnly = true, singleLine = true)
+    }
+}
+
+private fun colorFromHex(colorHex: String): Color {
+    return runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
+        .getOrDefault(Color(0xFF256A52))
 }

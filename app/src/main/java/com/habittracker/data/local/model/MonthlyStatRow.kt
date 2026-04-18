@@ -3,6 +3,8 @@ package com.habittracker.data.local.model
 import androidx.room.ColumnInfo
 
 data class MonthlyStatRow(
+    @ColumnInfo(name = "task_item_master_id")
+    val taskItemMasterId: Long,
     @ColumnInfo(name = "task_name")
     val taskName: String,
     @ColumnInfo(name = "value_type")

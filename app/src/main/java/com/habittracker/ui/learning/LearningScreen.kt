@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,19 +13,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -32,30 +31,52 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.VocabularyWordEntity
+import com.habittracker.ui.components.AppButtonRow
+import com.habittracker.ui.components.AppEmptyCard
+import com.habittracker.ui.components.AppHeroCard
+import com.habittracker.ui.components.AppNoticeDialog
+import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppSectionCard
+import com.habittracker.ui.components.AppSelectableChip
+import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.AppSupportText
+import com.habittracker.ui.components.AppTextField
+import com.habittracker.ui.components.actionNoticeDialogTitle
+import com.habittracker.ui.components.shouldShowActionNoticeDialog
 
-private val LearningHeroColor = androidx.compose.ui.graphics.Color(0xFF12252B)
-private val LearningHeroSubColor = androidx.compose.ui.graphics.Color(0xFFF0E7D1)
-private val LearningTitleColor = androidx.compose.ui.graphics.Color(0xFF182126)
-private val LearningSubtitleColor = androidx.compose.ui.graphics.Color(0xFF34464D)
+private val LearningHeroColor = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
+private val LearningHeroSubColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
+private val LearningTitleColor = androidx.compose.ui.graphics.Color(0xFF171C19)
+private val LearningSubtitleColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
 
 @Composable
 fun LearningScreen(viewModel: LearningViewModel) {
     val uiState by viewModel.uiState.collectAsState()
+    var noticeMessage by remember { mutableStateOf<String?>(null) }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = LearningHeroColor)) {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = "🧠 외국어 학습", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
-                    Text(text = "암기, 시험, 단어 등록, 통계를 한 화면에서 관리합니다.", color = LearningHeroSubColor, style = MaterialTheme.typography.bodyMedium)
-                }
+    LaunchedEffect(uiState.statusMessage) {
+        val message = uiState.statusMessage.orEmpty()
+        if (message.shouldShowActionNoticeDialog()) {
+            noticeMessage = message
+        }
+    }
+
+    AppScreen {
+        noticeMessage?.let { message ->
+            item {
+                AppNoticeDialog(
+                    message = message,
+                    onDismiss = { noticeMessage = null },
+                    title = message.actionNoticeDialogTitle(),
+                )
             }
+        }
+        item {
+            AppHeroCard(
+                title = "외국어 학습",
+                description = null,
+            )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -67,7 +88,7 @@ fun LearningScreen(viewModel: LearningViewModel) {
         }
         item {
             uiState.statusMessage?.let { message ->
-                Text(text = message, color = MaterialTheme.colorScheme.primary)
+                AppStatusText(message)
             }
         }
         item {
@@ -83,26 +104,17 @@ fun LearningScreen(viewModel: LearningViewModel) {
 
 @Composable
 private fun LearningTabChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+    AppSelectableChip(label = label, selected = selected, onClick = onClick)
 }
 
 @Composable
 private fun FlashcardSection(viewModel: LearningViewModel, uiState: LearningUiState) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppSectionCard {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = uiState.flashcardCount,
-                        onValueChange = viewModel::updateFlashcardCount,
-                        label = { Text("건수") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(onClick = viewModel::startFlashcard, modifier = Modifier.weight(1f)) {
-                        Text("암기 시작")
-                    }
+                    AppTextField(value = uiState.flashcardCount, onValueChange = viewModel::updateFlashcardCount, label = "건수", singleLine = true, modifier = Modifier.weight(1f))
+                    AppPrimaryButton(text = "암기 시작", onClick = viewModel::startFlashcard, modifier = Modifier.weight(1f))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = uiState.flashcardShowPronunciation, onCheckedChange = viewModel::updateFlashcardShowPronunciation)
@@ -125,7 +137,7 @@ private fun FlashcardSection(viewModel: LearningViewModel, uiState: LearningUiSt
 
         val session = uiState.flashcardSession
         if (session == null) {
-            EmptyCard("암기 시작을 누르면 선택한 건수만큼 리스트가 생성됩니다.")
+            AppEmptyCard("암기 시작을 누르면 선택한 건수만큼 리스트가 생성됩니다.")
         } else {
             SessionHeaderCard(
                 title = "암기 진행",
@@ -186,23 +198,32 @@ private fun FlashcardRow(
             if (showPronunciation && !word.pronunciation.isNullOrBlank()) {
                 Text(text = word.pronunciation.orEmpty(), style = MaterialTheme.typography.bodySmall, color = LearningSubtitleColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(
-                text = if (revealed || answer != null || finished) hiddenText else if (isWordBlind) "단어를 가렸습니다" else "뜻을 가렸습니다",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (revealed || answer != null || finished) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (revealed || answer != null || finished) {
+                Text(
+                    text = hiddenText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.66f)
+                        .background(MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
+                        .height(18.dp),
+                )
+            }
         }
         when {
             answer == true -> Text(text = "암기함", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             answer == false -> Text(text = "헷갈림", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
             finished -> Text(text = "미응답", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
-            !revealed -> TextButton(onClick = onReveal) { Text("보기") }
+            !revealed -> AppSelectableChip(label = "보기", selected = false, onClick = onReveal)
             else -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { onAnswer(true) }) { Text("암기") }
-                    TextButton(onClick = { onAnswer(false) }) { Text("헷갈림") }
+                    AppSelectableChip(label = "암기", selected = false, onClick = { onAnswer(true) })
+                    AppSelectableChip(label = "헷갈림", selected = false, onClick = { onAnswer(false) })
                 }
             }
         }
@@ -212,20 +233,11 @@ private fun FlashcardRow(
 @Composable
 private fun TestSection(viewModel: LearningViewModel, uiState: LearningUiState) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AppSectionCard {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = uiState.testCount,
-                        onValueChange = viewModel::updateTestCount,
-                        label = { Text("건수") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(onClick = viewModel::startTest, modifier = Modifier.weight(1f)) {
-                        Text("시험 시작")
-                    }
+                    AppTextField(value = uiState.testCount, onValueChange = viewModel::updateTestCount, label = "건수", singleLine = true, modifier = Modifier.weight(1f))
+                    AppPrimaryButton(text = "시험 시작", onClick = viewModel::startTest, modifier = Modifier.weight(1f))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = uiState.testWeighted, onCheckedChange = viewModel::updateTestWeighted)
@@ -236,7 +248,7 @@ private fun TestSection(viewModel: LearningViewModel, uiState: LearningUiState) 
 
         val session = uiState.testSession
         if (session == null) {
-            EmptyCard("시험 시작을 누르면 입력형 문제 리스트가 생성됩니다.")
+            AppEmptyCard("시험 시작을 누르면 입력형 문제 리스트가 생성됩니다.")
         } else {
             SessionHeaderCard(
                 title = "시험 진행",
@@ -264,8 +276,8 @@ private fun TestSection(viewModel: LearningViewModel, uiState: LearningUiState) 
                 }
             }
             if (session.finished) {
-                Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AppSectionCard {
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(text = "시험 결과", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(text = "정답 ${session.results.values.count { it == true }}개 / 전체 ${session.questions.size}개")
                     }
@@ -314,14 +326,7 @@ private fun TestRow(
             }
         }
         Box(modifier = Modifier.weight(1f)) {
-            OutlinedTextField(
-                value = answer,
-                onValueChange = onAnswerChange,
-                enabled = !finished,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("뜻 입력") },
-            )
+            AppTextField(value = answer, onValueChange = onAnswerChange, enabled = !finished, modifier = Modifier.fillMaxWidth(), singleLine = true, label = "뜻 입력")
         }
     }
 }
@@ -329,41 +334,27 @@ private fun TestRow(
 @Composable
 private fun WordManageSection(viewModel: LearningViewModel, uiState: LearningUiState) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = uiState.searchQuery,
-                    onValueChange = viewModel::updateSearchQuery,
-                    label = { Text("단어 / 뜻 / 발음 검색") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
+        AppSectionCard {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppTextField(value = uiState.searchQuery, onValueChange = viewModel::updateSearchQuery, label = "단어 / 뜻 / 발음 검색", singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = viewModel::startNewWord, modifier = Modifier.weight(1f)) { Text("단어 등록") }
-                    Button(onClick = viewModel::showBulkMode, modifier = Modifier.weight(1f)) { Text("대량 등록") }
+                    AppSelectableChip(label = "일반 입력", selected = !uiState.bulkMode, onClick = viewModel::startNewWord, modifier = Modifier.weight(1f))
+                    AppSelectableChip(label = "대량 입력", selected = uiState.bulkMode, onClick = viewModel::showBulkMode, modifier = Modifier.weight(1f))
                 }
                 if (uiState.bulkMode) {
-                    OutlinedTextField(
-                        value = uiState.bulkInput,
-                        onValueChange = viewModel::updateBulkInput,
-                        label = { Text("단어,뜻,발음") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 4,
-                    )
-                    Text(text = "예: apple,사과,애플", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = viewModel::bulkInsertWords, modifier = Modifier.fillMaxWidth()) { Text("대량 등록 실행") }
+                    AppTextField(value = uiState.bulkInput, onValueChange = viewModel::updateBulkInput, label = "단어,뜻,발음", minLines = 4)
+                    AppSupportText("예: apple,사과,애플")
+                    AppPrimaryButton(text = "대량 등록 실행", onClick = viewModel::bulkInsertWords, modifier = Modifier.fillMaxWidth())
                 } else {
-                    OutlinedTextField(value = uiState.wordInput, onValueChange = viewModel::updateWordInput, label = { Text("단어") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    OutlinedTextField(value = uiState.meaningInput, onValueChange = viewModel::updateMeaningInput, label = { Text("뜻") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    OutlinedTextField(value = uiState.pronunciationInput, onValueChange = viewModel::updatePronunciationInput, label = { Text("발음") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Button(onClick = viewModel::saveWord, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (uiState.selectedWordId == null) "단어 저장" else "단어 수정")
-                    }
+                    AppTextField(value = uiState.wordInput, onValueChange = viewModel::updateWordInput, label = "단어", singleLine = true)
+                    AppTextField(value = uiState.meaningInput, onValueChange = viewModel::updateMeaningInput, label = "뜻", singleLine = true)
+                    AppTextField(value = uiState.pronunciationInput, onValueChange = viewModel::updatePronunciationInput, label = "발음", singleLine = true)
+                    AppPrimaryButton(text = if (uiState.selectedWordId == null) "단어 저장" else "단어 수정", onClick = viewModel::saveWord, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
         if (uiState.words.isEmpty()) {
-            EmptyCard("등록된 단어가 없습니다.")
+            AppEmptyCard("등록된 단어가 없습니다.")
         } else {
             CompactListCard {
                 uiState.words.forEachIndexed { index, word ->
@@ -392,8 +383,8 @@ private fun VocabularyRow(word: VocabularyWordEntity, onEdit: () -> Unit, onDele
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            TextButton(onClick = onEdit) { Text("수정") }
-            TextButton(onClick = onDelete) { Text("삭제") }
+            AppSelectableChip(label = "수정", selected = false, onClick = onEdit)
+            AppSelectableChip(label = "삭제", selected = false, onClick = onDelete)
         }
     }
 }
@@ -401,8 +392,8 @@ private fun VocabularyRow(word: VocabularyWordEntity, onEdit: () -> Unit, onDele
 @Composable
 private fun StatsSection(uiState: LearningUiState) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        AppSectionCard {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = "학습 통계", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(text = "맞춘 횟수 ${uiState.totalCorrect}")
                 Text(text = "틀린 횟수 ${uiState.totalWrong}")
@@ -412,7 +403,7 @@ private fun StatsSection(uiState: LearningUiState) {
             }
         }
         if (uiState.words.isEmpty()) {
-            EmptyCard("통계를 보여 줄 단어가 없습니다.")
+            AppEmptyCard("통계를 보여 줄 단어가 없습니다.")
         } else {
             CompactListCard {
                 uiState.words.sortedByDescending { it.exposureCount }.forEachIndexed { index, word ->
@@ -451,17 +442,14 @@ private fun SessionHeaderCard(
     onSecondaryClick: (() -> Unit)?,
     secondaryLabel: String,
 ) {
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    AppSectionCard {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(text = "진행 시간 ${formatDuration(elapsedSeconds)}")
             Text(text = countText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             finishedLabel?.let { Text(text = it, color = MaterialTheme.colorScheme.primary) }
             if (onPrimaryClick != null && onSecondaryClick != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = onPrimaryClick, modifier = Modifier.weight(1f)) { Text(primaryLabel) }
-                    Button(onClick = onSecondaryClick, modifier = Modifier.weight(1f)) { Text(secondaryLabel) }
-                }
+                AppButtonRow(primaryText = primaryLabel, onPrimaryClick = onPrimaryClick, secondaryText = secondaryLabel, onSecondaryClick = onSecondaryClick)
             }
         }
     }
@@ -469,15 +457,8 @@ private fun SessionHeaderCard(
 
 @Composable
 private fun CompactListCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), content = content)
-    }
-}
-
-@Composable
-private fun EmptyCard(message: String) {
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Text(text = message, modifier = Modifier.fillMaxWidth().padding(14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    AppSectionCard {
+        Column(modifier = Modifier.fillMaxWidth(), content = content)
     }
 }
 

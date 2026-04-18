@@ -1,101 +1,121 @@
 ﻿package com.habittracker.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
 
 private val LightColors = lightColorScheme(
-    primary = Forest600,
-    secondary = Amber500,
-    tertiary = Navy700,
-    background = Cream50,
-    surface = Color.White,
-    surfaceVariant = Cream100,
+    primary = Primary600,
+    secondary = Gray100,
+    tertiary = Gray200,
+    background = Gray25,
+    surface = Gray0,
+    surfaceVariant = Gray50,
     onPrimary = Color.White,
-    onSecondary = Color.White,
-    onBackground = Ink900,
-    onSurface = Ink900,
-    onSurfaceVariant = Color(0xFF35474E),
-)
-
-private val DarkColors = darkColorScheme(
-    primary = Mint300,
-    secondary = Amber500,
-    tertiary = Cream100,
-    background = Ink900,
-    surface = Color(0xFF202B30),
-    surfaceVariant = Color(0xFF2A363C),
-    onSurface = Color(0xFFF5F1E7),
-    onSurfaceVariant = Color(0xFFE0E9E4),
+    onSecondary = Gray900,
+    onBackground = Gray900,
+    onSurface = Gray900,
+    onSurfaceVariant = Gray600,
+    outline = Gray200,
+    outlineVariant = Gray100,
+    error = Gray800,
+    onError = Gray0,
 )
 
 private val AppTypography = Typography(
+    displaySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 32.sp,
+        lineHeight = 40.sp,
+        fontWeight = FontWeight.Bold,
+    ),
     headlineMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 28.sp,
-        lineHeight = 34.sp,
-        fontWeight = FontWeight.ExtraBold,
+        lineHeight = 36.sp,
+        fontWeight = FontWeight.Bold,
     ),
     headlineSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 24.sp,
-        lineHeight = 30.sp,
+        lineHeight = 32.sp,
         fontWeight = FontWeight.Bold,
     ),
     titleLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 20.sp,
-        lineHeight = 26.sp,
+        lineHeight = 28.sp,
         fontWeight = FontWeight.Bold,
     ),
     titleMedium = TextStyle(
-        fontSize = 17.sp,
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 18.sp,
         lineHeight = 24.sp,
         fontWeight = FontWeight.SemiBold,
     ),
     titleSmall = TextStyle(
-        fontSize = 15.sp,
-        lineHeight = 21.sp,
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
         fontWeight = FontWeight.SemiBold,
     ),
     bodyLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 16.sp,
         lineHeight = 24.sp,
     ),
     bodyMedium = TextStyle(
-        fontSize = 15.sp,
+        fontFamily = FontFamily.SansSerif,
+        fontSize = 14.sp,
         lineHeight = 22.sp,
     ),
     bodySmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 14.sp,
         lineHeight = 20.sp,
     ),
     labelLarge = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 14.sp,
         lineHeight = 20.sp,
         fontWeight = FontWeight.SemiBold,
     ),
     labelMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 13.sp,
-        lineHeight = 18.sp,
+        lineHeight = 20.sp,
         fontWeight = FontWeight.Medium,
     ),
     labelSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
         fontSize = 12.sp,
         lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
     ),
 )
 
+private val AppShapes = Shapes(
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(24.dp),
+)
+
 @Composable
 fun HabitTrackerTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        colorScheme = LightColors,
         typography = AppTypography,
+        shapes = AppShapes,
         content = content,
     )
 }

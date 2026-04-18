@@ -47,7 +47,7 @@ class DailyEntryViewModel(
 
     init {
         viewModelScope.launch {
-            repository.seedDefaultTaskItemsIfEmpty()
+            repository.syncManagedTaskItems()
         }
     }
 
