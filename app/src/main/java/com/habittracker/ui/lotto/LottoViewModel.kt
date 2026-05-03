@@ -70,15 +70,16 @@ class LottoViewModel(
     }.onEach {
         isHistoryLoading.value = false
     }
-    private val latestSavedTickets = latestRoundNo.flatMapLatest { roundNo ->
-        if (roundNo == null) flowOf(emptyList()) else repository.observeSavedLottoTicketsByRound(roundNo)
+    private val nextRoundSavedTickets = latestRoundNo.flatMapLatest { latestDrawRoundNo ->
+        val nextRoundNo = latestDrawRoundNo?.plus(1)
+        if (nextRoundNo == null) flowOf(emptyList()) else repository.observeSavedLottoTicketsByRound(nextRoundNo)
     }
 
     val uiState: StateFlow<LottoUiState> = combine(
         selectedTab,
         observedDraws,
         repository.observeLottoDraws(roundNo = null, limit = 200),
-        latestSavedTickets,
+        nextRoundSavedTickets,
         repository.observeSavedLottoTickets(limit = 100),
         repository.observeLottoPurchases(limit = 100),
         repository.observeLottoWinnings(limit = 100),

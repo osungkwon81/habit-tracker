@@ -145,31 +145,60 @@ fun LottoScreen(viewModel: LottoViewModel) {
                         onGenerateGemini = viewModel::generateGemini,
                     )
                 }
-                item {
-                    GeneratedTicketSection(
-                        title = "ChatGPT 추천 번호",
-                        sourceLabel = "ChatGPT",
-                        tickets = uiState.chatGptResults,
-                        isLatest = uiState.lastGeneratedSource == "ChatGPT",
-                        onApply = viewModel::applyGeneratedNumbers,
-                        onSaveBatch = viewModel::saveGeneratedBatch,
-                    )
-                }
-                item {
-                    GeneratedTicketSection(
-                        title = "Gemini 추천 번호",
-                        sourceLabel = "Gemini",
-                        tickets = uiState.geminiResults,
-                        isLatest = uiState.lastGeneratedSource == "Gemini",
-                        onApply = viewModel::applyGeneratedNumbers,
-                        onSaveBatch = viewModel::saveGeneratedBatch,
-                    )
-                }
-                item { Text(text = "최근 회차 저장 번호", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-                if (uiState.savedTickets.isEmpty()) {
-                    item { AppEmptyCard("최근 회차에 저장된 생성 번호가 없습니다.") }
+                if (uiState.lastGeneratedSource == "Gemini") {
+                    item {
+                        GeneratedTicketSection(
+                            title = "Gemini 추천 번호",
+                            sourceLabel = "Gemini",
+                            tickets = uiState.geminiResults,
+                            isLatest = true,
+                            onApply = viewModel::applyGeneratedNumbers,
+                            onSaveBatch = viewModel::saveGeneratedBatch,
+                        )
+                    }
+                    item {
+                        GeneratedTicketSection(
+                            title = "ChatGPT 추천 번호",
+                            sourceLabel = "ChatGPT",
+                            tickets = uiState.chatGptResults,
+                            isLatest = false,
+                            onApply = viewModel::applyGeneratedNumbers,
+                            onSaveBatch = viewModel::saveGeneratedBatch,
+                        )
+                    }
                 } else {
-                    item { SavedTicketGroupCard(roundNo = uiState.latestSavedRoundNo, tickets = uiState.savedTickets) }
+                    item {
+                        GeneratedTicketSection(
+                            title = "ChatGPT 추천 번호",
+                            sourceLabel = "ChatGPT",
+                            tickets = uiState.chatGptResults,
+                            isLatest = uiState.lastGeneratedSource == "ChatGPT",
+                            onApply = viewModel::applyGeneratedNumbers,
+                            onSaveBatch = viewModel::saveGeneratedBatch,
+                        )
+                    }
+                    item {
+                        GeneratedTicketSection(
+                            title = "Gemini 추천 번호",
+                            sourceLabel = "Gemini",
+                            tickets = uiState.geminiResults,
+                            isLatest = false,
+                            onApply = viewModel::applyGeneratedNumbers,
+                            onSaveBatch = viewModel::saveGeneratedBatch,
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        text = if (uiState.nextRoundNo != null) "${uiState.nextRoundNo}회차 저장 번호" else "다음 회차 저장 번호",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                if (uiState.savedTickets.isEmpty()) {
+                    item { AppEmptyCard("다음 회차에 저장된 생성 번호가 없습니다.") }
+                } else {
+                    item { SavedTicketGroupCard(roundNo = uiState.nextRoundNo, tickets = uiState.savedTickets) }
                 }
             }
             "draw" -> {
