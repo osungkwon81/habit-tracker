@@ -9,7 +9,6 @@ enum class AppDestination(
     ENTRY("entry", "기록", "✍️"),
     DIARY("diary", "일기", "📔"),
     MEMO("memo", "메모", "📝"),
-    LEARNING("learning", "학습", "🧠"),
     STATS("stats", "통계", "📊"),
     ADMIN("admin", "관리", "⚙️"),
     LOTTO("lotto", "로또", "🎯"),

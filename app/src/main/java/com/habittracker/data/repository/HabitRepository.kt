@@ -11,19 +11,25 @@ import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
+import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.DailyTaskStatRow
+import com.habittracker.data.local.model.LottoMonthlyStatRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -43,10 +49,10 @@ class HabitRepository(
 
     private val taskColorPrefs = context.getSharedPreferences(taskColorPrefsName, Context.MODE_PRIVATE)
 
-    private suspend fun <T> persistChange(block: suspend () -> T): T {
+    private suspend fun <T> persistChange(block: suspend () -> T): T = withContext(NonCancellable + Dispatchers.IO) {
         val result = block()
         databaseProtector.requestBackup(database)
-        return result
+        result
     }
 
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
@@ -54,6 +60,24 @@ class HabitRepository(
 
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTickets(limit)
+
+    fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
+        habitDao.observeSavedLottoTicketsByNote(buildLottoRoundNote(roundNo))
+
+    fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>> =
+        habitDao.observeLottoPurchases(limit)
+
+    fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>> =
+        habitDao.observeLottoWinnings(limit)
+
+    fun observeTotalLottoPurchaseAmount(): Flow<Long> =
+        habitDao.observeTotalLottoPurchaseAmount()
+
+    fun observeTotalLottoWinningAmount(): Flow<Long> =
+        habitDao.observeTotalLottoWinningAmount()
+
+    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoMonthlyStatRow>> =
+        habitDao.observeLottoMonthlyStats(limit)
 
     fun observeMemoNotes(limit: Int): Flow<List<MemoNoteEntity>> =
         habitDao.observeMemoNotes(limit)
@@ -168,6 +192,48 @@ class HabitRepository(
         }
     }
 
+    suspend fun saveLottoPurchase(purchaseDate: LocalDate, lottoType: String, amount: Int, memo: String?) {
+        val safeType = lottoType.trim().ifEmpty { "로또" }
+        require(safeType in listOf("로또", "연금")) { "로또 형태는 로또 또는 연금 중 선택해 주세요." }
+        require(amount > 0) { "구입 금액을 입력해 주세요." }
+        persistChange {
+            habitDao.insertLottoPurchase(
+                LottoPurchaseEntity(
+                    purchaseDate = purchaseDate,
+                    lottoType = safeType,
+                    amount = amount,
+                    memo = memo?.trim()?.takeIf(String::isNotEmpty),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteLottoPurchase(purchaseId: Long) {
+        persistChange {
+            habitDao.deleteLottoPurchaseById(purchaseId)
+        }
+    }
+
+    suspend fun saveLottoWinning(roundNo: Int, amount: Long, memo: String?) {
+        require(roundNo > 0) { "회차 번호를 입력해 주세요." }
+        require(amount > 0L) { "당첨 금액을 입력해 주세요." }
+        persistChange {
+            habitDao.insertLottoWinning(
+                LottoWinningEntity(
+                    roundNo = roundNo,
+                    amount = amount,
+                    memo = memo?.trim()?.takeIf(String::isNotEmpty),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteLottoWinning(winningId: Long) {
+        persistChange {
+            habitDao.deleteLottoWinningById(winningId)
+        }
+    }
+
     suspend fun hasSavedLottoBatch(roundNo: Int, sourceLabel: String): Boolean {
         require(roundNo > 0) { "회차 번호가 올바르지 않습니다." }
         return habitDao.getLottoTicketsBySourceAndNote(
@@ -258,6 +324,12 @@ class HabitRepository(
                     ),
                 )
             }
+        }
+    }
+
+    suspend fun updateMemoPinned(memoId: Long, isPinned: Boolean) {
+        persistChange {
+            habitDao.updateMemoPinned(memoId = memoId, isPinned = isPinned, updatedAt = LocalDateTime.now())
         }
     }
 

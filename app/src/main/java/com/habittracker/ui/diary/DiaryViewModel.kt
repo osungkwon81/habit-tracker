@@ -123,7 +123,7 @@ class DiaryViewModel(
                 reloadToken.value += 1
             }.onSuccess {
                 screenMode.value = diaryDetailMode
-                message.value = "일기를 저장했습니다."
+                message.value = "일기가 저장되었습니다."
             }.onFailure { error ->
                 message.value = error.message ?: "일기 저장에 실패했습니다."
             }

@@ -84,9 +84,9 @@ class DailyEntryViewModel(
             }.onSuccess {
                 selectedDate.value = recordDate
                 statusMessage.value = if (isHoliday) {
-                    "$recordDate 기록과 휴일 표시를 저장했습니다."
+                    "$recordDate 기록과 휴일 표시가 저장되었습니다."
                 } else {
-                    "$recordDate 기록을 저장했습니다."
+                    "$recordDate 기록이 저장되었습니다."
                 }
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "저장에 실패했습니다."

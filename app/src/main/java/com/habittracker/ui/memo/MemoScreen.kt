@@ -36,6 +36,7 @@ import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
@@ -117,6 +118,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
                     viewModel.openMemo(memoNote)
                 }
             },
+            onTogglePinned = viewModel::toggleMemoPinned,
             onLoadMore = viewModel::loadMoreMemoNotes,
         )
     }
@@ -128,6 +130,7 @@ private fun MemoListScreen(
     onSearchQueryChange: (String) -> Unit,
     onNewMemo: () -> Unit,
     onOpenMemo: (MemoNoteEntity) -> Unit,
+    onTogglePinned: (MemoNoteEntity) -> Unit,
     onLoadMore: () -> Unit,
 ) {
     AppScreen {
@@ -162,7 +165,7 @@ private fun MemoListScreen(
                         onLoadMore()
                     }
                 }
-                MemoListCard(memoNote = memoNote, onClick = { onOpenMemo(memoNote) })
+                MemoListCard(memoNote = memoNote, onClick = { onOpenMemo(memoNote) }, onTogglePinned = { onTogglePinned(memoNote) })
             }
         }
     }
@@ -217,18 +220,31 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
 }
 
 @Composable
-private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit) {
+private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit, onTogglePinned: () -> Unit) {
+    val previewText = if (memoNote.isLocked) {
+        "잠금 해제 후 내용을 볼 수 있습니다."
+    } else {
+        memoNote.content.lineSequence().firstOrNull().orEmpty().ifBlank { "내용 없음" }
+    }
+
     AppSectionCard(
         modifier = Modifier.clickable(onClick = onClick),
     ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = memoNote.title.ifBlank { "제목 없음" },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            AppSecondaryButton(
+                text = if (memoNote.isPinned) "고정 해제" else "상단 고정",
+                onClick = onTogglePinned,
+            )
+        }
         Text(
-            text = memoNote.title.ifBlank { "제목 없음" },
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = memoNote.content.lineSequence().firstOrNull().orEmpty().ifBlank { "내용 없음" },
+            text = previewText,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
@@ -238,6 +254,14 @@ private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (memoNote.isPinned) {
+            Text(
+                text = "상단 고정",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         if (memoNote.isLocked) {
             Text(
                 text = "잠금 메모",

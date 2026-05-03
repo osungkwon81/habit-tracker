@@ -9,6 +9,8 @@ data class MonthlyStatRow(
     val taskName: String,
     @ColumnInfo(name = "value_type")
     val valueType: String,
+    @ColumnInfo(name = "unit")
+    val unit: String?,
     @ColumnInfo(name = "total_number")
     val totalNumber: Double?,
     @ColumnInfo(name = "total_duration")

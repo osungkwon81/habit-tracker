@@ -32,15 +32,22 @@ object LottoNumberGenerator {
         if (history.isEmpty()) return emptyList()
         val normalizedHistory = history.map { it.sorted() }
         val analysis = analyze(normalizedHistory)
-        val excluded = deriveExcludedNumbers(analysis)
         val frequencyMap = buildFrequencyMap(normalizedHistory)
         val lastDraw = normalizedHistory.first()
+        val recentNumbers = normalizedHistory.take(8).flatten().toSet()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = { generateWeightedCombination(analysis, excluded) },
-            validator = ::isBalanced,
+            generator = {
+                generateProfileCombination(
+                    history = normalizedHistory,
+                    analysis = analysis,
+                    recentNumbers = recentNumbers,
+                    strategy = GeneratorStrategy.CONSENSUS,
+                )
+            },
+            validator = ::isHighQuality,
             scorer = { numbers ->
                 scoreCandidate(
                     numbers = numbers,
@@ -49,13 +56,15 @@ object LottoNumberGenerator {
                     lastDraw = lastDraw,
                     strategyBonus = { candidate ->
                         val recentCount = candidate.count { analysis.score.getValue(it) >= analysis.averageScore }
-                        (recentCount * 0.35) - (candidate.count(excluded::contains) * 2.0)
+                        val decadeBalance = decadeBucketCount(candidate) * 0.7
+                        (recentCount * 0.45) + decadeBalance
                     },
                 )
             },
             commentBuilder = { numbers, score ->
                 val overlap = numbers.count(lastDraw::contains)
-                "${mode.label} 모드, 후보 ${mode.candidatePoolSize}건 재선별, 점수 ${"%.1f".format(score)}, 이월 ${overlap}개, 제외수 ${excluded.sorted().joinToString(", ")} 반영"
+                val buckets = decadeBucketCount(numbers)
+                "${mode.label} 모드, 후보 ${mode.candidatePoolSize}건 재선별, 점수 ${"%.1f".format(score)}, 구간 ${buckets}개, 직전겹침 ${overlap}개"
             },
             mode = mode,
         )
@@ -70,19 +79,23 @@ object LottoNumberGenerator {
 
         val normalizedHistory = history.map { it.sorted() }
         val recentNumbers = normalizedHistory.take(5).flatten().toSet()
-        val longGapNumbers = getLongGapNumbers(normalizedHistory, 15)
-        val leastFrequentNumbers = getLeastFrequentNumbers(normalizedHistory, 52, 6)
-        val excluded = (longGapNumbers + leastFrequentNumbers).toSet()
-        val hotNumbers = recentNumbers.filterNot(excluded::contains)
-        val coldNumbers = (1..maxNumber).filterNot(recentNumbers::contains).filterNot(excluded::contains)
+        val analysis = analyze(normalizedHistory)
+        val coldNumbers = (1..maxNumber).filterNot(recentNumbers::contains)
         val frequencyMap = buildFrequencyMap(normalizedHistory)
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = { generateBalancedCombination(hotNumbers, coldNumbers, excluded) },
-            validator = ::isBalanced,
+            generator = {
+                generateProfileCombination(
+                    history = normalizedHistory,
+                    analysis = analysis,
+                    recentNumbers = recentNumbers,
+                    strategy = GeneratorStrategy.DIVERSIFIED,
+                )
+            },
+            validator = ::isHighQuality,
             scorer = { numbers ->
                 scoreCandidate(
                     numbers = numbers,
@@ -93,8 +106,8 @@ object LottoNumberGenerator {
                         val hotCount = candidate.count(recentNumbers::contains)
                         val coldCount = candidate.count(coldNumbers::contains)
                         val carryCount = candidate.count(lastDraw::contains)
-                        (4.0 - abs(hotCount - 3.5) * 1.4) +
-                            (2.5 - abs(coldCount - 2.5) * 1.2) -
+                        (5.0 - abs(hotCount - 2.0) * 1.2) +
+                            (4.0 - abs(coldCount - 4.0) * 0.8) -
                             max(0, carryCount - 2) * 1.5
                     },
                 )
@@ -134,56 +147,98 @@ object LottoNumberGenerator {
             .mapTo(linkedSetOf(), Map.Entry<Int, Double>::key)
     }
 
-    private fun generateWeightedCombination(analysis: Analysis, excluded: Set<Int>): List<Int> {
-        val result = linkedSetOf<Int>()
-        while (result.size < pickCount) {
-            result += weightedPick(analysis, excluded)
+    private fun generateProfileCombination(
+        history: List<List<Int>>,
+        analysis: Analysis,
+        recentNumbers: Set<Int>,
+        strategy: GeneratorStrategy,
+    ): List<Int> {
+        val lastDraw = history.firstOrNull().orEmpty().toSet()
+        val patterns = listOf(
+            intArrayOf(1, 1, 1, 2, 1),
+            intArrayOf(1, 1, 2, 1, 1),
+            intArrayOf(1, 2, 1, 1, 1),
+            intArrayOf(2, 1, 1, 1, 1),
+            intArrayOf(1, 2, 1, 2, 0),
+            intArrayOf(2, 1, 2, 1, 0),
+        )
+        val ranges = listOf(1..10, 11..20, 21..30, 31..40, 41..45)
+
+        repeat(80) {
+            val selected = linkedSetOf<Int>()
+            val pattern = patterns.random()
+            pattern.forEachIndexed { index, count ->
+                repeat(count) {
+                    val picked = weightedPickFromRange(
+                        range = ranges[index],
+                        selected = selected,
+                        analysis = analysis,
+                        recentNumbers = recentNumbers,
+                        lastDraw = lastDraw,
+                        strategy = strategy,
+                    )
+                    selected += picked
+                }
+            }
+            while (selected.size < pickCount) {
+                val bucket = ranges.indices.random()
+                selected += weightedPickFromRange(
+                    range = ranges[bucket],
+                    selected = selected,
+                    analysis = analysis,
+                    recentNumbers = recentNumbers,
+                    lastDraw = lastDraw,
+                    strategy = strategy,
+                )
+            }
+            val candidate = selected.sorted()
+            if (isHighQuality(candidate) && !isTooSimilarToHistory(candidate, history)) return candidate
         }
-        return result.sorted()
+
+        return (1..maxNumber).shuffled().take(pickCount).sorted()
     }
 
-    private fun weightedPick(analysis: Analysis, excluded: Set<Int>): Int {
-        val weights = IntArray(maxNumber + 1)
-        var totalWeight = 0
-
-        for (number in 1..maxNumber) {
-            if (number in excluded) continue
-            val weight = max((analysis.score.getValue(number) * 100).toInt(), 1)
-            weights[number] = weight
-            totalWeight += weight
+    private fun weightedPickFromRange(
+        range: IntRange,
+        selected: Set<Int>,
+        analysis: Analysis,
+        recentNumbers: Set<Int>,
+        lastDraw: Set<Int>,
+        strategy: GeneratorStrategy,
+    ): Int {
+        val candidates = range.filterNot(selected::contains).ifEmpty {
+            (1..maxNumber).filterNot(selected::contains)
         }
-
+        val weights = candidates.map { number ->
+            val frequencyWeight = analysis.score.getValue(number)
+            val recentWeight = if (number in recentNumbers) {
+                if (strategy == GeneratorStrategy.CONSENSUS) 10.0 else -5.0
+            } else {
+                if (strategy == GeneratorStrategy.DIVERSIFIED) 6.0 else 0.0
+            }
+            val carryPenalty = if (number in lastDraw) 10.0 else 0.0
+            number to max(((frequencyWeight * 10.0) + recentWeight - carryPenalty).toInt(), 1)
+        }
+        val totalWeight = weights.sumOf { it.second }
         var target = Random.nextInt(totalWeight)
-        for (number in 1..maxNumber) {
-            val weight = weights[number]
-            if (weight == 0) continue
+        weights.forEach { (number, weight) ->
             target -= weight
             if (target < 0) return number
         }
-        return Random.nextInt(1, maxNumber + 1)
+        return candidates.random()
     }
 
-    private fun generateBalancedCombination(hotNumbers: List<Int>, coldNumbers: List<Int>, excluded: Set<Int>): List<Int> {
-        val result = linkedSetOf<Int>()
-        hotNumbers.shuffled().take(3).forEach(result::add)
-        coldNumbers.shuffled().take(2).forEach(result::add)
-
-        while (result.size < pickCount) {
-            val candidate = Random.nextInt(1, maxNumber + 1)
-            if (candidate !in excluded) {
-                result += candidate
-            }
-        }
-
-        return result.sorted()
-    }
-
-    private fun isBalanced(numbers: List<Int>): Boolean {
+    private fun isHighQuality(numbers: List<Int>): Boolean {
         if (numbers.size != pickCount) return false
         val sum = numbers.sum()
-        if (sum !in 95..180) return false
+        if (sum !in 105..175) return false
         val oddCount = numbers.count { it % 2 != 0 }
         if (oddCount !in 2..4) return false
+        val lowCount = numbers.count { it <= 22 }
+        if (lowCount !in 2..4) return false
+        if (decadeBucketCount(numbers) < 4) return false
+        val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
+        if (tailDuplicates >= 3) return false
         if (maxConsecutiveRun(numbers) >= 3) return false
         return acValue(numbers) >= 7
     }
@@ -357,4 +412,9 @@ object LottoNumberGenerator {
         val numbers: List<Int>,
         val score: Double,
     )
+
+    private enum class GeneratorStrategy {
+        CONSENSUS,
+        DIVERSIFIED,
+    }
 }

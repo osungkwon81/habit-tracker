@@ -15,6 +15,8 @@ data class MemoNoteEntity(
     val content: String,
     @ColumnInfo(name = "is_locked")
     val isLocked: Boolean = false,
+    @ColumnInfo(name = "is_pinned")
+    val isPinned: Boolean = false,
     @ColumnInfo(name = "password_hash")
     val passwordHash: String? = null,
     @ColumnInfo(name = "created_at")

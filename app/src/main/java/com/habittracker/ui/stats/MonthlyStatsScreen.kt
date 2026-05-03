@@ -29,6 +29,8 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSpacing
 import com.habittracker.ui.components.AppSecondaryButton
+import java.text.NumberFormat
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -40,6 +42,14 @@ fun MonthlyStatsScreen(
     val totalDistance = uiState.stats.filter { it.valueType == "EXERCISE" }.sumOf { it.totalNumber ?: 0.0 }
     val totalDuration = uiState.stats.filter { it.valueType == "EXERCISE" }.sumOf { it.totalDuration ?: 0 }
     val focusStat = uiState.stats.maxByOrNull { it.totalNumber ?: it.completedCount.toDouble() }
+    val periodTitle = if (uiState.periodMode == StatsPeriodMode.MONTH) "이번 달 핵심 수치" else "올해 핵심 수치"
+    val periodLabel = if (uiState.periodMode == StatsPeriodMode.MONTH) {
+        "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월"
+    } else {
+        "${uiState.currentYear}년"
+    }
+    val previousText = if (uiState.periodMode == StatsPeriodMode.MONTH) "이전 달" else "이전 해"
+    val nextText = if (uiState.periodMode == StatsPeriodMode.MONTH) "다음 달" else "다음 해"
 
     AppScreen {
         item {
@@ -52,22 +62,30 @@ fun MonthlyStatsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
                     ) {
-                        AppSecondaryButton(text = "이전", onClick = viewModel::goToPreviousMonth, modifier = Modifier.weight(1f))
+                        AppSecondaryButton(text = "월별", onClick = { viewModel.selectPeriodMode(StatsPeriodMode.MONTH) }, modifier = Modifier.weight(1f))
+                        AppSecondaryButton(text = "연도별", onClick = { viewModel.selectPeriodMode(StatsPeriodMode.YEAR) }, modifier = Modifier.weight(1f))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                    ) {
+                        AppSecondaryButton(text = previousText, onClick = viewModel::goToPreviousMonth, modifier = Modifier.weight(1f))
                         Text(
-                            text = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
+                            text = periodLabel,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
-                        AppSecondaryButton(text = "다음", onClick = viewModel::goToNextMonth, modifier = Modifier.weight(1f))
+                        AppSecondaryButton(text = nextText, onClick = viewModel::goToNextMonth, modifier = Modifier.weight(1f))
                     }
                 },
             )
         }
         item {
             AppSectionCard {
-                AppSectionHeader(title = "이번 달 핵심 수치")
+                AppSectionHeader(title = periodTitle)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
@@ -121,7 +139,7 @@ private fun TaskLineChartCard(
                     text = if (chart.valueType == "EXERCISE") {
                         "누적 ${formatDistance(chart.totalNumber)} / ${formatDuration(chart.totalDuration)}"
                     } else {
-                        "누적 ${formatSeriesValue(chart.points.sumOf { it.value }, chart.valueType)}"
+                        "누적 ${formatSeriesValue(chart.points.sumOf { it.value }, chart.valueType, chart.unit)}"
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
@@ -179,13 +197,13 @@ private fun TaskLineChartCard(
                 drawIntoCanvas { canvas ->
                     points.forEachIndexed { index, point ->
                         canvas.nativeCanvas.drawText(
-                            formatSeriesValue(chart.points[index].value, chart.valueType),
+                            formatSeriesValue(chart.points[index].value, chart.valueType, chart.unit),
                             point.x,
                             (point.y - 14f).coerceAtLeast(24f),
                             textPaint,
                         )
                         canvas.nativeCanvas.drawText(
-                            "${chart.points[index].date.dayOfMonth}일",
+                            formatPointLabel(chart.points[index], chart.periodMode),
                             point.x,
                             size.height - 4f,
                             textPaint,
@@ -235,13 +253,22 @@ private fun formatDuration(duration: Int?): String {
     return if (hours > 0) "${hours}시간 ${minutes}분" else "${minutes}분"
 }
 
-private fun formatSeriesValue(value: Double, valueType: String): String {
+private fun formatSeriesValue(value: Double, valueType: String, unit: String?): String {
     return if (valueType == "EXERCISE") {
         val rounded = (value * 10).roundToInt() / 10.0
         val asLong = rounded.toLong()
         if (rounded == asLong.toDouble()) "${asLong}km" else "${rounded}km"
     } else {
-        "${value.roundToInt()}회"
+        val formattedValue = NumberFormat.getNumberInstance(Locale.KOREA).format(value.roundToInt())
+        if (unit.isNullOrBlank()) formattedValue else "$formattedValue$unit"
+    }
+}
+
+private fun formatPointLabel(point: TaskSeriesPoint, periodMode: StatsPeriodMode): String {
+    return if (periodMode == StatsPeriodMode.MONTH) {
+        "${point.date.dayOfMonth}일"
+    } else {
+        "${point.date.monthValue}월"
     }
 }
 

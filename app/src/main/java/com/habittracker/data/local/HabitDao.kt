@@ -11,13 +11,16 @@ import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
+import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.DailyTaskStatRow
+import com.habittracker.data.local.model.LottoMonthlyStatRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
@@ -44,6 +47,80 @@ interface HabitDao {
         """,
     )
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        WHERE note = :note
+        ORDER BY id ASC
+        """,
+    )
+    fun observeSavedLottoTicketsByNote(note: String): Flow<List<LottoTicketEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_purchase
+        ORDER BY purchase_date DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLottoPurchase(purchase: LottoPurchaseEntity): Long
+
+    @Query("DELETE FROM lotto_purchase WHERE id = :purchaseId")
+    suspend fun deleteLottoPurchaseById(purchaseId: Long)
+
+    @Query(
+        """
+        SELECT * FROM lotto_winning
+        ORDER BY round_no DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLottoWinning(winning: LottoWinningEntity): Long
+
+    @Query("DELETE FROM lotto_winning WHERE id = :winningId")
+    suspend fun deleteLottoWinningById(winningId: Long)
+
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase")
+    fun observeTotalLottoPurchaseAmount(): Flow<Long>
+
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_winning")
+    fun observeTotalLottoWinningAmount(): Flow<Long>
+
+    @Query(
+        """
+        WITH months AS (
+            SELECT substr(purchase_date, 1, 7) AS month FROM lotto_purchase
+            UNION
+            SELECT printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1) AS month FROM lotto_winning
+        ),
+        purchases AS (
+            SELECT substr(purchase_date, 1, 7) AS month, SUM(amount) AS amount
+            FROM lotto_purchase
+            GROUP BY substr(purchase_date, 1, 7)
+        ),
+        winnings AS (
+            SELECT printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1) AS month, SUM(amount) AS amount
+            FROM lotto_winning
+            GROUP BY printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1)
+        )
+        SELECT months.month AS month,
+               COALESCE(purchases.amount, 0) AS purchase_amount,
+               COALESCE(winnings.amount, 0) AS winning_amount
+        FROM months
+        LEFT JOIN purchases ON purchases.month = months.month
+        LEFT JOIN winnings ON winnings.month = months.month
+        ORDER BY months.month DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoMonthlyStatRow>>
 
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
@@ -96,7 +173,7 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM memo_note
-        ORDER BY updated_at DESC, id DESC
+        ORDER BY is_pinned DESC, updated_at DESC, id DESC
         LIMIT :limit
         """,
     )
@@ -107,7 +184,7 @@ interface HabitDao {
         SELECT * FROM memo_note
         WHERE title LIKE '%' || :query || '%'
            OR content LIKE '%' || :query || '%'
-        ORDER BY updated_at DESC, id DESC
+        ORDER BY is_pinned DESC, updated_at DESC, id DESC
         LIMIT :limit
         """,
     )
@@ -121,6 +198,9 @@ interface HabitDao {
 
     @Update
     suspend fun updateMemoNote(memoNote: MemoNoteEntity)
+
+    @Query("UPDATE memo_note SET is_pinned = :isPinned, updated_at = :updatedAt WHERE id = :memoId")
+    suspend fun updateMemoPinned(memoId: Long, isPinned: Boolean, updatedAt: java.time.LocalDateTime)
 
     @Query(
         """
@@ -332,6 +412,7 @@ interface HabitDao {
         SELECT tim.id AS task_item_master_id,
                tim.name AS task_name,
                tim.value_type AS value_type,
+               tim.unit AS unit,
                SUM(dri.number_value) AS total_number,
                SUM(dri.duration_minutes) AS total_duration,
                SUM(CASE
@@ -343,7 +424,7 @@ interface HabitDao {
         JOIN daily_record_item dri ON dri.daily_record_id = dr.id
         JOIN task_item_master tim ON tim.id = dri.task_item_master_id
         WHERE dr.record_date BETWEEN :startDate AND :endDate
-        GROUP BY tim.id, tim.name, tim.value_type
+        GROUP BY tim.id, tim.name, tim.value_type, tim.unit
         ORDER BY tim.name ASC
         """,
     )
@@ -355,6 +436,7 @@ interface HabitDao {
         SELECT tim.id AS task_item_master_id,
                tim.name AS task_name,
                tim.value_type AS value_type,
+               tim.unit AS unit,
                dr.record_date AS record_date,
                SUM(dri.number_value) AS total_number,
                SUM(dri.duration_minutes) AS total_duration,
@@ -367,7 +449,7 @@ interface HabitDao {
         JOIN daily_record_item dri ON dri.daily_record_id = dr.id
         JOIN task_item_master tim ON tim.id = dri.task_item_master_id
         WHERE dr.record_date BETWEEN :startDate AND :endDate
-        GROUP BY tim.id, tim.name, tim.value_type, dr.record_date
+        GROUP BY tim.id, tim.name, tim.value_type, tim.unit, dr.record_date
         ORDER BY tim.sort_order ASC, tim.name ASC, dr.record_date ASC
         """,
     )

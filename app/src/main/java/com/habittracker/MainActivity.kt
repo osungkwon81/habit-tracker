@@ -40,8 +40,6 @@ import com.habittracker.ui.entry.DailyEntryScreen
 import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
-import com.habittracker.ui.learning.LearningScreen
-import com.habittracker.ui.learning.LearningViewModel
 import com.habittracker.ui.lotto.LottoScreen
 import com.habittracker.ui.lotto.LottoViewModel
 import com.habittracker.ui.memo.MemoScreen
@@ -127,7 +125,6 @@ private fun HabitTrackerApp() {
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
                     onOpenDiary = { navController.navigate(AppDestination.DIARY.route) },
                     onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
-                    onOpenLearning = { navController.navigate(AppDestination.LEARNING.route) },
                     onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                     onOpenAdmin = { navController.navigate(AppDestination.ADMIN.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
@@ -148,10 +145,6 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MEMO.route) {
                 val viewModel: MemoViewModel = viewModel(factory = AppViewModelFactory())
                 MemoScreen(viewModel = viewModel)
-            }
-            composable(AppDestination.LEARNING.route) {
-                val viewModel: LearningViewModel = viewModel(factory = AppViewModelFactory())
-                LearningScreen(viewModel = viewModel)
             }
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = AppViewModelFactory())

@@ -56,7 +56,7 @@ class AdminViewModel(
                     colorHex = colorHex,
                 )
             }.onSuccess {
-                message.value = "새 항목을 추가했습니다."
+                message.value = "새 항목이 저장되었습니다."
             }.onFailure { error ->
                 message.value = error.message ?: "항목 추가에 실패했습니다."
             }

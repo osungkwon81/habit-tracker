@@ -150,6 +150,22 @@ class MemoViewModel(
         }
     }
 
+    fun toggleMemoPinned(memoNote: MemoNoteEntity) {
+        viewModelScope.launch {
+            runCatching {
+                repository.updateMemoPinned(memoId = memoNote.id, isPinned = !memoNote.isPinned)
+            }.onSuccess {
+                statusMessage.value = if (memoNote.isPinned) {
+                    "메모 고정을 해제했습니다."
+                } else {
+                    "메모를 상단에 고정했습니다."
+                }
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "메모 고정 변경에 실패했습니다."
+            }
+        }
+    }
+
     fun saveMemo() {
         viewModelScope.launch {
             val lockedSnapshot = isLocked.value
@@ -169,9 +185,9 @@ class MemoViewModel(
                 password.value = ""
                 screenMode.value = listMode
                 statusMessage.value = if (lockedSnapshot) {
-                    "잠금 메모를 저장했습니다."
+                    "잠금 메모가 저장되었습니다."
                 } else {
-                    "메모를 저장했습니다."
+                    "메모가 저장되었습니다."
                 }
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "메모 저장에 실패했습니다."
