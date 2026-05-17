@@ -55,7 +55,11 @@ private val EntryTextStrongColor = androidx.compose.ui.graphics.Color(0xFF171C19
 private val EntryTextMutedColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
 
 @Composable
-fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
+fun DailyEntryScreen(
+    viewModel: DailyEntryViewModel,
+    initialDate: String,
+    onOpenAdmin: (() -> Unit)? = null,
+) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var dateInput by remember(initialDate) { mutableStateOf(TextFieldValue(initialDate)) }
@@ -111,6 +115,15 @@ fun DailyEntryScreen(viewModel: DailyEntryViewModel, initialDate: String) {
             AppHeroCard(
                 title = "일일 기록",
                 description = null,
+                action = {
+                    onOpenAdmin?.let { openAdmin ->
+                        AppPrimaryButton(
+                            text = "항목 관리",
+                            onClick = openAdmin,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
             )
         }
         item {

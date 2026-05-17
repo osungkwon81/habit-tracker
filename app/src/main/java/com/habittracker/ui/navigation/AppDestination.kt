@@ -12,4 +12,5 @@ enum class AppDestination(
     STATS("stats", "통계", "📊"),
     ADMIN("admin", "관리", "⚙️"),
     LOTTO("lotto", "로또", "🎯"),
+    PLANT("plant", "화분", "🪴"),
 }

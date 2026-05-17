@@ -45,6 +45,14 @@ import com.habittracker.ui.components.shouldShowActionNoticeDialog
 
 @Composable
 fun AdminScreen(viewModel: AdminViewModel) {
+    AdminScreen(viewModel = viewModel, onOpenEntry = null)
+}
+
+@Composable
+fun AdminScreen(
+    viewModel: AdminViewModel,
+    onOpenEntry: (() -> Unit)?,
+) {
     val uiState by viewModel.uiState.collectAsState()
     var category by remember { mutableStateOf(TextFieldValue("운동")) }
     var name by remember { mutableStateOf(TextFieldValue("")) }
@@ -74,6 +82,15 @@ fun AdminScreen(viewModel: AdminViewModel) {
             AppHeroCard(
                 title = "관리",
                 description = null,
+                action = {
+                    onOpenEntry?.let { openEntry ->
+                        AppPrimaryButton(
+                            text = "기록 입력",
+                            onClick = openEntry,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                },
             )
         }
         item {

@@ -2,7 +2,6 @@ package com.habittracker.data.lotto
 
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.random.Random
 
 data class LottoGeneratedTicket(
     val numbers: List<Int>,
@@ -31,40 +30,28 @@ object LottoNumberGenerator {
     ): List<LottoGeneratedTicket> {
         if (history.isEmpty()) return emptyList()
         val normalizedHistory = history.map { it.sorted() }
-        val analysis = analyze(normalizedHistory)
-        val frequencyMap = buildFrequencyMap(normalizedHistory)
+        val trendProfile = buildTrendProfile(normalizedHistory)
         val lastDraw = normalizedHistory.first()
-        val recentNumbers = normalizedHistory.take(8).flatten().toSet()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = {
-                generateProfileCombination(
-                    history = normalizedHistory,
-                    analysis = analysis,
-                    recentNumbers = recentNumbers,
-                    strategy = GeneratorStrategy.CONSENSUS,
-                )
-            },
-            validator = ::isHighQuality,
+            generator = ::generateRandomCombination,
+            validator = ::isCoverageCandidate,
             scorer = { numbers ->
-                scoreCandidate(
+                scoreCoverageCandidate(
                     numbers = numbers,
                     history = normalizedHistory,
-                    frequencyMap = frequencyMap,
+                    trendProfile = trendProfile,
                     lastDraw = lastDraw,
-                    strategyBonus = { candidate ->
-                        val recentCount = candidate.count { analysis.score.getValue(it) >= analysis.averageScore }
-                        val decadeBalance = decadeBucketCount(candidate) * 0.7
-                        (recentCount * 0.45) + decadeBalance
-                    },
+                    strategy = CoverageStrategy.BALANCED,
                 )
             },
             commentBuilder = { numbers, score ->
                 val overlap = numbers.count(lastDraw::contains)
                 val buckets = decadeBucketCount(numbers)
-                "${mode.label} 모드, 후보 ${mode.candidatePoolSize}건 재선별, 점수 ${"%.1f".format(score)}, 구간 ${buckets}개, 직전겹침 ${overlap}개"
+                val covered = numbers.joinToString("-")
+                "${mode.label} 모드, 최근 ${trendProfile.recentWindowSize}회 분포 반영, 점수 ${"%.1f".format(score)}, 구간 ${buckets}개, 직전겹침 ${overlap}개, 조합 $covered"
             },
             mode = mode,
         )
@@ -78,169 +65,70 @@ object LottoNumberGenerator {
         if (history.isEmpty()) return emptyList()
 
         val normalizedHistory = history.map { it.sorted() }
-        val recentNumbers = normalizedHistory.take(5).flatten().toSet()
-        val analysis = analyze(normalizedHistory)
-        val coldNumbers = (1..maxNumber).filterNot(recentNumbers::contains)
-        val frequencyMap = buildFrequencyMap(normalizedHistory)
+        val trendProfile = buildTrendProfile(normalizedHistory)
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = {
-                generateProfileCombination(
-                    history = normalizedHistory,
-                    analysis = analysis,
-                    recentNumbers = recentNumbers,
-                    strategy = GeneratorStrategy.DIVERSIFIED,
-                )
-            },
-            validator = ::isHighQuality,
+            generator = ::generateRandomCombination,
+            validator = ::isCoverageCandidate,
             scorer = { numbers ->
-                scoreCandidate(
+                scoreCoverageCandidate(
                     numbers = numbers,
                     history = normalizedHistory,
-                    frequencyMap = frequencyMap,
+                    trendProfile = trendProfile,
                     lastDraw = lastDraw,
-                    strategyBonus = { candidate ->
-                        val hotCount = candidate.count(recentNumbers::contains)
-                        val coldCount = candidate.count(coldNumbers::contains)
-                        val carryCount = candidate.count(lastDraw::contains)
-                        (5.0 - abs(hotCount - 2.0) * 1.2) +
-                            (4.0 - abs(coldCount - 4.0) * 0.8) -
-                            max(0, carryCount - 2) * 1.5
-                    },
+                    strategy = CoverageStrategy.DIVERSIFIED,
                 )
             },
             commentBuilder = { numbers, score ->
-                val hotCount = numbers.count(recentNumbers::contains)
-                val coldCount = numbers.count(coldNumbers::contains)
                 val carryCount = numbers.count(lastDraw::contains)
-                "${mode.label} 모드, 후보 ${mode.candidatePoolSize}건 재선별, 점수 ${"%.1f".format(score)}, 최근수 ${hotCount}개, 미출현 ${coldCount}개, 이월 ${carryCount}개"
+                val rareCount = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
+                "${mode.label} 모드, 최근 ${trendProfile.recentWindowSize}회 분포 반영, 점수 ${"%.1f".format(score)}, 평균이하빈도 ${rareCount}개, 이월 ${carryCount}개"
             },
             mode = mode,
         )
     }
 
-    private fun analyze(history: List<List<Int>>): Analysis {
-        val frequency = (1..maxNumber).associateWith { 0 }.toMutableMap()
-        val lastSeenGap = (1..maxNumber).associateWith { history.size }.toMutableMap()
-
-        history.forEachIndexed { index, draw ->
-            draw.forEach { number ->
-                frequency[number] = frequency.getValue(number) + 1
-                lastSeenGap[number] = minOf(lastSeenGap.getValue(number), index)
-            }
+    private fun buildTrendProfile(history: List<List<Int>>): TrendProfile {
+        val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
+        val longFrequency = buildFrequencyMap(history)
+        val recentFrequency = buildFrequencyMap(recentWindow)
+        val carryOverlaps = recentWindow.zipWithNext { draw, previousDraw ->
+            draw.intersect(previousDraw.toSet()).size
         }
 
-        val score = (1..maxNumber).associateWith { number ->
-            (frequency.getValue(number) * 1.1) + (lastSeenGap.getValue(number) * 0.7)
-        }
-
-        return Analysis(score = score)
-    }
-
-    private fun deriveExcludedNumbers(analysis: Analysis): Set<Int> {
-        return analysis.score.entries
-            .sortedBy(Map.Entry<Int, Double>::value)
-            .take(6)
-            .mapTo(linkedSetOf(), Map.Entry<Int, Double>::key)
-    }
-
-    private fun generateProfileCombination(
-        history: List<List<Int>>,
-        analysis: Analysis,
-        recentNumbers: Set<Int>,
-        strategy: GeneratorStrategy,
-    ): List<Int> {
-        val lastDraw = history.firstOrNull().orEmpty().toSet()
-        val patterns = listOf(
-            intArrayOf(1, 1, 1, 2, 1),
-            intArrayOf(1, 1, 2, 1, 1),
-            intArrayOf(1, 2, 1, 1, 1),
-            intArrayOf(2, 1, 1, 1, 1),
-            intArrayOf(1, 2, 1, 2, 0),
-            intArrayOf(2, 1, 2, 1, 0),
+        return TrendProfile(
+            recentWindowSize = recentWindow.size,
+            recentSumAverage = recentWindow.map(List<Int>::sum).average(),
+            recentOddAverage = recentWindow.map { draw -> draw.count { it % 2 != 0 } }.average(),
+            recentLowAverage = recentWindow.map { draw -> draw.count { it <= 22 } }.average(),
+            recentBucketAverage = recentWindow.map(::decadeBucketCount).average(),
+            recentCarryAverage = carryOverlaps.takeIf { it.isNotEmpty() }?.average() ?: 1.0,
+            longFrequencyMean = longFrequency.values.average(),
+            recentFrequencyMean = recentFrequency.values.average(),
+            longFrequency = longFrequency,
+            recentFrequency = recentFrequency,
         )
-        val ranges = listOf(1..10, 11..20, 21..30, 31..40, 41..45)
-
-        repeat(80) {
-            val selected = linkedSetOf<Int>()
-            val pattern = patterns.random()
-            pattern.forEachIndexed { index, count ->
-                repeat(count) {
-                    val picked = weightedPickFromRange(
-                        range = ranges[index],
-                        selected = selected,
-                        analysis = analysis,
-                        recentNumbers = recentNumbers,
-                        lastDraw = lastDraw,
-                        strategy = strategy,
-                    )
-                    selected += picked
-                }
-            }
-            while (selected.size < pickCount) {
-                val bucket = ranges.indices.random()
-                selected += weightedPickFromRange(
-                    range = ranges[bucket],
-                    selected = selected,
-                    analysis = analysis,
-                    recentNumbers = recentNumbers,
-                    lastDraw = lastDraw,
-                    strategy = strategy,
-                )
-            }
-            val candidate = selected.sorted()
-            if (isHighQuality(candidate) && !isTooSimilarToHistory(candidate, history)) return candidate
-        }
-
-        return (1..maxNumber).shuffled().take(pickCount).sorted()
     }
 
-    private fun weightedPickFromRange(
-        range: IntRange,
-        selected: Set<Int>,
-        analysis: Analysis,
-        recentNumbers: Set<Int>,
-        lastDraw: Set<Int>,
-        strategy: GeneratorStrategy,
-    ): Int {
-        val candidates = range.filterNot(selected::contains).ifEmpty {
-            (1..maxNumber).filterNot(selected::contains)
-        }
-        val weights = candidates.map { number ->
-            val frequencyWeight = analysis.score.getValue(number)
-            val recentWeight = if (number in recentNumbers) {
-                if (strategy == GeneratorStrategy.CONSENSUS) 10.0 else -5.0
-            } else {
-                if (strategy == GeneratorStrategy.DIVERSIFIED) 6.0 else 0.0
-            }
-            val carryPenalty = if (number in lastDraw) 10.0 else 0.0
-            number to max(((frequencyWeight * 10.0) + recentWeight - carryPenalty).toInt(), 1)
-        }
-        val totalWeight = weights.sumOf { it.second }
-        var target = Random.nextInt(totalWeight)
-        weights.forEach { (number, weight) ->
-            target -= weight
-            if (target < 0) return number
-        }
-        return candidates.random()
-    }
+    private fun generateRandomCombination(): List<Int> =
+        (1..maxNumber).shuffled().take(pickCount).sorted()
 
-    private fun isHighQuality(numbers: List<Int>): Boolean {
-        if (numbers.size != pickCount) return false
+    private fun isCoverageCandidate(numbers: List<Int>): Boolean {
+        if (numbers.size != pickCount || numbers.distinct().size != pickCount) return false
         val sum = numbers.sum()
-        if (sum !in 105..175) return false
+        if (sum !in 80..210) return false
         val oddCount = numbers.count { it % 2 != 0 }
-        if (oddCount !in 2..4) return false
+        if (oddCount !in 1..5) return false
         val lowCount = numbers.count { it <= 22 }
-        if (lowCount !in 2..4) return false
-        if (decadeBucketCount(numbers) < 4) return false
+        if (lowCount !in 1..5) return false
+        if (decadeBucketCount(numbers) < 3) return false
         val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
-        if (tailDuplicates >= 3) return false
-        if (maxConsecutiveRun(numbers) >= 3) return false
-        return acValue(numbers) >= 7
+        if (tailDuplicates > 3) return false
+        if (maxConsecutiveRun(numbers) > 3) return false
+        return acValue(numbers) >= 4
     }
 
     private fun generateRankedTickets(
@@ -311,42 +199,48 @@ object LottoNumberGenerator {
         return selected.take(gameCount)
     }
 
-    private fun scoreCandidate(
+    private fun scoreCoverageCandidate(
         numbers: List<Int>,
         history: List<List<Int>>,
-        frequencyMap: Map<Int, Int>,
+        trendProfile: TrendProfile,
         lastDraw: List<Int>,
-        strategyBonus: (List<Int>) -> Double,
+        strategy: CoverageStrategy,
     ): Double {
         val sum = numbers.sum()
         val oddCount = numbers.count { it % 2 != 0 }
-        val ac = acValue(numbers)
-        val decadeBuckets = decadeBucketCount(numbers)
+        val lowCount = numbers.count { it <= 22 }
+        val bucketCount = decadeBucketCount(numbers)
         val overlapWithLast = numbers.count(lastDraw::contains)
         val consecutiveRun = maxConsecutiveRun(numbers)
         val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
-        val frequencyConsensus = numbers.sumOf { frequencyMap.getValue(it).toDouble() } / pickCount
-        val frequencyMean = frequencyMap.values.average()
-        val centeredSumScore = 20.0 - abs(sum - 140) / 3.0
-        val oddEvenScore = 8.0 - abs(oddCount - 3)
-        val acScore = ac * 1.4
-        val bucketScore = decadeBuckets * 2.0
-        val frequencyScore = 10.0 - abs(frequencyConsensus - frequencyMean)
-        val historyPenalty = history.count { past -> past.intersect(numbers.toSet()).size >= 4 } * 1.8
-        val overlapPenalty = overlapWithLast * 1.7
-        val consecutivePenalty = if (consecutiveRun >= 3) 6.0 else if (consecutiveRun == 2) 1.0 else 0.0
-        val tailPenalty = if (tailDuplicates >= 3) 4.0 else if (tailDuplicates == 2) 0.5 else 0.0
+        val longFrequencyAverage = numbers.sumOf { trendProfile.longFrequency.getValue(it).toDouble() } / pickCount
+        val recentFrequencyAverage = numbers.sumOf { trendProfile.recentFrequency.getValue(it).toDouble() } / pickCount
+        val longFrequencyScore = 6.0 - abs(longFrequencyAverage - trendProfile.longFrequencyMean) * 0.35
+        val recentFrequencyScore = when (strategy) {
+            CoverageStrategy.BALANCED -> 5.0 - abs(recentFrequencyAverage - trendProfile.recentFrequencyMean) * 0.5
+            CoverageStrategy.DIVERSIFIED -> {
+                val belowRecentAverage = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
+                belowRecentAverage * 0.9
+            }
+        }
+        val trendShapeScore =
+            (18.0 - abs(sum - trendProfile.recentSumAverage) / 5.0) +
+                (8.0 - abs(oddCount - trendProfile.recentOddAverage) * 1.4) +
+                (8.0 - abs(lowCount - trendProfile.recentLowAverage) * 1.2) +
+                (6.0 - abs(bucketCount - trendProfile.recentBucketAverage) * 1.5) +
+                (4.0 - abs(overlapWithLast - trendProfile.recentCarryAverage) * 1.2)
+        val coverageShapeScore = (bucketCount * 1.8) + (acValue(numbers) * 0.8)
+        val historyPenalty = history.count { past -> past.intersect(numbers.toSet()).size >= 4 } * 1.2
+        val duplicateTailPenalty = if (tailDuplicates >= 3) 1.5 else 0.0
+        val consecutivePenalty = if (consecutiveRun >= 3) 1.5 else 0.0
 
-        return centeredSumScore +
-            oddEvenScore +
-            acScore +
-            bucketScore +
-            frequencyScore +
-            strategyBonus(numbers) -
+        return trendShapeScore +
+            coverageShapeScore +
+            longFrequencyScore +
+            recentFrequencyScore -
             historyPenalty -
-            overlapPenalty -
-            consecutivePenalty -
-            tailPenalty
+            duplicateTailPenalty -
+            consecutivePenalty
     }
 
     private fun buildFrequencyMap(history: List<List<Int>>): Map<Int, Int> {
@@ -389,32 +283,26 @@ object LottoNumberGenerator {
     private fun decadeBucketCount(numbers: List<Int>): Int =
         numbers.map { (it - 1) / 10 }.distinct().size
 
-    private fun getLongGapNumbers(history: List<List<Int>>, weeks: Int): Set<Int> {
-        val appeared = history.take(weeks).flatten().toSet()
-        return (1..maxNumber).filterNot(appeared::contains).toSet()
-    }
-
-    private fun getLeastFrequentNumbers(history: List<List<Int>>, weeks: Int, count: Int): Set<Int> {
-        val frequencyMap = (1..maxNumber).associateWith { 0 }.toMutableMap()
-        history.take(weeks).flatten().forEach { number ->
-            frequencyMap[number] = frequencyMap.getValue(number) + 1
-        }
-        return frequencyMap.entries.sortedBy { it.value }.take(count).mapTo(linkedSetOf(), Map.Entry<Int, Int>::key)
-    }
-
-    private data class Analysis(
-        val score: Map<Int, Double>,
-    ) {
-        val averageScore: Double = score.values.average()
-    }
+    private data class TrendProfile(
+        val recentWindowSize: Int,
+        val recentSumAverage: Double,
+        val recentOddAverage: Double,
+        val recentLowAverage: Double,
+        val recentBucketAverage: Double,
+        val recentCarryAverage: Double,
+        val longFrequencyMean: Double,
+        val recentFrequencyMean: Double,
+        val longFrequency: Map<Int, Int>,
+        val recentFrequency: Map<Int, Int>,
+    )
 
     private data class ScoredCandidate(
         val numbers: List<Int>,
         val score: Double,
     )
 
-    private enum class GeneratorStrategy {
-        CONSENSUS,
+    private enum class CoverageStrategy {
+        BALANCED,
         DIVERSIFIED,
     }
 }

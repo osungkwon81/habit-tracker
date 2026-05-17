@@ -15,6 +15,7 @@ import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
+import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
@@ -85,6 +86,9 @@ class HabitRepository(
     fun observeMemoNotesByQuery(query: String, limit: Int): Flow<List<MemoNoteEntity>> =
         habitDao.observeMemoNotesByQuery(query.trim(), limit)
 
+    fun observePlants(): Flow<List<PlantEntity>> =
+        habitDao.observePlants()
+
     fun observeVocabularyWords(limit: Int): Flow<List<VocabularyWordEntity>> =
         habitDao.observeVocabularyWords(limit)
 
@@ -119,6 +123,9 @@ class HabitRepository(
 
     suspend fun getMemoNote(memoId: Long): MemoNoteEntity? =
         habitDao.getMemoNoteById(memoId)
+
+    suspend fun getPlant(plantId: Long): PlantEntity? =
+        habitDao.getPlantById(plantId)
 
     suspend fun getVocabularyWord(wordId: Long): VocabularyWordEntity? =
         habitDao.getVocabularyWordById(wordId)
@@ -330,6 +337,78 @@ class HabitRepository(
     suspend fun updateMemoPinned(memoId: Long, isPinned: Boolean) {
         persistChange {
             habitDao.updateMemoPinned(memoId = memoId, isPinned = isPinned, updatedAt = LocalDateTime.now())
+        }
+    }
+
+    suspend fun savePlant(
+        plantId: Long?,
+        name: String,
+        imageUri: String?,
+        memo: String?,
+        wateringMonths: Int,
+        wateringDays: Int,
+        lastWateredDate: LocalDate,
+    ) {
+        val sanitizedName = name.trim()
+        val sanitizedMemo = memo?.trim()?.takeIf(String::isNotEmpty)
+        val sanitizedImageUri = imageUri?.trim()?.takeIf(String::isNotEmpty)
+        require(sanitizedName.isNotEmpty()) { "화분 이름을 입력해 주세요." }
+        require(wateringMonths >= 0 && wateringDays >= 0) { "물주기 주기는 0 이상이어야 합니다." }
+
+        val intervalDays = (wateringMonths * 30) + wateringDays
+        require(intervalDays > 0) { "물주기 주기를 입력해 주세요." }
+
+        val now = LocalDateTime.now()
+        val nextWateringDate = lastWateredDate.plusDays(intervalDays.toLong())
+        val existingPlant = if (plantId != null) habitDao.getPlantById(plantId) else null
+
+        persistChange {
+            if (existingPlant == null) {
+                habitDao.insertPlant(
+                    PlantEntity(
+                        name = sanitizedName,
+                        imageUri = sanitizedImageUri,
+                        memo = sanitizedMemo,
+                        wateringIntervalDays = intervalDays,
+                        lastWateredDate = lastWateredDate,
+                        nextWateringDate = nextWateringDate,
+                        createdAt = now,
+                        updatedAt = now,
+                    ),
+                )
+            } else {
+                habitDao.updatePlant(
+                    existingPlant.copy(
+                        name = sanitizedName,
+                        imageUri = sanitizedImageUri,
+                        memo = sanitizedMemo,
+                        wateringIntervalDays = intervalDays,
+                        lastWateredDate = lastWateredDate,
+                        nextWateringDate = nextWateringDate,
+                        updatedAt = now,
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun completePlantWatering(plantId: Long, wateredDate: LocalDate = LocalDate.now()) {
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("화분 정보를 찾을 수 없습니다.")
+        persistChange {
+            habitDao.updatePlant(
+                existingPlant.copy(
+                    lastWateredDate = wateredDate,
+                    nextWateringDate = wateredDate.plusDays(existingPlant.wateringIntervalDays.toLong()),
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
+    suspend fun deletePlant(plantId: Long) {
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("삭제할 화분을 찾을 수 없습니다.")
+        persistChange {
+            habitDao.deletePlant(existingPlant)
         }
     }
 

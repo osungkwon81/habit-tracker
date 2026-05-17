@@ -14,6 +14,7 @@ import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
+import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.TaskItemAttachmentEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
@@ -32,8 +33,9 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         LottoWinningEntity::class,
         MemoNoteEntity::class,
         VocabularyWordEntity::class,
+        PlantEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

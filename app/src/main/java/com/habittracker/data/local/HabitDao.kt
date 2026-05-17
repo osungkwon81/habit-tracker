@@ -15,6 +15,7 @@ import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
+import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
@@ -201,6 +202,26 @@ interface HabitDao {
 
     @Query("UPDATE memo_note SET is_pinned = :isPinned, updated_at = :updatedAt WHERE id = :memoId")
     suspend fun updateMemoPinned(memoId: Long, isPinned: Boolean, updatedAt: java.time.LocalDateTime)
+
+    @Query(
+        """
+        SELECT * FROM plant
+        ORDER BY next_watering_date ASC, updated_at DESC, id DESC
+        """,
+    )
+    fun observePlants(): Flow<List<PlantEntity>>
+
+    @Query("SELECT * FROM plant WHERE id = :plantId LIMIT 1")
+    suspend fun getPlantById(plantId: Long): PlantEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertPlant(plant: PlantEntity): Long
+
+    @Update
+    suspend fun updatePlant(plant: PlantEntity)
+
+    @Delete
+    suspend fun deletePlant(plant: PlantEntity)
 
     @Query(
         """

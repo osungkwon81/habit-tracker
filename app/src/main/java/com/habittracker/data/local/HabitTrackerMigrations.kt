@@ -150,11 +150,38 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `plant` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `image_uri` TEXT,
+                    `memo` TEXT,
+                    `watering_interval_days` INTEGER NOT NULL,
+                    `last_watered_date` TEXT NOT NULL,
+                    `next_watering_date` TEXT NOT NULL,
+                    `created_at` TEXT NOT NULL,
+                    `updated_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_plant_next_watering_date`
+                ON `plant` (`next_watering_date`)
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
         MIGRATION_5_8,
         MIGRATION_8_9,
         MIGRATION_9_10,
+        MIGRATION_10_11,
     )
 }
