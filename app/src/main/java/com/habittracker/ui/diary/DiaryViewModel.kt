@@ -129,6 +129,10 @@ class DiaryViewModel(
             }
         }
     }
+
+    fun clearStatusMessage() {
+        message.value = null
+    }
 }
 
 data class DiaryUiState(

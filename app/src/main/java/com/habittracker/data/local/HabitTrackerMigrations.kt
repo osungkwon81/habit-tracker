@@ -176,6 +176,17 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `is_purchased` INTEGER NOT NULL DEFAULT 0
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -183,5 +194,6 @@ object HabitTrackerMigrations {
         MIGRATION_8_9,
         MIGRATION_9_10,
         MIGRATION_10_11,
+        MIGRATION_11_12,
     )
 }

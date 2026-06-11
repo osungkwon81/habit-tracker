@@ -29,6 +29,8 @@ data class LottoTicketEntity(
     val number6: Int,
     @ColumnInfo(name = "note")
     val note: String? = null,
+    @ColumnInfo(name = "is_purchased")
+    val isPurchased: Boolean = false,
     @ColumnInfo(name = "created_at")
     val createdAt: LocalDateTime = LocalDateTime.now(),
 ) {

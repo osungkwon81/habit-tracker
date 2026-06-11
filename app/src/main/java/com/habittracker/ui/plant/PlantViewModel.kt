@@ -180,6 +180,10 @@ class PlantViewModel(
         }
     }
 
+    fun clearStatusMessage() {
+        statusMessage.value = null
+    }
+
     private fun calculateIntervalDays(monthsValue: String, daysValue: String): Int {
         val months = monthsValue.toIntOrNull() ?: 0
         val days = daysValue.toIntOrNull() ?: 0

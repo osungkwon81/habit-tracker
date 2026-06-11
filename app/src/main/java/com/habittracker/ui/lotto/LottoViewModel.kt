@@ -6,7 +6,7 @@ import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
-import com.habittracker.data.local.model.LottoMonthlyStatRow
+import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
@@ -33,12 +33,15 @@ private const val savedTab = "saved"
 private const val statsTab = "stats"
 private const val sourceChatGpt = "ChatGPT"
 private const val sourceGemini = "Gemini"
+private const val savedTicketBatchSize = 5
+private const val savedTicketHistoryLimit = 36
+private const val savedDrawHistoryLimit = 120
 
-private data class PendingLottoBatchSave(
-    val roundNo: Int,
-    val sourceLabel: String,
-    val tickets: List<LottoGeneratedTicket>,
-)
+enum class LottoStatsRange(val label: String) {
+    WEEKLY("주간"),
+    MONTHLY("월간"),
+    YEARLY("년간"),
+}
 
 private data class PendingLottoDelete(
     val roundNo: Int? = null,
@@ -61,33 +64,80 @@ class LottoViewModel(
     private val generatedChatGpt = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val generatedGemini = MutableStateFlow<List<LottoGeneratedTicket>>(emptyList())
     private val latestRoundNo = MutableStateFlow<Int?>(null)
-    private val pendingBatchSave = MutableStateFlow<PendingLottoBatchSave?>(null)
     private val pendingDelete = MutableStateFlow<PendingLottoDelete?>(null)
     private val lastGeneratedSource = MutableStateFlow<String?>(null)
+    private val selectedStatsRange = MutableStateFlow(LottoStatsRange.WEEKLY)
+    private val savedRoundQueryInput = MutableStateFlow("")
 
-    private val observedDraws = appliedQueryRoundInput.flatMapLatest { query ->
-        repository.observeLottoDraws(query.toIntOrNull(), limit = 20)
+    private val observedDraws = selectedTab.flatMapLatest { tab ->
+        if (tab != drawTab) {
+            flowOf(emptyList())
+        } else {
+            appliedQueryRoundInput.flatMapLatest { query ->
+                repository.observeLottoDraws(query.toIntOrNull(), limit = 20)
+            }
+        }
     }.onEach {
-        isHistoryLoading.value = false
+        if (selectedTab.value == drawTab) {
+            isHistoryLoading.value = false
+        }
     }
-    private val nextRoundSavedTickets = latestRoundNo.flatMapLatest { latestDrawRoundNo ->
+    private val allDraws = selectedTab.flatMapLatest { tab ->
+        if (tab == savedTab) repository.observeLottoDraws(roundNo = null, limit = savedDrawHistoryLimit) else flowOf(emptyList())
+    }
+    private val nextRoundSavedTickets = combine(selectedTab, latestRoundNo) { tab, latestDrawRoundNo -> tab to latestDrawRoundNo }.flatMapLatest { (tab, latestDrawRoundNo) ->
+        if (tab != generatorTab && tab != savedTab) return@flatMapLatest flowOf(emptyList())
         val nextRoundNo = latestDrawRoundNo?.plus(1)
         if (nextRoundNo == null) flowOf(emptyList()) else repository.observeSavedLottoTicketsByRound(nextRoundNo)
+    }
+    private val savedHistoryTickets = combine(selectedTab, savedRoundQueryInput) { tab, query -> tab to query }
+        .flatMapLatest { (tab, query) ->
+            if (tab != savedTab) {
+                flowOf(emptyList())
+            } else {
+                query.toIntOrNull()?.let(repository::observeSavedLottoTicketsByRound)
+                    ?: repository.observeSavedLottoTickets(limit = savedTicketHistoryLimit)
+            }
+        }
+    private val purchases = selectedTab.flatMapLatest { tab ->
+        if (tab == purchaseTab) repository.observeLottoPurchases(limit = 100) else flowOf(emptyList())
+    }
+    private val winnings = selectedTab.flatMapLatest { tab ->
+        if (tab == winningTab) repository.observeLottoWinnings(limit = 100) else flowOf(emptyList())
+    }
+    private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeTotalLottoPurchaseAmount() else flowOf(0L)
+    }
+    private val totalWinningAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeTotalLottoWinningAmount() else flowOf(0L)
+    }
+    private val weeklyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeLottoWeeklyStats(limit = 12) else flowOf(emptyList())
+    }
+    private val monthlyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeLottoMonthlyStats(limit = 12) else flowOf(emptyList())
+    }
+    private val yearlyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeLottoYearlyStats(limit = 12) else flowOf(emptyList())
     }
 
     val uiState: StateFlow<LottoUiState> = combine(
         selectedTab,
         observedDraws,
-        repository.observeLottoDraws(roundNo = null, limit = 200),
+        allDraws,
         nextRoundSavedTickets,
-        repository.observeSavedLottoTickets(limit = 100),
-        repository.observeLottoPurchases(limit = 100),
-        repository.observeLottoWinnings(limit = 100),
-        repository.observeTotalLottoPurchaseAmount(),
-        repository.observeTotalLottoWinningAmount(),
-        repository.observeLottoMonthlyStats(limit = 12),
+        savedHistoryTickets,
+        purchases,
+        winnings,
+        totalPurchaseAmount,
+        weeklyStats,
+        totalWinningAmount,
+        monthlyStats,
+        yearlyStats,
+        selectedStatsRange,
         roundInput,
         queryRoundInput,
+        savedRoundQueryInput,
         numberInputs,
         generationMode,
         isGenerating,
@@ -96,7 +146,6 @@ class LottoViewModel(
         generatedChatGpt,
         generatedGemini,
         latestRoundNo,
-        pendingBatchSave,
         pendingDelete,
         lastGeneratedSource,
     ) { values ->
@@ -108,26 +157,36 @@ class LottoViewModel(
         val purchases = values[5] as List<LottoPurchaseEntity>
         val winnings = values[6] as List<LottoWinningEntity>
         val totalPurchaseAmount = values[7] as Long
-        val totalWinningAmount = values[8] as Long
-        val monthlyStats = values[9] as List<LottoMonthlyStatRow>
-        val round = values[10] as String
-        val query = values[11] as String
-        val numbers = values[12] as List<String>
-        val mode = values[13] as LottoGenerationMode
-        val generating = values[14] as Boolean
-        val historyLoading = values[15] as Boolean
-        val message = values[16] as String?
-        val chatGpt = values[17] as List<LottoGeneratedTicket>
-        val gemini = values[18] as List<LottoGeneratedTicket>
-        val latestRound = values[19] as Int?
-        val pendingSave = values[20] as PendingLottoBatchSave?
-        val pendingDeleteState = values[21] as PendingLottoDelete?
-        val recentSource = values[22] as String?
+        val weeklyStats = values[8] as List<LottoPeriodStatRow>
+        val totalWinningAmount = values[9] as Long
+        val monthlyStats = values[10] as List<LottoPeriodStatRow>
+        val yearlyStats = values[11] as List<LottoPeriodStatRow>
+        val statsRange = values[12] as LottoStatsRange
+        val round = values[13] as String
+        val query = values[14] as String
+        val savedRoundQuery = values[15] as String
+        val numbers = values[16] as List<String>
+        val mode = values[17] as LottoGenerationMode
+        val generating = values[18] as Boolean
+        val historyLoading = values[19] as Boolean
+        val message = values[20] as String?
+        val chatGpt = values[21] as List<LottoGeneratedTicket>
+        val gemini = values[22] as List<LottoGeneratedTicket>
+        val latestRound = values[23] as Int?
+        val pendingDeleteState = values[24] as PendingLottoDelete?
+        val recentSource = values[25] as String?
+
+        val activeStats = when (statsRange) {
+            LottoStatsRange.WEEKLY -> weeklyStats
+            LottoStatsRange.MONTHLY -> monthlyStats
+            LottoStatsRange.YEARLY -> yearlyStats
+        }
 
         LottoUiState(
             selectedTab = tab,
             roundInput = round,
             queryRoundInput = query,
+            savedRoundQueryInput = savedRoundQuery,
             numberInputs = numbers,
             generationMode = mode,
             isGenerating = generating,
@@ -143,11 +202,10 @@ class LottoViewModel(
             winnings = winnings,
             totalPurchaseAmount = totalPurchaseAmount,
             totalWinningAmount = totalWinningAmount,
-            monthlyStats = monthlyStats,
+            selectedStatsRange = statsRange,
+            stats = activeStats,
             latestSavedRoundNo = latestRound,
             nextRoundNo = latestRound?.plus(1),
-            pendingOverwriteRoundNo = pendingSave?.roundNo,
-            pendingOverwriteSourceLabel = pendingSave?.sourceLabel,
             pendingDeleteRoundNo = pendingDeleteState?.roundNo,
             pendingDeleteTicketId = pendingDeleteState?.ticketId,
             lastGeneratedSource = recentSource,
@@ -172,6 +230,7 @@ class LottoViewModel(
 
     fun selectDrawTab() {
         selectedTab.value = drawTab
+        isHistoryLoading.value = true
     }
 
     fun selectPurchaseTab() {
@@ -190,12 +249,24 @@ class LottoViewModel(
         selectedTab.value = statsTab
     }
 
+    fun selectStatsRange(range: LottoStatsRange) {
+        selectedStatsRange.value = range
+    }
+
+    fun clearStatusMessage() {
+        statusMessage.value = null
+    }
+
     fun updateRoundInput(value: String) {
         roundInput.value = value.filter(Char::isDigit)
     }
 
     fun updateQueryRoundInput(value: String) {
         queryRoundInput.value = value.filter(Char::isDigit)
+    }
+
+    fun updateSavedRoundQueryInput(value: String) {
+        savedRoundQueryInput.value = value.filter(Char::isDigit)
     }
 
     fun submitDrawQuery() {
@@ -229,33 +300,12 @@ class LottoViewModel(
                 statusMessage.value = "저장할 회차를 먼저 확인해 주세요."
                 return@launch
             }
-            if (repository.hasSavedLottoBatch(roundNo = targetRoundNo, sourceLabel = sourceLabel)) {
-                pendingBatchSave.value = PendingLottoBatchSave(
-                    roundNo = targetRoundNo,
-                    sourceLabel = sourceLabel,
-                    tickets = tickets.take(5),
-                )
-                statusMessage.value = "${targetRoundNo}회차 ${sourceLabel} 번호가 이미 저장되어 있습니다."
+            if (repository.getSavedLottoBatchCount(roundNo = targetRoundNo, sourceLabel = sourceLabel) >= 3) {
+                statusMessage.value = "${targetRoundNo}회차 ${sourceLabel} 번호는 이미 3세트 저장되어 있습니다. 1세트를 삭제한 뒤 다시 저장해 주세요."
                 return@launch
             }
-            saveGeneratedBatchInternal(roundNo = targetRoundNo, sourceLabel = sourceLabel, tickets = tickets, overwrite = false)
+            saveGeneratedBatchInternal(roundNo = targetRoundNo, sourceLabel = sourceLabel, tickets = tickets)
         }
-    }
-
-    fun confirmOverwriteGeneratedBatch() {
-        val pendingSave = pendingBatchSave.value ?: return
-        viewModelScope.launch {
-            saveGeneratedBatchInternal(
-                roundNo = pendingSave.roundNo,
-                sourceLabel = pendingSave.sourceLabel,
-                tickets = pendingSave.tickets,
-                overwrite = true,
-            )
-        }
-    }
-
-    fun dismissOverwriteGeneratedBatch() {
-        pendingBatchSave.value = null
     }
 
     fun requestDeleteSavedRound(roundNo: Int) {
@@ -361,17 +411,46 @@ class LottoViewModel(
         }
     }
 
-    private suspend fun saveGeneratedBatchInternal(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>, overwrite: Boolean) {
+    fun deleteSavedSet(sourceLabel: String, note: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.deleteLottoSet(sourceLabel, note)
+            }.onSuccess {
+                statusMessage.value = "저장된 세트를 삭제했습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "세트 삭제에 실패했습니다."
+            }
+        }
+    }
+
+    fun markSavedSetPurchased(sourceLabel: String, note: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.markLottoSetPurchased(sourceLabel, note)
+            }.onSuccess {
+                statusMessage.value = "세트를 구매 처리했습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "세트 구매 처리에 실패했습니다."
+            }
+        }
+    }
+
+    private suspend fun saveGeneratedBatchInternal(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
         runCatching {
             repository.saveLottoBatch(
                 roundNo = roundNo,
                 sourceLabel = sourceLabel,
                 tickets = tickets,
-                overwrite = overwrite,
             )
         }.onSuccess {
-            pendingBatchSave.value = null
-            statusMessage.value = "${roundNo}회차 ${sourceLabel} 번호 5게임이 저장되었습니다."
+            when (sourceLabel) {
+                sourceChatGpt -> generatedChatGpt.value = emptyList()
+                sourceGemini -> generatedGemini.value = emptyList()
+            }
+            if (lastGeneratedSource.value == sourceLabel) {
+                lastGeneratedSource.value = null
+            }
+            statusMessage.value = "${roundNo}회차 ${sourceLabel} 번호 ${savedTicketBatchSize}게임이 저장되었습니다."
         }.onFailure { error ->
             statusMessage.value = error.message ?: "생성 번호 저장에 실패했습니다."
         }
@@ -431,6 +510,7 @@ data class LottoUiState(
     val selectedTab: String = generatorTab,
     val roundInput: String = "",
     val queryRoundInput: String = "",
+    val savedRoundQueryInput: String = "",
     val numberInputs: List<String> = List(6) { "" },
     val generationMode: LottoGenerationMode = LottoGenerationMode.BASIC,
     val isGenerating: Boolean = false,
@@ -446,11 +526,10 @@ data class LottoUiState(
     val winnings: List<LottoWinningEntity> = emptyList(),
     val totalPurchaseAmount: Long = 0L,
     val totalWinningAmount: Long = 0L,
-    val monthlyStats: List<LottoMonthlyStatRow> = emptyList(),
+    val selectedStatsRange: LottoStatsRange = LottoStatsRange.WEEKLY,
+    val stats: List<LottoPeriodStatRow> = emptyList(),
     val latestSavedRoundNo: Int? = null,
     val nextRoundNo: Int? = null,
-    val pendingOverwriteRoundNo: Int? = null,
-    val pendingOverwriteSourceLabel: String? = null,
     val pendingDeleteRoundNo: Int? = null,
     val pendingDeleteTicketId: Long? = null,
     val lastGeneratedSource: String? = null,

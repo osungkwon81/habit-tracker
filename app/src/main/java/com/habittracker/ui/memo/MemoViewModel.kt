@@ -194,6 +194,10 @@ class MemoViewModel(
             }
         }
     }
+
+    fun clearStatusMessage() {
+        statusMessage.value = null
+    }
 }
 
 data class MemoUiState(

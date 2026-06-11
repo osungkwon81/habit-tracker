@@ -49,11 +49,12 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.habittracker.ui.components.AppButtonRow
+import com.habittracker.ui.components.AppEditButton
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSecondaryButton
@@ -209,7 +210,10 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
     noticeMessage?.let { message ->
         AppNoticeDialog(
             message = message,
-            onDismiss = { noticeMessage = null },
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
             title = message.actionNoticeDialogTitle(),
         )
     }
@@ -258,7 +262,7 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item { AppTextField(value = title.text, onValueChange = { title = TextFieldValue(it) }, label = "제목", singleLine = true) }
         item { AppTextField(value = body.text, onValueChange = { body = TextFieldValue(it) }, label = "일기 내용", minLines = 10) }
         item { AppSecondaryButton(text = "사진 첨부", onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.fillMaxWidth()) }
-        item { AppPrimaryButton(text = "일기 저장", onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) }, modifier = Modifier.fillMaxWidth()) }
+        item { AppSaveButton(text = "일기 저장", onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) }, modifier = Modifier.fillMaxWidth()) }
         item { uiState.statusMessage?.let { message -> AppStatusText(message) } }
         if (imageUris.isNotEmpty()) {
             item { Text(text = "첨부 이미지", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -297,7 +301,10 @@ private fun DiaryDetailScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
             )
         }
         item {
-            AppButtonRow(primaryText = "수정", onPrimaryClick = viewModel::editCurrentDiary, secondaryText = "목록", onSecondaryClick = viewModel::showList)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                AppEditButton(onClick = viewModel::editCurrentDiary, modifier = Modifier.weight(1f))
+                AppSecondaryButton(text = "목록", onClick = viewModel::showList, modifier = Modifier.weight(1f))
+            }
         }
         item {
             AppSectionCard {
@@ -489,7 +496,7 @@ private fun DiaryImage(uri: String, modifier: Modifier = Modifier) {
     val bitmapState = produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
-                context.contentResolver.openInputStream(Uri.parse(uri))?.use(BitmapFactory::decodeStream)
+                decodeSampledBitmap(context, Uri.parse(uri))
             }.getOrNull()
         }
     }
@@ -521,4 +528,71 @@ private fun DiaryImage(uri: String, modifier: Modifier = Modifier) {
         contentDescription = null,
         modifier = modifier,
     )
+}
+
+private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxSizePx: Int = 1600): android.graphics.Bitmap? {
+    resolveLocalImageFile(uri)?.let { file ->
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val sampleSize = calculateInSampleSize(bounds, maxSizePx, maxSizePx)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
+
+    val bounds = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    openImageInputStream(context, uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    } ?: return null
+
+    val sampleSize = calculateInSampleSize(bounds, maxSizePx, maxSizePx)
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+    }
+    return openImageInputStream(context, uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, options)
+    }
+}
+
+private fun resolveLocalImageFile(uri: Uri): File? {
+    return when (uri.scheme) {
+        "file" -> uri.path?.let(::File)
+        null -> uri.toString().takeIf(String::isNotBlank)?.let(::File)
+        else -> null
+    }?.takeIf(File::exists)
+}
+
+private fun openImageInputStream(
+    context: android.content.Context,
+    uri: Uri,
+): java.io.InputStream? {
+    return when (uri.scheme) {
+        "file" -> resolveLocalImageFile(uri)?.inputStream()
+        null -> resolveLocalImageFile(uri)?.inputStream()
+        else -> context.contentResolver.openInputStream(uri)
+    }
+}
+
+private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val height = options.outHeight
+    val width = options.outWidth
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+
+    return inSampleSize.coerceAtLeast(1)
 }

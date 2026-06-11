@@ -68,16 +68,18 @@ fun AdminScreen(
         }
     }
 
+    noticeMessage?.let { message ->
+        AppNoticeDialog(
+            message = message,
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
+            title = message.actionNoticeDialogTitle(),
+        )
+    }
+
     AppScreen {
-        noticeMessage?.let { message ->
-            item {
-                AppNoticeDialog(
-                    message = message,
-                    onDismiss = { noticeMessage = null },
-                    title = message.actionNoticeDialogTitle(),
-                )
-            }
-        }
         item {
             AppHeroCard(
                 title = "관리",

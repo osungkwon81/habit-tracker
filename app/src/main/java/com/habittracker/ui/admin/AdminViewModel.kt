@@ -71,6 +71,10 @@ class AdminViewModel(
         }
     }
 
+    fun clearStatusMessage() {
+        message.value = null
+    }
+
     fun getValueTypeLabel(valueType: ValueType): String {
         return when (valueType) {
             ValueType.NUMBER -> "숫자"

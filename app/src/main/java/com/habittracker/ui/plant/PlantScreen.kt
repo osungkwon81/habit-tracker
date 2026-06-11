@@ -41,10 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.ui.components.AppEditButton
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSecondaryButton
@@ -104,7 +106,10 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
     noticeMessage?.let { message ->
         AppNoticeDialog(
             message = message,
-            onDismiss = { noticeMessage = null },
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
             title = message.actionNoticeDialogTitle(),
         )
     }
@@ -233,7 +238,10 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
     noticeMessage?.let { message ->
         AppNoticeDialog(
             message = message,
-            onDismiss = { noticeMessage = null },
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
             title = message.actionNoticeDialogTitle(),
         )
     }
@@ -335,7 +343,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                AppPrimaryButton(
+                AppSaveButton(
                     text = "화분 저장",
                     onClick = viewModel::savePlant,
                     modifier = Modifier.fillMaxWidth(),
@@ -420,7 +428,7 @@ private fun PlantCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(com.habittracker.ui.components.AppSpacing.xs),
         ) {
-            AppSecondaryButton(text = "수정", onClick = onEdit, modifier = Modifier.weight(1f))
+            AppEditButton(onClick = onEdit, modifier = Modifier.weight(1f))
             AppSecondaryButton(text = "삭제", onClick = onDelete, modifier = Modifier.weight(1f))
         }
     }
@@ -455,7 +463,7 @@ private fun PlantImage(
     val bitmapState = produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
-                context.contentResolver.openInputStream(Uri.parse(uri))?.use(BitmapFactory::decodeStream)
+                decodeSampledBitmap(context, Uri.parse(uri))
             }.getOrNull()
         }
     }
@@ -484,4 +492,71 @@ private fun PlantImage(
         contentDescription = null,
         modifier = modifier,
     )
+}
+
+private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxSizePx: Int = 1600): android.graphics.Bitmap? {
+    resolveLocalImageFile(uri)?.let { file ->
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val sampleSize = calculateInSampleSize(bounds, maxSizePx, maxSizePx)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
+
+    val bounds = BitmapFactory.Options().apply {
+        inJustDecodeBounds = true
+    }
+    openImageInputStream(context, uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, bounds)
+    } ?: return null
+
+    val sampleSize = calculateInSampleSize(bounds, maxSizePx, maxSizePx)
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = sampleSize
+        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+    }
+    return openImageInputStream(context, uri)?.use { input ->
+        BitmapFactory.decodeStream(input, null, options)
+    }
+}
+
+private fun resolveLocalImageFile(uri: Uri): File? {
+    return when (uri.scheme) {
+        "file" -> uri.path?.let(::File)
+        null -> uri.toString().takeIf(String::isNotBlank)?.let(::File)
+        else -> null
+    }?.takeIf(File::exists)
+}
+
+private fun openImageInputStream(
+    context: android.content.Context,
+    uri: Uri,
+): java.io.InputStream? {
+    return when (uri.scheme) {
+        "file" -> resolveLocalImageFile(uri)?.inputStream()
+        null -> resolveLocalImageFile(uri)?.inputStream()
+        else -> context.contentResolver.openInputStream(uri)
+    }
+}
+
+private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val height = options.outHeight
+    val width = options.outWidth
+    var inSampleSize = 1
+
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+
+    return inSampleSize.coerceAtLeast(1)
 }

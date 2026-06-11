@@ -35,6 +35,7 @@ import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
@@ -99,7 +100,10 @@ fun MemoScreen(viewModel: MemoViewModel) {
     noticeMessage?.let { message ->
         AppNoticeDialog(
             message = message,
-            onDismiss = { noticeMessage = null },
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
             title = message.actionNoticeDialogTitle(),
         )
     }
@@ -210,7 +214,7 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                     )
                     AppSupportText("잠금 메모는 저장 시 4자리 숫자 비밀번호가 필요합니다.")
                 }
-                AppPrimaryButton(text = "메모 저장", onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth())
+                AppSaveButton(text = "메모 저장", onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth())
                 uiState.statusMessage?.let { message ->
                     AppStatusText(message)
                 }

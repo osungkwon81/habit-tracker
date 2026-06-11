@@ -21,7 +21,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.DailyTaskStatRow
-import com.habittracker.data.local.model.LottoMonthlyStatRow
+import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
@@ -52,11 +52,11 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
-        WHERE note = :note
-        ORDER BY id ASC
+        WHERE note LIKE :notePrefix || '%'
+        ORDER BY created_at DESC, id DESC
         """,
     )
-    fun observeSavedLottoTicketsByNote(note: String): Flow<List<LottoTicketEntity>>
+    fun observeSavedLottoTicketsByNotePrefix(notePrefix: String): Flow<List<LottoTicketEntity>>
 
     @Query(
         """
@@ -96,32 +96,99 @@ interface HabitDao {
 
     @Query(
         """
-        WITH months AS (
-            SELECT substr(purchase_date, 1, 7) AS month FROM lotto_purchase
-            UNION
-            SELECT printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1) AS month FROM lotto_winning
-        ),
-        purchases AS (
-            SELECT substr(purchase_date, 1, 7) AS month, SUM(amount) AS amount
+        WITH purchases AS (
+            SELECT date(
+                purchase_date,
+                printf('+%d days', (6 - CAST(strftime('%w', purchase_date) AS INTEGER) + 7) % 7)
+            ) AS period,
+                   SUM(amount) AS amount
             FROM lotto_purchase
-            GROUP BY substr(purchase_date, 1, 7)
+            GROUP BY period
         ),
         winnings AS (
-            SELECT printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1) AS month, SUM(amount) AS amount
+            SELECT date('2002-12-07', printf('+%d days', (round_no - 1) * 7)) AS period,
+                   SUM(amount) AS amount
             FROM lotto_winning
-            GROUP BY printf('%04d-%02d', 2000 + ((round_no - 1) / 52), (((round_no - 1) % 52) / 5) + 1)
+            GROUP BY period
+        ),
+        periods AS (
+            SELECT period FROM purchases
+            UNION
+            SELECT period FROM winnings
         )
-        SELECT months.month AS month,
+        SELECT periods.period AS period,
                COALESCE(purchases.amount, 0) AS purchase_amount,
                COALESCE(winnings.amount, 0) AS winning_amount
-        FROM months
-        LEFT JOIN purchases ON purchases.month = months.month
-        LEFT JOIN winnings ON winnings.month = months.month
-        ORDER BY months.month DESC
+        FROM periods
+        LEFT JOIN purchases ON purchases.period = periods.period
+        LEFT JOIN winnings ON winnings.period = periods.period
+        ORDER BY periods.period DESC
         LIMIT :limit
         """,
     )
-    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoMonthlyStatRow>>
+    fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
+
+    @Query(
+        """
+        WITH purchases AS (
+            SELECT substr(purchase_date, 1, 7) AS period,
+                   SUM(amount) AS amount
+            FROM lotto_purchase
+            GROUP BY period
+        ),
+        winnings AS (
+            SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 7) AS period,
+                   SUM(amount) AS amount
+            FROM lotto_winning
+            GROUP BY period
+        ),
+        periods AS (
+            SELECT period FROM purchases
+            UNION
+            SELECT period FROM winnings
+        )
+        SELECT periods.period AS period,
+               COALESCE(purchases.amount, 0) AS purchase_amount,
+               COALESCE(winnings.amount, 0) AS winning_amount
+        FROM periods
+        LEFT JOIN purchases ON purchases.period = periods.period
+        LEFT JOIN winnings ON winnings.period = periods.period
+        ORDER BY periods.period DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
+
+    @Query(
+        """
+        WITH purchases AS (
+            SELECT substr(purchase_date, 1, 4) AS period,
+                   SUM(amount) AS amount
+            FROM lotto_purchase
+            GROUP BY period
+        ),
+        winnings AS (
+            SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 4) AS period,
+                   SUM(amount) AS amount
+            FROM lotto_winning
+            GROUP BY period
+        ),
+        periods AS (
+            SELECT period FROM purchases
+            UNION
+            SELECT period FROM winnings
+        )
+        SELECT periods.period AS period,
+               COALESCE(purchases.amount, 0) AS purchase_amount,
+               COALESCE(winnings.amount, 0) AS winning_amount
+        FROM periods
+        LEFT JOIN purchases ON purchases.period = periods.period
+        LEFT JOIN winnings ON winnings.period = periods.period
+        ORDER BY periods.period DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLottoYearlyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
 
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
@@ -145,11 +212,11 @@ interface HabitDao {
         """
         SELECT * FROM lotto_ticket
         WHERE source_label = :sourceLabel
-          AND note = :note
-        ORDER BY id ASC
+          AND note LIKE :notePrefix || '%'
+        ORDER BY created_at DESC, id DESC
         """,
     )
-    suspend fun getLottoTicketsBySourceAndNote(sourceLabel: String, note: String): List<LottoTicketEntity>
+    suspend fun getLottoTicketsBySourceAndNotePrefix(sourceLabel: String, notePrefix: String): List<LottoTicketEntity>
 
     @Query(
         """
@@ -166,10 +233,29 @@ interface HabitDao {
     @Query(
         """
         DELETE FROM lotto_ticket
-        WHERE note = :note
+        WHERE source_label = :sourceLabel
+          AND note = :note
         """,
     )
-    suspend fun deleteLottoTicketsByNote(note: String)
+    suspend fun deleteLottoTicketsBySourceAndNoteExact(sourceLabel: String, note: String)
+
+    @Query(
+        """
+        UPDATE lotto_ticket
+        SET is_purchased = 1
+        WHERE source_label = :sourceLabel
+          AND note = :note
+        """,
+    )
+    suspend fun markLottoTicketsPurchasedBySourceAndNote(sourceLabel: String, note: String)
+
+    @Query(
+        """
+        DELETE FROM lotto_ticket
+        WHERE note LIKE :notePrefix || '%'
+        """,
+    )
+    suspend fun deleteLottoTicketsByNotePrefix(notePrefix: String)
 
     @Query(
         """

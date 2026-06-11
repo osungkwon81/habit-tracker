@@ -37,6 +37,7 @@ import com.habittracker.data.local.ValueType
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
@@ -101,16 +102,18 @@ fun DailyEntryScreen(
         ).show()
     }
 
+    noticeMessage?.let { message ->
+        AppNoticeDialog(
+            message = message,
+            onDismiss = {
+                noticeMessage = null
+                viewModel.clearStatusMessage()
+            },
+            title = message.actionNoticeDialogTitle(),
+        )
+    }
+
     AppScreen {
-        noticeMessage?.let { message ->
-            item {
-                AppNoticeDialog(
-                    message = message,
-                    onDismiss = { noticeMessage = null },
-                    title = message.actionNoticeDialogTitle(),
-                )
-            }
-        }
         item {
             AppHeroCard(
                 title = "일일 기록",
@@ -201,7 +204,7 @@ fun DailyEntryScreen(
             )
         }
         item {
-            AppPrimaryButton(
+            AppSaveButton(
                 text = "기록 저장",
                 onClick = {
                     val parsedDate = runCatching { LocalDate.parse(dateInput.text) }.getOrNull()

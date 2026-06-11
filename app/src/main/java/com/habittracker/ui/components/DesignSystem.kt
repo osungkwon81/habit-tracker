@@ -61,6 +61,10 @@ private val ActionNoticeMarkers = listOf(
     "삭제에 실패",
     "수정했습니다",
     "수정에 실패",
+    "처리했습니다",
+    "열었습니다",
+    "고정했습니다",
+    "해제했습니다",
 )
 
 fun String.shouldShowActionNoticeDialog(): Boolean = ActionNoticeMarkers.any(::contains)
@@ -171,6 +175,36 @@ fun AppPrimaryButton(
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
+}
+
+@Composable
+fun AppSaveButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    text: String = "저장",
+    enabled: Boolean = true,
+) {
+    AppPrimaryButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+    )
+}
+
+@Composable
+fun AppEditButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    text: String = "수정",
+    enabled: Boolean = true,
+) {
+    AppPrimaryButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+    )
 }
 
 @Composable

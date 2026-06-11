@@ -94,6 +94,10 @@ class DailyEntryViewModel(
         }
     }
 
+    fun clearStatusMessage() {
+        statusMessage.value = null
+    }
+
     private fun mergeTaskItems(taskItems: List<TaskItemMasterEntity>, details: List<RecordDetailRow>): List<TaskItemInputState> {
         val detailMap = details.associateBy(RecordDetailRow::taskItemMasterId)
         return taskItems.map { taskItem ->

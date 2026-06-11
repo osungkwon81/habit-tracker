@@ -49,9 +49,9 @@ object LottoNumberGenerator {
             },
             commentBuilder = { numbers, score ->
                 val overlap = numbers.count(lastDraw::contains)
-                val buckets = decadeBucketCount(numbers)
                 val covered = numbers.joinToString("-")
-                "${mode.label} 모드, 최근 ${trendProfile.recentWindowSize}회 분포 반영, 점수 ${"%.1f".format(score)}, 구간 ${buckets}개, 직전겹침 ${overlap}개, 조합 $covered"
+                val highCount = numbers.count { it >= 32 }
+                "${mode.label} 모드, 과거 빈도/최근 간격 반영, 점수 ${"%.1f".format(score)}, 고번호 ${highCount}개, 직전겹침 ${overlap}개, 조합 $covered"
             },
             mode = mode,
         )
@@ -84,8 +84,9 @@ object LottoNumberGenerator {
             },
             commentBuilder = { numbers, score ->
                 val carryCount = numbers.count(lastDraw::contains)
+                val unpopularScore = publicPickAvoidanceScore(numbers)
                 val rareCount = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
-                "${mode.label} 모드, 최근 ${trendProfile.recentWindowSize}회 분포 반영, 점수 ${"%.1f".format(score)}, 평균이하빈도 ${rareCount}개, 이월 ${carryCount}개"
+                "${mode.label} 모드, 비인기 조합 우선, 점수 ${"%.1f".format(score)}, 평균이하빈도 ${rareCount}개, 공유회피 ${"%.1f".format(unpopularScore)}, 이월 ${carryCount}개"
             },
             mode = mode,
         )
@@ -95,6 +96,7 @@ object LottoNumberGenerator {
         val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
         val recentFrequency = buildFrequencyMap(recentWindow)
+        val lastSeenGap = buildLastSeenGap(history)
         val carryOverlaps = recentWindow.zipWithNext { draw, previousDraw ->
             draw.intersect(previousDraw.toSet()).size
         }
@@ -110,6 +112,7 @@ object LottoNumberGenerator {
             recentFrequencyMean = recentFrequency.values.average(),
             longFrequency = longFrequency,
             recentFrequency = recentFrequency,
+            lastSeenGap = lastSeenGap,
         )
     }
 
@@ -215,19 +218,25 @@ object LottoNumberGenerator {
         val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
         val longFrequencyAverage = numbers.sumOf { trendProfile.longFrequency.getValue(it).toDouble() } / pickCount
         val recentFrequencyAverage = numbers.sumOf { trendProfile.recentFrequency.getValue(it).toDouble() } / pickCount
+        val gapAverage = numbers.sumOf { trendProfile.lastSeenGap.getValue(it).toDouble() } / pickCount
+        val gapTarget = trendProfile.lastSeenGap.values.average()
         val longFrequencyScore = 6.0 - abs(longFrequencyAverage - trendProfile.longFrequencyMean) * 0.35
         val recentFrequencyScore = when (strategy) {
-            CoverageStrategy.BALANCED -> 5.0 - abs(recentFrequencyAverage - trendProfile.recentFrequencyMean) * 0.5
+            CoverageStrategy.BALANCED -> {
+                val belowRecentAverage = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
+                (belowRecentAverage * 0.5) + (4.0 - abs(recentFrequencyAverage - trendProfile.recentFrequencyMean) * 0.35)
+            }
             CoverageStrategy.DIVERSIFIED -> {
                 val belowRecentAverage = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
-                belowRecentAverage * 0.9
+                belowRecentAverage * 1.1
             }
         }
+        val recencyGapScore = 5.0 - abs(gapAverage - gapTarget) * 0.18
         val trendShapeScore =
-            (18.0 - abs(sum - trendProfile.recentSumAverage) / 5.0) +
-                (8.0 - abs(oddCount - trendProfile.recentOddAverage) * 1.4) +
-                (8.0 - abs(lowCount - trendProfile.recentLowAverage) * 1.2) +
-                (6.0 - abs(bucketCount - trendProfile.recentBucketAverage) * 1.5) +
+            (10.0 - abs(sum - trendProfile.recentSumAverage) / 8.0) +
+                (3.0 - abs(oddCount - trendProfile.recentOddAverage) * 0.7) +
+                (3.0 - abs(lowCount - trendProfile.recentLowAverage) * 0.6) +
+                (3.0 - abs(bucketCount - trendProfile.recentBucketAverage) * 0.8) +
                 (4.0 - abs(overlapWithLast - trendProfile.recentCarryAverage) * 1.2)
         val coverageShapeScore = (bucketCount * 1.8) + (acValue(numbers) * 0.8)
         val historyPenalty = history.count { past -> past.intersect(numbers.toSet()).size >= 4 } * 1.2
@@ -237,7 +246,9 @@ object LottoNumberGenerator {
         return trendShapeScore +
             coverageShapeScore +
             longFrequencyScore +
-            recentFrequencyScore -
+            recentFrequencyScore +
+            recencyGapScore +
+            publicPickAvoidanceScore(numbers) -
             historyPenalty -
             duplicateTailPenalty -
             consecutivePenalty
@@ -249,6 +260,27 @@ object LottoNumberGenerator {
             frequency[number] = frequency.getValue(number) + 1
         }
         return frequency
+    }
+
+    private fun buildLastSeenGap(history: List<List<Int>>): Map<Int, Int> {
+        return (1..maxNumber).associateWith { number ->
+            history.indexOfFirst { draw -> number in draw }.takeIf { it >= 0 } ?: history.size
+        }
+    }
+
+    private fun publicPickAvoidanceScore(numbers: List<Int>): Double {
+        val highNumberCount = numbers.count { it >= 32 }
+        val birthdayPenalty = when (highNumberCount) {
+            0 -> 6.0
+            1 -> 2.5
+            else -> 0.0
+        }
+        val simplePatternPenalty =
+            if (maxConsecutiveRun(numbers) >= 3 || numbers.zipWithNext().map { it.second - it.first }.distinct().size <= 2) 3.0 else 0.0
+        val sameTailPenalty = maxOf(0, (numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1) - 2) * 1.2
+        val spreadBonus = highNumberCount * 1.1 + decadeBucketCount(numbers) * 0.7 + acValue(numbers) * 0.35
+
+        return spreadBonus - birthdayPenalty - simplePatternPenalty - sameTailPenalty
     }
 
     private fun isTooSimilarToHistory(numbers: List<Int>, history: List<List<Int>>): Boolean =
@@ -294,6 +326,7 @@ object LottoNumberGenerator {
         val recentFrequencyMean: Double,
         val longFrequency: Map<Int, Int>,
         val recentFrequency: Map<Int, Int>,
+        val lastSeenGap: Map<Int, Int>,
     )
 
     private data class ScoredCandidate(

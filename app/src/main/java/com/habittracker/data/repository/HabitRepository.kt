@@ -21,7 +21,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.DailyTaskStatRow
-import com.habittracker.data.local.model.LottoMonthlyStatRow
+import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
@@ -43,6 +43,8 @@ class HabitRepository(
 ) {
     private companion object {
         const val lottoRoundNotePrefix = "ROUND:"
+        const val lottoSetNoteSeparator = "|SET:"
+        const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
     }
 
@@ -63,7 +65,7 @@ class HabitRepository(
         habitDao.observeSavedLottoTickets(limit)
 
     fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
-        habitDao.observeSavedLottoTicketsByNote(buildLottoRoundNote(roundNo))
+        habitDao.observeSavedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
 
     fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>> =
         habitDao.observeLottoPurchases(limit)
@@ -77,8 +79,14 @@ class HabitRepository(
     fun observeTotalLottoWinningAmount(): Flow<Long> =
         habitDao.observeTotalLottoWinningAmount()
 
-    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoMonthlyStatRow>> =
+    fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
+        habitDao.observeLottoWeeklyStats(limit)
+
+    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
         habitDao.observeLottoMonthlyStats(limit)
+
+    fun observeLottoYearlyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
+        habitDao.observeLottoYearlyStats(limit)
 
     fun observeMemoNotes(limit: Int): Flow<List<MemoNoteEntity>> =
         habitDao.observeMemoNotes(limit)
@@ -241,12 +249,12 @@ class HabitRepository(
         }
     }
 
-    suspend fun hasSavedLottoBatch(roundNo: Int, sourceLabel: String): Boolean {
+    suspend fun getSavedLottoBatchCount(roundNo: Int, sourceLabel: String): Int {
         require(roundNo > 0) { "회차 번호가 올바르지 않습니다." }
-        return habitDao.getLottoTicketsBySourceAndNote(
+        return habitDao.getLottoTicketsBySourceAndNotePrefix(
             sourceLabel = sourceLabel,
-            note = buildLottoRoundNote(roundNo),
-        ).isNotEmpty()
+            notePrefix = buildLottoRoundNote(roundNo),
+        ).mapNotNull(LottoTicketEntity::note).distinct().size
     }
 
     suspend fun deleteLottoTicket(ticketId: Long) {
@@ -255,33 +263,51 @@ class HabitRepository(
         }
     }
 
-    suspend fun deleteLottoRound(roundNo: Int) {
-        require(roundNo > 0) { "삭제할 회차를 확인해 주세요." }
+    suspend fun deleteLottoSet(sourceLabel: String, note: String) {
+        require(sourceLabel.isNotBlank()) { "삭제할 세트 출처를 찾을 수 없습니다." }
+        require(note.isNotBlank()) { "삭제할 세트를 찾을 수 없습니다." }
         persistChange {
-            habitDao.deleteLottoTicketsByNote(buildLottoRoundNote(roundNo))
+            habitDao.deleteLottoTicketsBySourceAndNoteExact(sourceLabel, note)
         }
     }
 
-    suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>, overwrite: Boolean) {
+    suspend fun markLottoSetPurchased(sourceLabel: String, note: String) {
+        require(sourceLabel.isNotBlank()) { "구매 처리할 세트 출처를 찾을 수 없습니다." }
+        require(note.isNotBlank()) { "구매 처리할 세트를 찾을 수 없습니다." }
+        persistChange {
+            habitDao.markLottoTicketsPurchasedBySourceAndNote(sourceLabel, note)
+        }
+    }
+
+    suspend fun deleteLottoRound(roundNo: Int) {
+        require(roundNo > 0) { "삭제할 회차를 확인해 주세요." }
+        persistChange {
+            habitDao.deleteLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+        }
+    }
+
+    suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
         require(roundNo > 0) { "저장할 회차를 확인해 주세요." }
         require(tickets.isNotEmpty()) { "저장할 생성 번호가 없습니다." }
 
         val limitedTickets = tickets.take(5)
-        val roundNote = buildLottoRoundNote(roundNo)
+        val roundNotePrefix = buildLottoRoundNote(roundNo)
 
         persistChange {
             database.withTransaction {
-                val existingTickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel = sourceLabel, note = roundNote)
-                require(existingTickets.isEmpty() || overwrite) { "${roundNo}회차 ${sourceLabel} 번호가 이미 저장되어 있습니다." }
-                if (existingTickets.isNotEmpty()) {
-                    habitDao.deleteLottoTicketsBySourceAndNote(sourceLabel = sourceLabel, note = roundNote)
+                val existingTickets = habitDao.getLottoTicketsBySourceAndNotePrefix(sourceLabel = sourceLabel, notePrefix = roundNotePrefix)
+                val groupedNotes = existingTickets.mapNotNull(LottoTicketEntity::note).distinct()
+                require(groupedNotes.size < maxSavedLottoSetCount) {
+                    "${roundNo}회차 ${sourceLabel} 번호는 이미 ${maxSavedLottoSetCount}세트 저장되어 있습니다. 1세트를 삭제한 뒤 다시 저장해 주세요."
                 }
+                val nextSetIndex = nextLottoSetIndex(groupedNotes)
+                val setNote = buildLottoSetNote(roundNo, nextSetIndex)
                 limitedTickets.forEach { ticket ->
                     habitDao.insertLottoTicket(
                         LottoTicketEntity.from(
                             sourceLabel = sourceLabel,
                             numbers = ticket.numbers,
-                            note = roundNote,
+                            note = setNote,
                         ),
                     )
                 }
@@ -713,6 +739,16 @@ class HabitRepository(
     }
 
     private fun buildLottoRoundNote(roundNo: Int): String = "$lottoRoundNotePrefix$roundNo"
+
+    private fun buildLottoSetNote(roundNo: Int, setIndex: Int): String =
+        "${buildLottoRoundNote(roundNo)}$lottoSetNoteSeparator$setIndex"
+
+    private fun nextLottoSetIndex(notes: List<String>): Int {
+        val usedIndexes = notes.map { note ->
+            note.substringAfter(lottoSetNoteSeparator, missingDelimiterValue = "1").toIntOrNull() ?: 1
+        }.toSet()
+        return (1..maxSavedLottoSetCount).firstOrNull { it !in usedIndexes } ?: (usedIndexes.maxOrNull() ?: 0) + 1
+    }
 }
 
 data class BulkVocabularyInsertResult(
