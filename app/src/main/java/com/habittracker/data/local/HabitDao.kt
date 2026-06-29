@@ -286,6 +286,9 @@ interface HabitDao {
     @Update
     suspend fun updateMemoNote(memoNote: MemoNoteEntity)
 
+    @Query("DELETE FROM memo_note WHERE id = :memoId")
+    suspend fun deleteMemoNoteById(memoId: Long)
+
     @Query("UPDATE memo_note SET is_pinned = :isPinned, updated_at = :updatedAt WHERE id = :memoId")
     suspend fun updateMemoPinned(memoId: Long, isPinned: Boolean, updatedAt: java.time.LocalDateTime)
 

@@ -141,12 +141,14 @@ object HabitTrackerMigrations {
 
     private val MIGRATION_9_10 = object : Migration(9, 10) {
         override fun migrate(database: SupportSQLiteDatabase) {
-            database.execSQL(
-                """
-                ALTER TABLE `memo_note`
-                ADD COLUMN `is_pinned` INTEGER NOT NULL DEFAULT 0
-                """.trimIndent(),
-            )
+            if (!database.hasColumn(tableName = "memo_note", columnName = "is_pinned")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `memo_note`
+                    ADD COLUMN `is_pinned` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
         }
     }
 
@@ -187,6 +189,19 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            if (!database.hasColumn(tableName = "lotto_draw", columnName = "bonus_number")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_draw`
+                    ADD COLUMN `bonus_number` INTEGER
+                    """.trimIndent(),
+                )
+            }
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -195,5 +210,17 @@ object HabitTrackerMigrations {
         MIGRATION_9_10,
         MIGRATION_10_11,
         MIGRATION_11_12,
+        MIGRATION_12_13,
     )
 }
+
+private fun SupportSQLiteDatabase.hasColumn(tableName: String, columnName: String): Boolean =
+    query("PRAGMA table_info(`$tableName`)").use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        while (cursor.moveToNext()) {
+            if (nameIndex >= 0 && cursor.getString(nameIndex) == columnName) {
+                return@use true
+            }
+        }
+        false
+    }

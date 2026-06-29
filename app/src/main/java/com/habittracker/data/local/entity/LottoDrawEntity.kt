@@ -22,13 +22,15 @@ data class LottoDrawEntity(
     val number5: Int,
     @ColumnInfo(name = "number6")
     val number6: Int,
+    @ColumnInfo(name = "bonus_number")
+    val bonusNumber: Int? = null,
     @ColumnInfo(name = "saved_at")
     val savedAt: LocalDateTime = LocalDateTime.now(),
 ) {
     fun numbers(): List<Int> = listOf(number1, number2, number3, number4, number5, number6)
 
     companion object {
-        fun from(roundNo: Int, numbers: List<Int>): LottoDrawEntity {
+        fun from(roundNo: Int, numbers: List<Int>, bonusNumber: Int? = null): LottoDrawEntity {
             require(numbers.size == 6) { "로또 번호는 6개여야 합니다." }
             return LottoDrawEntity(
                 roundNo = roundNo,
@@ -38,6 +40,7 @@ data class LottoDrawEntity(
                 number4 = numbers[3],
                 number5 = numbers[4],
                 number6 = numbers[5],
+                bonusNumber = bonusNumber,
             )
         }
     }

@@ -98,7 +98,7 @@ class MemoViewModel(
     }
 
     fun updatePassword(value: String) {
-        password.value = value.filter(Char::isDigit).take(4)
+        password.value = value.filter(Char::isDigit).take(10)
     }
 
     fun updateSearchQuery(value: String) {
@@ -191,6 +191,25 @@ class MemoViewModel(
                 }
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "메모 저장에 실패했습니다."
+            }
+        }
+    }
+
+    fun deleteMemo() {
+        val memoId = selectedMemoId.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                repository.deleteMemoNote(memoId)
+            }.onSuccess {
+                selectedMemoId.value = null
+                title.value = ""
+                content.value = ""
+                isLocked.value = false
+                password.value = ""
+                screenMode.value = listMode
+                statusMessage.value = "메모를 삭제했습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "메모 삭제에 실패했습니다."
             }
         }
     }

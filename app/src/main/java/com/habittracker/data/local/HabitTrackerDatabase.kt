@@ -35,7 +35,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         VocabularyWordEntity::class,
         PlantEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)

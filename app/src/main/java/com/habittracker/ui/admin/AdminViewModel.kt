@@ -44,7 +44,15 @@ class AdminViewModel(
         }
     }
 
-    fun addTaskItem(name: String, category: String, valueType: ValueType, unit: String, description: String, colorHex: String) {
+    fun addTaskItem(
+        name: String,
+        category: String,
+        valueType: ValueType,
+        unit: String,
+        description: String,
+        colorHex: String,
+        onSuccess: (() -> Unit)? = null,
+    ) {
         viewModelScope.launch {
             runCatching {
                 repository.addTaskItem(
@@ -57,6 +65,7 @@ class AdminViewModel(
                 )
             }.onSuccess {
                 message.value = "새 항목이 저장되었습니다."
+                onSuccess?.invoke()
             }.onFailure { error ->
                 message.value = error.message ?: "항목 추가에 실패했습니다."
             }

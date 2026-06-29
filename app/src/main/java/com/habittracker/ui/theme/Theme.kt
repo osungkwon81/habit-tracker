@@ -15,8 +15,8 @@ import androidx.compose.ui.unit.dp
 
 private val LightColors = lightColorScheme(
     primary = Primary600,
-    secondary = Gray100,
-    tertiary = Gray200,
+    secondary = Primary100,
+    tertiary = Gray100,
     background = Gray25,
     surface = Gray0,
     surfaceVariant = Gray50,
@@ -35,26 +35,30 @@ private val AppTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 32.sp,
-        lineHeight = 40.sp,
+        lineHeight = 38.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.6).sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 28.sp,
-        lineHeight = 36.sp,
+        lineHeight = 34.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.4).sp,
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 24.sp,
-        lineHeight = 32.sp,
+        fontSize = 25.sp,
+        lineHeight = 31.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.3).sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 20.sp,
-        lineHeight = 28.sp,
+        lineHeight = 27.sp,
         fontWeight = FontWeight.Bold,
+        letterSpacing = (-0.2).sp,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -71,12 +75,12 @@ private val AppTypography = Typography(
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 16.sp,
-        lineHeight = 24.sp,
+        lineHeight = 25.sp,
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontSize = 14.sp,
-        lineHeight = 22.sp,
+        lineHeight = 23.sp,
     ),
     bodySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -104,10 +108,10 @@ private val AppTypography = Typography(
 )
 
 private val AppShapes = Shapes(
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(24.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp),
 )
 
 @Composable

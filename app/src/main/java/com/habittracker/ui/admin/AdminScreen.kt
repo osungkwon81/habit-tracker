@@ -141,9 +141,11 @@ fun AdminScreen(
                             unit = if (selectedValueType == ValueType.NUMBER) unit.text else "",
                             description = "",
                             colorHex = selectedColorHex,
+                            onSuccess = {
+                                name = TextFieldValue("")
+                                unit = TextFieldValue("")
+                            },
                         )
-                        name = TextFieldValue("")
-                        unit = TextFieldValue("")
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )

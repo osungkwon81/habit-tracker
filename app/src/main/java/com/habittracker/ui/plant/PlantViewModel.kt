@@ -22,8 +22,8 @@ class PlantViewModel(
     private val name = MutableStateFlow("")
     private val imageUri = MutableStateFlow<String?>(null)
     private val memo = MutableStateFlow("")
-    private val wateringMonths = MutableStateFlow("0")
-    private val wateringDays = MutableStateFlow("0")
+    private val wateringMonths = MutableStateFlow("")
+    private val wateringDays = MutableStateFlow("")
     private val lastWateredDate = MutableStateFlow(LocalDate.now())
     private val statusMessage = MutableStateFlow<String?>(null)
     private val screenMode = MutableStateFlow(plantListMode)
@@ -76,8 +76,8 @@ class PlantViewModel(
         name.value = ""
         imageUri.value = null
         memo.value = ""
-        wateringMonths.value = "0"
-        wateringDays.value = "0"
+        wateringMonths.value = ""
+        wateringDays.value = ""
         lastWateredDate.value = LocalDate.now()
         statusMessage.value = null
         screenMode.value = plantEditorMode
@@ -97,11 +97,11 @@ class PlantViewModel(
     }
 
     fun updateWateringMonths(value: String) {
-        wateringMonths.value = value.filter(Char::isDigit).ifEmpty { "0" }
+        wateringMonths.value = sanitizeNumericInput(value)
     }
 
     fun updateWateringDays(value: String) {
-        wateringDays.value = value.filter(Char::isDigit).ifEmpty { "0" }
+        wateringDays.value = sanitizeNumericInput(value)
     }
 
     fun updateLastWateredDate(date: LocalDate) {
@@ -117,8 +117,8 @@ class PlantViewModel(
         name.value = plant.name
         imageUri.value = plant.imageUri
         memo.value = plant.memo.orEmpty()
-        wateringMonths.value = (plant.wateringIntervalDays / 30).toString()
-        wateringDays.value = (plant.wateringIntervalDays % 30).toString()
+        wateringMonths.value = (plant.wateringIntervalDays / 30).takeIf { it > 0 }?.toString().orEmpty()
+        wateringDays.value = (plant.wateringIntervalDays % 30).takeIf { it > 0 }?.toString().orEmpty()
         lastWateredDate.value = plant.lastWateredDate
         statusMessage.value = null
         screenMode.value = plantEditorMode
@@ -141,8 +141,8 @@ class PlantViewModel(
                 name.value = ""
                 imageUri.value = null
                 memo.value = ""
-                wateringMonths.value = "0"
-                wateringDays.value = "0"
+                wateringMonths.value = ""
+                wateringDays.value = ""
                 lastWateredDate.value = LocalDate.now()
                 screenMode.value = plantListMode
                 statusMessage.value = "화분이 저장되었습니다."
@@ -189,6 +189,13 @@ class PlantViewModel(
         val days = daysValue.toIntOrNull() ?: 0
         return ((months * 30) + days).coerceAtLeast(0)
     }
+
+    private fun sanitizeNumericInput(value: String): String {
+        val digitsOnly = value.filter(Char::isDigit)
+        return digitsOnly.trimStart('0').ifEmpty {
+            if (digitsOnly.isEmpty()) "" else "0"
+        }
+    }
 }
 
 data class PlantUiState(
@@ -198,8 +205,8 @@ data class PlantUiState(
     val name: String = "",
     val imageUri: String? = null,
     val memo: String = "",
-    val wateringMonths: String = "0",
-    val wateringDays: String = "0",
+    val wateringMonths: String = "",
+    val wateringDays: String = "",
     val lastWateredDate: LocalDate = LocalDate.now(),
     val nextWateringDate: LocalDate = LocalDate.now(),
     val statusMessage: String? = null,

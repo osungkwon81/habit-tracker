@@ -10,24 +10,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.ui.components.AppButtonRow
@@ -51,6 +50,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var passwordDialogTarget by remember { mutableStateOf<MemoNoteEntity?>(null) }
     var unlockPassword by remember { mutableStateOf("") }
+    var showUnlockPassword by remember { mutableStateOf(false) }
     var noticeMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(uiState.statusMessage) {
@@ -65,12 +65,14 @@ fun MemoScreen(viewModel: MemoViewModel) {
             onDismissRequest = {
                 passwordDialogTarget = null
                 unlockPassword = ""
+                showUnlockPassword = false
             },
             confirmButton = {
                 AppPrimaryButton(text = "열기", onClick = {
                     viewModel.unlockMemo(passwordDialogTarget!!.id, unlockPassword)
                     passwordDialogTarget = null
                     unlockPassword = ""
+                    showUnlockPassword = false
                 })
             },
             dismissButton = {
@@ -79,18 +81,25 @@ fun MemoScreen(viewModel: MemoViewModel) {
                     onPrimaryClick = {
                         passwordDialogTarget = null
                         unlockPassword = ""
+                        showUnlockPassword = false
                     },
                 )
             },
             title = { Text("잠금 메모") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("이 메모는 잠겨 있습니다. 4자리 비밀번호를 입력해 주세요.")
+                    Text("이 메모는 잠겨 있습니다. 4~10자리 비밀번호를 입력해 주세요.")
                     AppTextField(
                         value = unlockPassword,
-                        onValueChange = { unlockPassword = it.filter(Char::isDigit).take(4) },
-                        label = "비밀번호 4자리",
+                        onValueChange = { unlockPassword = it.filter(Char::isDigit).take(10) },
+                        label = "비밀번호 4~10자리",
                         singleLine = true,
+                        visualTransformation = if (showUnlockPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingContent = {
+                            TextButton(onClick = { showUnlockPassword = !showUnlockPassword }) {
+                                Text(if (showUnlockPassword) "숨김" else "표시")
+                            }
+                        },
                     )
                 }
             },
@@ -177,6 +186,8 @@ private fun MemoListScreen(
 
 @Composable
 private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
+    var showEditorPassword by remember(uiState.selectedMemoId, uiState.isLocked) { mutableStateOf(false) }
+
     AppScreen {
         item {
             AppHeroCard(
@@ -209,12 +220,27 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                     AppTextField(
                         value = uiState.password,
                         onValueChange = viewModel::updatePassword,
-                        label = "비밀번호 4자리",
+                        label = "비밀번호 4~10자리",
                         singleLine = true,
+                        visualTransformation = if (showEditorPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingContent = {
+                            TextButton(onClick = { showEditorPassword = !showEditorPassword }) {
+                                Text(if (showEditorPassword) "숨김" else "표시")
+                            }
+                        },
                     )
-                    AppSupportText("잠금 메모는 저장 시 4자리 숫자 비밀번호가 필요합니다.")
+                    AppSupportText("잠금 메모는 저장 시 4~10자리 숫자 비밀번호가 필요합니다.")
                 }
-                AppSaveButton(text = "메모 저장", onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth())
+                if (uiState.selectedMemoId != null) {
+                    AppButtonRow(
+                        primaryText = "메모 저장",
+                        onPrimaryClick = viewModel::saveMemo,
+                        secondaryText = "삭제",
+                        onSecondaryClick = viewModel::deleteMemo,
+                    )
+                } else {
+                    AppSaveButton(text = "메모 저장", onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth())
+                }
                 uiState.statusMessage?.let { message ->
                     AppStatusText(message)
                 }

@@ -144,7 +144,7 @@ class HabitRepository(
     suspend fun verifyMemoPassword(memoId: Long, password: String): MemoNoteEntity {
         val memoNote = habitDao.getMemoNoteById(memoId) ?: throw IllegalArgumentException("메모를 찾을 수 없습니다.")
         require(memoNote.isLocked) { "잠금 메모가 아닙니다." }
-        require(password.matches(Regex("\\d{4}"))) { "비밀번호는 4자리 숫자로 입력해 주세요." }
+        require(password.matches(Regex("\\d{4,10}"))) { "비밀번호는 4~10자리 숫자로 입력해 주세요." }
         require(memoNote.passwordHash == hashPin(password)) { "비밀번호가 올바르지 않습니다." }
         return memoNote
     }
@@ -172,7 +172,7 @@ class HabitRepository(
         }
     }
 
-    suspend fun saveLottoDraw(roundNo: Int?, numbers: List<Int>): Int {
+    suspend fun saveLottoDraw(roundNo: Int?, numbers: List<Int>, bonusNumber: Int?): Int {
         require(roundNo != null && roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(numbers.size == 6) { "번호 6개를 모두 입력해 주세요." }
 
@@ -183,8 +183,19 @@ class HabitRepository(
 
         require(sanitizedNumbers.distinct().size == 6) { "번호는 중복 없이 입력해 주세요." }
 
+        val sanitizedBonusNumber = bonusNumber?.also { number ->
+            require(number in 1..45) { "보너스 번호는 1부터 45 사이여야 합니다." }
+            require(number !in sanitizedNumbers) { "보너스 번호는 당첨 번호와 중복될 수 없습니다." }
+        }
+
         return persistChange {
-            habitDao.upsertLottoDraw(LottoDrawEntity.from(roundNo = roundNo, numbers = sanitizedNumbers))
+            habitDao.upsertLottoDraw(
+                LottoDrawEntity.from(
+                    roundNo = roundNo,
+                    numbers = sanitizedNumbers,
+                    bonusNumber = sanitizedBonusNumber,
+                ),
+            )
             roundNo
         }
     }
@@ -321,8 +332,8 @@ class HabitRepository(
         require(sanitizedTitle.isNotEmpty() || sanitizedContent.isNotEmpty()) { "제목 또는 내용을 입력해 주세요." }
 
         val passwordHash = if (isLocked) {
-            require(!password.isNullOrBlank()) { "잠금 메모는 4자리 비밀번호를 입력해 주세요." }
-            require(password.matches(Regex("\\d{4}"))) { "비밀번호는 4자리 숫자로 입력해 주세요." }
+            require(!password.isNullOrBlank()) { "잠금 메모는 4~10자리 비밀번호를 입력해 주세요." }
+            require(password.matches(Regex("\\d{4,10}"))) { "비밀번호는 4~10자리 숫자로 입력해 주세요." }
             hashPin(password)
         } else {
             null
@@ -357,6 +368,13 @@ class HabitRepository(
                     ),
                 )
             }
+        }
+    }
+
+    suspend fun deleteMemoNote(memoId: Long) {
+        require(memoId > 0) { "삭제할 메모를 찾을 수 없습니다." }
+        persistChange {
+            habitDao.deleteMemoNoteById(memoId)
         }
     }
 

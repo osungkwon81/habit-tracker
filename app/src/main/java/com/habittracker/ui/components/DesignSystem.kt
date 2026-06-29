@@ -34,8 +34,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
 object AppSpacing {
@@ -45,7 +47,7 @@ object AppSpacing {
     val lg = 32.dp
 }
 
-private val ButtonShape = RoundedCornerShape(16.dp)
+private val ButtonShape = RoundedCornerShape(18.dp)
 private val ActionNoticeMarkers = listOf(
     "저장되었습니다",
     "저장 되었습니다",
@@ -80,10 +82,17 @@ fun AppScreen(
     modifier: Modifier = Modifier,
     content: LazyListScope.() -> Unit,
 ) {
+    val backgroundBrush = Brush.verticalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.background,
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            MaterialTheme.colorScheme.background,
+        )
+    )
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(backgroundBrush)
             .padding(horizontal = AppSpacing.sm, vertical = AppSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
         content = content,
@@ -101,14 +110,15 @@ fun AppHeroCard(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(AppSpacing.md),
+                .padding(horizontal = AppSpacing.md, vertical = 26.dp),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
@@ -138,13 +148,14 @@ fun AppSectionCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(AppSpacing.sm),
+                .padding(horizontal = AppSpacing.sm, vertical = 18.dp),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
             content = content,
         )
@@ -172,6 +183,7 @@ fun AppPrimaryButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
@@ -223,13 +235,13 @@ fun AppSecondaryButton(
         shape = ButtonShape,
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
@@ -245,6 +257,8 @@ fun AppTextField(
     singleLine: Boolean = false,
     minLines: Int = 1,
     enabled: Boolean = true,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingContent: (@Composable () -> Unit)? = null,
     trailingOverlay: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
@@ -257,6 +271,8 @@ fun AppTextField(
             minLines = minLines,
             enabled = enabled,
             label = { Text(label) },
+            visualTransformation = visualTransformation,
+            trailingIcon = trailingContent,
             shape = MaterialTheme.shapes.medium,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -264,7 +280,7 @@ fun AppTextField(
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                 unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
                 disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -290,7 +306,7 @@ fun AppSelectableChip(
                 shape = RoundedCornerShape(999.dp),
             )
             .background(
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                 shape = RoundedCornerShape(999.dp),
             )
             .clickable(
