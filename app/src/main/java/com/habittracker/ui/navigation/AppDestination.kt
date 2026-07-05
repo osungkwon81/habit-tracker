@@ -10,6 +10,7 @@ enum class AppDestination(
     DIARY("diary", "일기", "📔"),
     MEMO("memo", "메모", "📝"),
     STATS("stats", "통계", "📊"),
+    CARD("card", "카드", "💳"),
     ADMIN("admin", "관리", "⚙️"),
     LOTTO("lotto", "로또", "🎯"),
     PLANT("plant", "화분", "🪴"),

@@ -247,6 +247,7 @@ fun LottoScreen(viewModel: LottoViewModel) {
                         totalWinning = uiState.totalWinningAmount,
                         selectedRange = uiState.selectedStatsRange,
                         stats = uiState.stats,
+                        winningTypeStats = uiState.winningTypeStats,
                         onSelectRange = viewModel::selectStatsRange,
                     )
                 }
@@ -828,7 +829,7 @@ private fun WinningSection(onSave: (String, String, String, () -> Unit) -> Unit)
         if (amount.isNotBlank()) {
             Text(text = formatWon(amount.toLongOrNull() ?: 0L), color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
         }
-        OutlinedTextField(value = memo, onValueChange = { memo = it }, modifier = Modifier.fillMaxWidth(), label = { Text("메모") }, singleLine = true)
+        OutlinedTextField(value = memo, onValueChange = { memo = it }, modifier = Modifier.fillMaxWidth(), label = { Text("메모 (예: 5등)") }, singleLine = true)
         AppSaveButton(
             text = "당첨 이력 저장",
             onClick = {
@@ -864,36 +865,64 @@ private fun LottoStatsSection(
     totalWinning: Long,
     selectedRange: LottoStatsRange,
     stats: List<LottoPeriodStatRow>,
+    winningTypeStats: List<LottoWinningTypeStat>,
     onSelectRange: (LottoStatsRange) -> Unit,
 ) {
     val net = totalWinning - totalPurchase
-    AppSectionCard {
-        AppSectionHeader(title = "구입/당첨 요약")
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatMiniCard(title = "구입", value = formatWon(totalPurchase), modifier = Modifier.weight(1f))
-            StatMiniCard(title = "당첨", value = formatWon(totalWinning), modifier = Modifier.weight(1f))
-            StatMiniCard(title = "손익", value = formatWon(net), modifier = Modifier.weight(1f))
-        }
-    }
-    AppSectionCard {
-        AppSectionHeader(title = "${selectedRange.label} 흐름")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            LottoStatsRange.entries.forEach { range ->
-                AppSelectableChip(
-                    label = range.label,
-                    selected = selectedRange == range,
-                    onClick = { onSelectRange(range) },
-                )
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AppSectionCard {
+            AppSectionHeader(title = "구입/당첨 요약")
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatMiniCard(title = "구입", value = formatWon(totalPurchase), modifier = Modifier.weight(1f))
+                StatMiniCard(title = "당첨", value = formatWon(totalWinning), modifier = Modifier.weight(1f))
+                StatMiniCard(title = "손익", value = formatWon(net), modifier = Modifier.weight(1f))
             }
         }
-        if (stats.isEmpty()) {
-            Text(text = "통계 데이터가 없습니다.", color = LottoTextMutedColor)
-        } else {
-            val maxValue = stats.maxOf { maxOf(it.purchaseAmount, it.winningAmount, 1L) }.toFloat()
-            stats.sortedByDescending(LottoPeriodStatRow::period).forEach { row ->
-                Text(text = formatStatsPeriod(row.period, selectedRange), fontWeight = FontWeight.SemiBold)
-                AmountBar(label = "구입 ${formatWon(row.purchaseAmount)}", ratio = row.purchaseAmount / maxValue, color = Color(0xFFB8C7D9))
-                AmountBar(label = "당첨 ${formatWon(row.winningAmount)}", ratio = row.winningAmount / maxValue, color = ChatGptAccent)
+        AppSectionCard {
+            AppSectionHeader(title = "균형형/분산형 당첨 이력")
+            WinningTypeTable(winningTypeStats = winningTypeStats)
+        }
+        AppSectionCard {
+            AppSectionHeader(title = "${selectedRange.label} 흐름")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                LottoStatsRange.entries.forEach { range ->
+                    AppSelectableChip(
+                        label = range.label,
+                        selected = selectedRange == range,
+                        onClick = { onSelectRange(range) },
+                    )
+                }
+            }
+            if (stats.isEmpty()) {
+                Text(text = "통계 데이터가 없습니다.", color = LottoTextMutedColor)
+            } else {
+                val maxValue = stats.maxOf { maxOf(it.purchaseAmount, it.winningAmount, 1L) }.toFloat()
+                stats.sortedByDescending(LottoPeriodStatRow::period).forEach { row ->
+                    Text(text = formatStatsPeriod(row.period, selectedRange), fontWeight = FontWeight.SemiBold)
+                    AmountBar(label = "구입 ${formatWon(row.purchaseAmount)}", ratio = row.purchaseAmount / maxValue, color = Color(0xFFB8C7D9))
+                    AmountBar(label = "당첨 ${formatWon(row.winningAmount)}", ratio = row.winningAmount / maxValue, color = ChatGptAccent)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WinningTypeTable(winningTypeStats: List<LottoWinningTypeStat>) {
+    val ranks = listOf("5등", "4등", "3등", "2등", "1등")
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text = "유형", modifier = Modifier.weight(1.2f), fontWeight = FontWeight.Bold)
+            ranks.forEach { rank ->
+                Text(text = rank, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            }
+        }
+        winningTypeStats.forEach { stat ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = stat.sourceLabel, modifier = Modifier.weight(1.2f), fontWeight = FontWeight.SemiBold)
+                ranks.forEach { rank ->
+                    Text(text = "${stat.counts[rank] ?: 0}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                }
             }
         }
     }

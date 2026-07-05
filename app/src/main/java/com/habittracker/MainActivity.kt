@@ -34,6 +34,8 @@ import androidx.navigation.compose.rememberNavController
 import com.habittracker.ui.AppViewModelFactory
 import com.habittracker.ui.admin.AdminScreen
 import com.habittracker.ui.admin.AdminViewModel
+import com.habittracker.ui.card.CardHistoryScreen
+import com.habittracker.ui.card.CardHistoryViewModel
 import com.habittracker.ui.diary.DiaryScreen
 import com.habittracker.ui.diary.DiaryViewModel
 import com.habittracker.ui.entry.DailyEntryScreen
@@ -68,11 +70,11 @@ private fun HabitTrackerApp() {
     val navController = rememberNavController()
     val bottomDestinations = listOf(
         AppDestination.HOME,
+        AppDestination.CARD,
         AppDestination.ENTRY,
-        AppDestination.DIARY,
         AppDestination.MEMO,
         AppDestination.PLANT,
-        AppDestination.STATS,
+        AppDestination.LOTTO,
     )
 
     Scaffold(
@@ -130,6 +132,7 @@ private fun HabitTrackerApp() {
                     onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
+                    onOpenCard = { navController.navigate(AppDestination.CARD.route) },
                 )
             }
             composable(AppDestination.ENTRY.route) {
@@ -138,6 +141,7 @@ private fun HabitTrackerApp() {
                     viewModel = viewModel,
                     initialDate = LocalDate.now().toString(),
                     onOpenAdmin = { navController.navigate(AppDestination.ADMIN.route) },
+                    onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                 )
             }
             composable("${AppDestination.ENTRY.route}/{date}") { backStackEntry ->
@@ -146,6 +150,7 @@ private fun HabitTrackerApp() {
                     viewModel = viewModel,
                     initialDate = backStackEntry.arguments?.getString("date") ?: LocalDate.now().toString(),
                     onOpenAdmin = { navController.navigate(AppDestination.ADMIN.route) },
+                    onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                 )
             }
             composable(AppDestination.DIARY.route) {
@@ -158,7 +163,7 @@ private fun HabitTrackerApp() {
             }
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = AppViewModelFactory())
-                MonthlyStatsScreen(viewModel = viewModel)
+                MonthlyStatsScreen(viewModel = viewModel, onOpenEntry = { navController.navigate(AppDestination.ENTRY.route) })
             }
             composable(AppDestination.ADMIN.route) {
                 val viewModel: AdminViewModel = viewModel(factory = AppViewModelFactory())
@@ -170,6 +175,10 @@ private fun HabitTrackerApp() {
             composable(AppDestination.LOTTO.route) {
                 val viewModel: LottoViewModel = viewModel(factory = AppViewModelFactory())
                 LottoScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.CARD.route) {
+                val viewModel: CardHistoryViewModel = viewModel(factory = AppViewModelFactory())
+                CardHistoryScreen(viewModel = viewModel)
             }
             composable(AppDestination.PLANT.route) {
                 val viewModel: PlantViewModel = viewModel(factory = AppViewModelFactory())

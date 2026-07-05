@@ -3,6 +3,7 @@
 import android.content.Context
 import androidx.room.withTransaction
 import com.habittracker.data.TaskColorPalette
+import com.habittracker.data.card.CardHistorySeedData
 import com.habittracker.data.local.HabitDao
 import com.habittracker.data.local.HabitTrackerDatabase
 import com.habittracker.data.local.HabitTrackerDatabaseProtector
@@ -10,10 +11,13 @@ import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
+import com.habittracker.data.local.entity.CardHistoryEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
+import com.habittracker.data.local.entity.LottoWinningStatEntity
+import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
@@ -46,11 +50,24 @@ class HabitRepository(
         const val lottoSetNoteSeparator = "|SET:"
         const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
+        const val cardPrefsName = "card-prefs"
+        const val lottoPrefsName = "lotto-prefs"
+        const val cardPaymentDayKey = "card-payment-day"
+        const val cardSeedVersionKey = "card-seed-version"
+        const val currentCardSeedVersion = 2
+        const val lottoStatVersionKey = "lotto-winning-stat-version"
+        const val currentLottoStatVersion = 2
+        val defaultWinningStats = mapOf(
+            "균형형" to intArrayOf(0, 1, 0, 0, 0),
+            "분산형" to intArrayOf(0, 2, 0, 0, 0),
+        )
     }
 
     val managedTaskValueTypes: List<ValueType> = listOf(ValueType.NUMBER, ValueType.EXERCISE)
 
     private val taskColorPrefs = context.getSharedPreferences(taskColorPrefsName, Context.MODE_PRIVATE)
+    private val cardPrefs = context.getSharedPreferences(cardPrefsName, Context.MODE_PRIVATE)
+    private val lottoPrefs = context.getSharedPreferences(lottoPrefsName, Context.MODE_PRIVATE)
 
     private suspend fun <T> persistChange(block: suspend () -> T): T = withContext(NonCancellable + Dispatchers.IO) {
         val result = block()
@@ -61,8 +78,14 @@ class HabitRepository(
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
         habitDao.observeLottoDraws(roundNo, limit)
 
+    fun observeCardHistories(limit: Int): Flow<List<CardHistoryEntity>> =
+        habitDao.observeCardHistories(limit)
+
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTickets(limit)
+
+    fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>> =
+        habitDao.observeAllSavedLottoTickets()
 
     fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
@@ -78,6 +101,9 @@ class HabitRepository(
 
     fun observeTotalLottoWinningAmount(): Flow<Long> =
         habitDao.observeTotalLottoWinningAmount()
+
+    fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>> =
+        habitDao.observeLottoWinningStats()
 
     fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
         habitDao.observeLottoWeeklyStats(limit)
@@ -172,9 +198,20 @@ class HabitRepository(
         }
     }
 
+    suspend fun ensureLottoWinningStatsInitialized() {
+        val statCount = habitDao.getLottoWinningStatCount()
+        val statVersion = lottoPrefs.getInt(lottoStatVersionKey, 0)
+        if (statCount >= defaultWinningStats.size && statVersion >= currentLottoStatVersion) return
+        persistChange {
+            recalculateAllLottoWinningStats()
+        }
+        lottoPrefs.edit().putInt(lottoStatVersionKey, currentLottoStatVersion).apply()
+    }
+
     suspend fun saveLottoDraw(roundNo: Int?, numbers: List<Int>, bonusNumber: Int?): Int {
         require(roundNo != null && roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(numbers.size == 6) { "번호 6개를 모두 입력해 주세요." }
+        val safeRoundNo = roundNo
 
         val sanitizedNumbers = numbers.map { number ->
             require(number in 1..45) { "번호는 1부터 45 사이여야 합니다." }
@@ -187,16 +224,18 @@ class HabitRepository(
             require(number in 1..45) { "보너스 번호는 1부터 45 사이여야 합니다." }
             require(number !in sanitizedNumbers) { "보너스 번호는 당첨 번호와 중복될 수 없습니다." }
         }
+        val draw = LottoDrawEntity.from(
+            roundNo = safeRoundNo,
+            numbers = sanitizedNumbers,
+            bonusNumber = sanitizedBonusNumber,
+        )
 
         return persistChange {
-            habitDao.upsertLottoDraw(
-                LottoDrawEntity.from(
-                    roundNo = roundNo,
-                    numbers = sanitizedNumbers,
-                    bonusNumber = sanitizedBonusNumber,
-                ),
-            )
-            roundNo
+            database.withTransaction {
+                habitDao.upsertLottoDraw(draw)
+                updateLottoWinningStatsForRound(roundNo = safeRoundNo, draw = draw)
+            }
+            safeRoundNo
         }
     }
 
@@ -241,6 +280,10 @@ class HabitRepository(
     }
 
     suspend fun saveLottoWinning(roundNo: Int, amount: Long, memo: String?) {
+        saveLottoWinning(roundNo = roundNo, amount = amount, sourceLabel = "기타", memo = memo)
+    }
+
+    suspend fun saveLottoWinning(roundNo: Int, amount: Long, sourceLabel: String, memo: String?) {
         require(roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(amount > 0L) { "당첨 금액을 입력해 주세요." }
         persistChange {
@@ -248,10 +291,61 @@ class HabitRepository(
                 LottoWinningEntity(
                     roundNo = roundNo,
                     amount = amount,
+                    sourceLabel = sourceLabel.trim().ifBlank { "기타" },
                     memo = memo?.trim()?.takeIf(String::isNotEmpty),
                 ),
             )
         }
+    }
+
+    suspend fun saveCardHistory(useDate: LocalDate, amount: Long, memo: String?) {
+        require(amount != 0L) { "결제 예정 금액을 입력해 주세요." }
+        persistChange {
+            habitDao.insertCardHistory(
+                CardHistoryEntity(
+                    useDate = useDate,
+                    amount = amount,
+                    memo = memo?.trim()?.takeIf(String::isNotEmpty),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteCardHistory(historyId: Long) {
+        persistChange {
+            habitDao.deleteCardHistoryById(historyId)
+        }
+    }
+
+    suspend fun seedCardHistoriesIfEmpty() {
+        val historyCount = habitDao.getCardHistoryCount()
+        val seedVersion = cardPrefs.getInt(cardSeedVersionKey, 0)
+        if (historyCount > 0 && seedVersion >= currentCardSeedVersion) return
+        persistChange {
+            if (historyCount > 0) {
+                habitDao.deleteAllCardHistories()
+            }
+            habitDao.insertCardHistories(
+                CardHistorySeedData.entries.map { seed ->
+                    CardHistoryEntity(
+                        useDate = seed.useDate,
+                        amount = seed.amount,
+                    )
+                },
+            )
+        }
+        cardPrefs.edit().putInt(cardSeedVersionKey, currentCardSeedVersion).apply()
+        if (!cardPrefs.contains(cardPaymentDayKey)) {
+            cardPrefs.edit().putInt(cardPaymentDayKey, 9).apply()
+        }
+    }
+
+    fun getCardPaymentDay(): Int =
+        cardPrefs.getInt(cardPaymentDayKey, 9)
+
+    fun saveCardPaymentDay(day: Int) {
+        require(day in 1..28) { "결제일은 1일부터 28일 사이로 입력해 주세요." }
+        cardPrefs.edit().putInt(cardPaymentDayKey, day).apply()
     }
 
     suspend fun deleteLottoWinning(winningId: Long) {
@@ -760,6 +854,123 @@ class HabitRepository(
 
     private fun buildLottoSetNote(roundNo: Int, setIndex: Int): String =
         "${buildLottoRoundNote(roundNo)}$lottoSetNoteSeparator$setIndex"
+
+    private suspend fun updateLottoWinningStatsForRound(roundNo: Int, draw: LottoDrawEntity) {
+        val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+        val roundStats = listOf("균형형", "분산형").map { sourceLabel ->
+            val counts = IntArray(5)
+            roundTickets
+                .filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
+                .forEach { ticket ->
+                    when (calculateWinningRank(ticket, draw)) {
+                        5 -> counts[0] += 1
+                        4 -> counts[1] += 1
+                        3 -> counts[2] += 1
+                        2 -> counts[3] += 1
+                        1 -> counts[4] += 1
+                    }
+                }
+            LottoWinningStatRoundEntity(
+                roundNo = roundNo,
+                sourceLabel = sourceLabel,
+                rank5Count = counts[0],
+                rank4Count = counts[1],
+                rank3Count = counts[2],
+                rank2Count = counts[3],
+                rank1Count = counts[4],
+            )
+        }
+
+        habitDao.deleteLottoWinningStatRoundsByRound(roundNo)
+        habitDao.upsertLottoWinningStatRounds(roundStats)
+
+        val aggregate = habitDao.getAllLottoWinningStatRounds()
+            .groupBy(LottoWinningStatRoundEntity::sourceLabel)
+
+        val totals = listOf("균형형", "분산형").map { sourceLabel ->
+            val base = defaultWinningStats[sourceLabel] ?: intArrayOf(0, 0, 0, 0, 0)
+            val sourceRounds = aggregate[sourceLabel].orEmpty()
+            LottoWinningStatEntity(
+                sourceLabel = sourceLabel,
+                rank5Count = base[0] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
+                rank4Count = base[1] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
+                rank3Count = base[2] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
+                rank2Count = base[3] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
+                rank1Count = base[4] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+            )
+        }
+        habitDao.upsertLottoWinningStats(totals)
+    }
+
+    private suspend fun recalculateAllLottoWinningStats() {
+        val draws = habitDao.getAllLottoDrawsDesc()
+        val roundStats = draws.flatMap { draw ->
+            val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(draw.roundNo))
+            listOf("균형형", "분산형").map { sourceLabel ->
+                val counts = IntArray(5)
+                roundTickets
+                    .filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
+                    .forEach { ticket ->
+                        when (calculateWinningRank(ticket, draw)) {
+                            5 -> counts[0] += 1
+                            4 -> counts[1] += 1
+                            3 -> counts[2] += 1
+                            2 -> counts[3] += 1
+                            1 -> counts[4] += 1
+                        }
+                    }
+                LottoWinningStatRoundEntity(
+                    roundNo = draw.roundNo,
+                    sourceLabel = sourceLabel,
+                    rank5Count = counts[0],
+                    rank4Count = counts[1],
+                    rank3Count = counts[2],
+                    rank2Count = counts[3],
+                    rank1Count = counts[4],
+                )
+            }
+        }
+
+        habitDao.deleteAllLottoWinningStatRounds()
+        if (roundStats.isNotEmpty()) {
+            habitDao.upsertLottoWinningStatRounds(roundStats)
+        }
+
+        val aggregate = roundStats.groupBy(LottoWinningStatRoundEntity::sourceLabel)
+        val totals = listOf("균형형", "분산형").map { sourceLabel ->
+            val base = defaultWinningStats[sourceLabel] ?: intArrayOf(0, 0, 0, 0, 0)
+            val sourceRounds = aggregate[sourceLabel].orEmpty()
+            LottoWinningStatEntity(
+                sourceLabel = sourceLabel,
+                rank5Count = base[0] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
+                rank4Count = base[1] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
+                rank3Count = base[2] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
+                rank2Count = base[3] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
+                rank1Count = base[4] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+            )
+        }
+        habitDao.upsertLottoWinningStats(totals)
+    }
+
+    private fun normalizeWinningSource(sourceLabel: String): String = when {
+        sourceLabel.contains("분산형") -> "분산형"
+        sourceLabel.contains("균형형") || sourceLabel.contains("chatgpt", ignoreCase = true) || sourceLabel.contains("gpt", ignoreCase = true) -> "균형형"
+        else -> sourceLabel
+    }
+
+    private fun calculateWinningRank(ticket: LottoTicketEntity, draw: LottoDrawEntity): Int? {
+        val winningNumbers = draw.numbers()
+        val matchCount = ticket.numbers().count(winningNumbers::contains)
+        val bonusMatched = draw.bonusNumber?.let(ticket.numbers()::contains) == true
+        return when {
+            matchCount == 6 -> 1
+            matchCount == 5 && bonusMatched -> 2
+            matchCount == 5 -> 3
+            matchCount == 4 -> 4
+            matchCount == 3 -> 5
+            else -> null
+        }
+    }
 
     private fun nextLottoSetIndex(notes: List<String>): Int {
         val usedIndexes = notes.map { note ->

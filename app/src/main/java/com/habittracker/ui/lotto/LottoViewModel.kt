@@ -6,6 +6,7 @@ import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
+import com.habittracker.data.local.entity.LottoWinningStatEntity
 import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
@@ -31,10 +32,11 @@ private const val purchaseTab = "purchase"
 private const val winningTab = "winning"
 private const val savedTab = "saved"
 private const val statsTab = "stats"
+private const val balancedSource = "균형형"
+private const val dispersedSource = "분산형"
 private const val sourceChatGpt = "균형형"
 private const val sourceGemini = "분산형"
 private const val savedTicketBatchSize = 5
-private const val savedTicketHistoryLimit = 36
 private const val savedDrawHistoryLimit = 120
 
 enum class LottoStatsRange(val label: String) {
@@ -97,14 +99,17 @@ class LottoViewModel(
                 flowOf(emptyList())
             } else {
                 query.toIntOrNull()?.let(repository::observeSavedLottoTicketsByRound)
-                    ?: repository.observeSavedLottoTickets(limit = savedTicketHistoryLimit)
+                    ?: repository.observeAllSavedLottoTickets()
             }
         }
+    private val winningTypeStats = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeLottoWinningStats() else flowOf(emptyList())
+    }
     private val purchases = selectedTab.flatMapLatest { tab ->
         if (tab == purchaseTab) repository.observeLottoPurchases(limit = 100) else flowOf(emptyList())
     }
     private val winnings = selectedTab.flatMapLatest { tab ->
-        if (tab == winningTab) repository.observeLottoWinnings(limit = 100) else flowOf(emptyList())
+        if (tab == winningTab || tab == statsTab) repository.observeLottoWinnings(limit = 100) else flowOf(emptyList())
     }
     private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
         if (tab == statsTab) repository.observeTotalLottoPurchaseAmount() else flowOf(0L)
@@ -150,6 +155,7 @@ class LottoViewModel(
         latestRoundNo,
         pendingDelete,
         lastGeneratedSource,
+        winningTypeStats,
     ) { values ->
         val tab = values[0] as String
         val draws = values[1] as List<LottoDrawEntity>
@@ -178,6 +184,7 @@ class LottoViewModel(
         val latestRound = values[24] as Int?
         val pendingDeleteState = values[25] as PendingLottoDelete?
         val recentSource = values[26] as String?
+        val winningStats = values[27] as List<LottoWinningStatEntity>
 
         val activeStats = when (statsRange) {
             LottoStatsRange.WEEKLY -> weeklyStats
@@ -213,6 +220,7 @@ class LottoViewModel(
             pendingDeleteRoundNo = pendingDeleteState?.roundNo,
             pendingDeleteTicketId = pendingDeleteState?.ticketId,
             lastGeneratedSource = recentSource,
+            winningTypeStats = winningStats.map(::toWinningTypeStat),
         )
     }.stateIn(
         scope = viewModelScope,
@@ -223,6 +231,7 @@ class LottoViewModel(
     init {
         viewModelScope.launch {
             repository.seedLottoDrawsIfEmpty()
+            repository.ensureLottoWinningStatsInitialized()
             refreshLatestRound()
         }
         isHistoryLoading.value = true
@@ -529,6 +538,18 @@ class LottoViewModel(
     }
 }
 
+private fun toWinningTypeStat(entity: LottoWinningStatEntity): LottoWinningTypeStat =
+    LottoWinningTypeStat(
+        sourceLabel = entity.sourceLabel,
+        counts = mapOf(
+            "5등" to entity.rank5Count,
+            "4등" to entity.rank4Count,
+            "3등" to entity.rank3Count,
+            "2등" to entity.rank2Count,
+            "1등" to entity.rank1Count,
+        ),
+    )
+
 data class LottoUiState(
     val selectedTab: String = generatorTab,
     val roundInput: String = "",
@@ -557,4 +578,10 @@ data class LottoUiState(
     val pendingDeleteRoundNo: Int? = null,
     val pendingDeleteTicketId: Long? = null,
     val lastGeneratedSource: String? = null,
+    val winningTypeStats: List<LottoWinningTypeStat> = emptyList(),
+)
+
+data class LottoWinningTypeStat(
+    val sourceLabel: String,
+    val counts: Map<String, Int>,
 )

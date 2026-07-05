@@ -61,6 +61,7 @@ fun HomeScreen(
     onOpenStats: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
+    onOpenCard: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val monthDays = buildCalendarDays(uiState.currentMonth)
@@ -109,6 +110,7 @@ fun HomeScreen(
                 onOpenStats = onOpenStats,
                 onOpenLotto = onOpenLotto,
                 onOpenPlant = onOpenPlant,
+                onOpenCard = onOpenCard,
             )
         }
         item {
@@ -191,18 +193,19 @@ private fun WorkspaceSection(
     onOpenStats: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
+    onOpenCard: () -> Unit,
 ) {
     AppSectionCard {
         AppSectionHeader(
             title = "기능",
         )
         val actions = listOf(
-            HomeQuickAction("기록", "오늘 루틴 빠르게 입력", onOpenRecord),
             HomeQuickAction("메모", "빠른 노트와 잠금 메모", onOpenMemo),
             HomeQuickAction("일기", "사진과 하루 요약", onOpenDiary),
             HomeQuickAction("통계", "건강 흐름 확인", onOpenStats),
             HomeQuickAction("로또", "생성 번호와 이력", onOpenLotto),
-            HomeQuickAction("화분", "물주기 일정과 식물 관리", onOpenPlant),
+            HomeQuickAction("화분", "물주기 일정", onOpenPlant),
+            HomeQuickAction("카드 이력", "월별 카드 사용 관리", onOpenCard),
         )
         actions.chunked(2).forEach { rowItems ->
             Row(

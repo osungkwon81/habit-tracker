@@ -60,6 +60,7 @@ fun DailyEntryScreen(
     viewModel: DailyEntryViewModel,
     initialDate: String,
     onOpenAdmin: (() -> Unit)? = null,
+    onOpenStats: (() -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
@@ -120,6 +121,20 @@ fun DailyEntryScreen(
                 description = null,
                 action = {
                     onOpenAdmin?.let { openAdmin ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            AppPrimaryButton(
+                                text = "일일기록",
+                                onClick = {},
+                                modifier = Modifier.weight(1f),
+                            )
+                            onOpenStats?.let { openStats ->
+                                AppPrimaryButton(
+                                    text = "통계",
+                                    onClick = openStats,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
                         AppPrimaryButton(
                             text = "항목 관리",
                             onClick = openAdmin,

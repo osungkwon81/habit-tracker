@@ -36,6 +36,7 @@ import kotlin.math.roundToInt
 @Composable
 fun MonthlyStatsScreen(
     viewModel: MonthlyStatsViewModel,
+    onOpenEntry: (() -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val totalCompleted = uiState.stats.sumOf(TaskStatSummary::completedCount)
@@ -57,6 +58,16 @@ fun MonthlyStatsScreen(
                 title = "통계",
                 description = null,
                 action = {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                    ) {
+                        onOpenEntry?.let {
+                            AppSecondaryButton(text = "일일기록", onClick = it, modifier = Modifier.weight(1f))
+                        }
+                        AppSecondaryButton(text = "통계", onClick = {}, modifier = Modifier.weight(1f))
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,

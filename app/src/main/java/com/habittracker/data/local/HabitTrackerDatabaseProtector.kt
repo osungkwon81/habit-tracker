@@ -111,6 +111,15 @@ class HabitTrackerDatabaseProtector(
             if (!latestDatabaseFile.exists()) {
                 return@withLock false
             }
+            val snapshotVersion = readDatabaseUserVersion(latestDatabaseFile)
+            if (snapshotVersion != null && snapshotVersion > HabitTrackerDatabase.DB_VERSION) {
+                Log.e(
+                    TAG,
+                    "Latest automatic backup uses schema $snapshotVersion, which is newer than app schema ${HabitTrackerDatabase.DB_VERSION}; skipping restore.",
+                    reason,
+                )
+                return@withLock false
+            }
             if (!isSnapshotHealthy(latestDirectory)) {
                 Log.e(TAG, "Latest automatic backup is not healthy; skipping restore.", reason)
                 return@withLock false
@@ -208,6 +217,15 @@ class HabitTrackerDatabaseProtector(
             }
         }.getOrDefault(false)
     }
+
+    private fun readDatabaseUserVersion(databaseFile: File): Int? =
+        runCatching {
+            SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                db.rawQuery("PRAGMA user_version", null).useCursor { cursor ->
+                    if (cursor.moveToFirst()) cursor.getInt(0) else null
+                }
+            }
+        }.getOrNull()
 
     private fun pruneOldBackups() {
         val archives = historyDirectory().listFiles()

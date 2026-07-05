@@ -10,10 +10,13 @@ import androidx.room.Update
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
+import com.habittracker.data.local.entity.CardHistoryEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
+import com.habittracker.data.local.entity.LottoWinningStatEntity
+import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
@@ -32,6 +35,30 @@ import java.time.LocalDate
 interface HabitDao {
     @Query(
         """
+        SELECT * FROM card_history
+        ORDER BY use_date DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeCardHistories(limit: Int): Flow<List<CardHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCardHistory(history: CardHistoryEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCardHistories(histories: List<CardHistoryEntity>): List<Long>
+
+    @Query("DELETE FROM card_history WHERE id = :historyId")
+    suspend fun deleteCardHistoryById(historyId: Long)
+
+    @Query("DELETE FROM card_history")
+    suspend fun deleteAllCardHistories()
+
+    @Query("SELECT COUNT(*) FROM card_history")
+    suspend fun getCardHistoryCount(): Int
+
+    @Query(
+        """
         SELECT * FROM lotto_draw
         WHERE (:roundNo IS NULL OR round_no = :roundNo)
         ORDER BY round_no DESC
@@ -48,6 +75,14 @@ interface HabitDao {
         """,
     )
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        ORDER BY created_at DESC, id DESC
+        """,
+    )
+    fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>>
 
     @Query(
         """
@@ -81,6 +116,36 @@ interface HabitDao {
         """,
     )
     fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_winning_stat
+        ORDER BY CASE source_label
+            WHEN '균형형' THEN 0
+            WHEN '분산형' THEN 1
+            ELSE 2
+        END
+        """,
+    )
+    fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLottoWinningStats(stats: List<LottoWinningStatEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLottoWinningStatRounds(stats: List<LottoWinningStatRoundEntity>)
+
+    @Query("DELETE FROM lotto_winning_stat_round")
+    suspend fun deleteAllLottoWinningStatRounds()
+
+    @Query("DELETE FROM lotto_winning_stat_round WHERE round_no = :roundNo")
+    suspend fun deleteLottoWinningStatRoundsByRound(roundNo: Int)
+
+    @Query("SELECT * FROM lotto_winning_stat_round")
+    suspend fun getAllLottoWinningStatRounds(): List<LottoWinningStatRoundEntity>
+
+    @Query("SELECT COUNT(*) FROM lotto_winning_stat")
+    suspend fun getLottoWinningStatCount(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLottoWinning(winning: LottoWinningEntity): Long
@@ -217,6 +282,16 @@ interface HabitDao {
         """,
     )
     suspend fun getLottoTicketsBySourceAndNotePrefix(sourceLabel: String, notePrefix: String): List<LottoTicketEntity>
+
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        WHERE note LIKE :notePrefix || '%'
+          AND is_purchased = 1
+        ORDER BY created_at DESC, id DESC
+        """,
+    )
+    suspend fun getPurchasedLottoTicketsByNotePrefix(notePrefix: String): List<LottoTicketEntity>
 
     @Query(
         """

@@ -4,21 +4,20 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 @Entity(
-    tableName = "lotto_winning",
-    indices = [Index(value = ["round_no"])],
+    tableName = "card_history",
+    indices = [Index(value = ["use_date"])],
 )
-data class LottoWinningEntity(
+data class CardHistoryEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0L,
-    @ColumnInfo(name = "round_no")
-    val roundNo: Int,
+    @ColumnInfo(name = "use_date")
+    val useDate: LocalDate,
     @ColumnInfo(name = "amount")
     val amount: Long,
-    @ColumnInfo(name = "source_label")
-    val sourceLabel: String = "기타",
     @ColumnInfo(name = "memo")
     val memo: String? = null,
     @ColumnInfo(name = "created_at")

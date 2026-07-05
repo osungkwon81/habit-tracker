@@ -202,6 +202,77 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_13_14 = object : Migration(13, 14) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `card_history` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `use_date` TEXT NOT NULL,
+                    `amount` INTEGER NOT NULL,
+                    `memo` TEXT,
+                    `created_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_card_history_use_date`
+                ON `card_history` (`use_date`)
+                """.trimIndent(),
+            )
+            if (!database.hasColumn(tableName = "lotto_winning", columnName = "source_label")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning`
+                    ADD COLUMN `source_label` TEXT NOT NULL DEFAULT '기타'
+                    """.trimIndent(),
+                )
+            }
+        }
+    }
+
+    private val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `lotto_winning_stat` (
+                    `source_label` TEXT NOT NULL,
+                    `rank5_count` INTEGER NOT NULL,
+                    `rank4_count` INTEGER NOT NULL,
+                    `rank3_count` INTEGER NOT NULL,
+                    `rank2_count` INTEGER NOT NULL,
+                    `rank1_count` INTEGER NOT NULL,
+                    PRIMARY KEY(`source_label`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `lotto_winning_stat_round` (
+                    `round_no` INTEGER NOT NULL,
+                    `source_label` TEXT NOT NULL,
+                    `rank5_count` INTEGER NOT NULL,
+                    `rank4_count` INTEGER NOT NULL,
+                    `rank3_count` INTEGER NOT NULL,
+                    `rank2_count` INTEGER NOT NULL,
+                    `rank1_count` INTEGER NOT NULL,
+                    PRIMARY KEY(`round_no`, `source_label`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                INSERT OR REPLACE INTO `lotto_winning_stat`
+                (`source_label`, `rank5_count`, `rank4_count`, `rank3_count`, `rank2_count`, `rank1_count`)
+                VALUES
+                ('균형형', 19, 1, 0, 0, 0),
+                ('분산형', 18, 2, 0, 0, 0)
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -211,6 +282,8 @@ object HabitTrackerMigrations {
         MIGRATION_10_11,
         MIGRATION_11_12,
         MIGRATION_12_13,
+        MIGRATION_13_14,
+        MIGRATION_14_15,
     )
 }
 

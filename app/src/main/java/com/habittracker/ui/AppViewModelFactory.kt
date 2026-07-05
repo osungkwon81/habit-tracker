@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.habittracker.HabitTrackerApplication
 import com.habittracker.ui.admin.AdminViewModel
+import com.habittracker.ui.card.CardHistoryViewModel
 import com.habittracker.ui.diary.DiaryViewModel
 import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeViewModel
@@ -26,6 +27,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(AdminViewModel::class.java) -> AdminViewModel(repository) as T
             modelClass.isAssignableFrom(DiaryViewModel::class.java) -> DiaryViewModel(repository) as T
             modelClass.isAssignableFrom(LottoViewModel::class.java) -> LottoViewModel(repository) as T
+            modelClass.isAssignableFrom(CardHistoryViewModel::class.java) -> CardHistoryViewModel(repository) as T
             modelClass.isAssignableFrom(MemoViewModel::class.java) -> MemoViewModel(repository) as T
             modelClass.isAssignableFrom(PlantViewModel::class.java) -> PlantViewModel(repository) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
