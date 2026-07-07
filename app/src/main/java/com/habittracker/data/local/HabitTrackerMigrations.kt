@@ -243,6 +243,9 @@ object HabitTrackerMigrations {
                     `rank3_count` INTEGER NOT NULL,
                     `rank2_count` INTEGER NOT NULL,
                     `rank1_count` INTEGER NOT NULL,
+                    `evaluated_ticket_count` INTEGER NOT NULL DEFAULT 0,
+                    `style_pass_count` INTEGER NOT NULL DEFAULT 0,
+                    `style_score_total` INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(`source_label`)
                 )
                 """.trimIndent(),
@@ -257,19 +260,67 @@ object HabitTrackerMigrations {
                     `rank3_count` INTEGER NOT NULL,
                     `rank2_count` INTEGER NOT NULL,
                     `rank1_count` INTEGER NOT NULL,
+                    `evaluated_ticket_count` INTEGER NOT NULL DEFAULT 0,
+                    `style_pass_count` INTEGER NOT NULL DEFAULT 0,
+                    `style_score_total` INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(`round_no`, `source_label`)
                 )
                 """.trimIndent(),
             )
-            database.execSQL(
-                """
-                INSERT OR REPLACE INTO `lotto_winning_stat`
-                (`source_label`, `rank5_count`, `rank4_count`, `rank3_count`, `rank2_count`, `rank1_count`)
-                VALUES
-                ('균형형', 19, 1, 0, 0, 0),
-                ('분산형', 18, 2, 0, 0, 0)
-                """.trimIndent(),
-            )
+        }
+    }
+
+    private val MIGRATION_15_16 = object : Migration(15, 16) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            if (!database.hasColumn(tableName = "lotto_winning_stat", columnName = "evaluated_ticket_count")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat`
+                    ADD COLUMN `evaluated_ticket_count` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            if (!database.hasColumn(tableName = "lotto_winning_stat", columnName = "style_pass_count")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat`
+                    ADD COLUMN `style_pass_count` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            if (!database.hasColumn(tableName = "lotto_winning_stat", columnName = "style_score_total")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat`
+                    ADD COLUMN `style_score_total` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            if (!database.hasColumn(tableName = "lotto_winning_stat_round", columnName = "evaluated_ticket_count")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat_round`
+                    ADD COLUMN `evaluated_ticket_count` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            if (!database.hasColumn(tableName = "lotto_winning_stat_round", columnName = "style_pass_count")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat_round`
+                    ADD COLUMN `style_pass_count` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            if (!database.hasColumn(tableName = "lotto_winning_stat_round", columnName = "style_score_total")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_winning_stat_round`
+                    ADD COLUMN `style_score_total` INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent(),
+                )
+            }
+            database.execSQL("UPDATE `lotto_winning_stat` SET `rank5_count` = 0, `rank4_count` = 0, `rank3_count` = 0, `rank2_count` = 0, `rank1_count` = 0")
         }
     }
 
@@ -284,6 +335,7 @@ object HabitTrackerMigrations {
         MIGRATION_12_13,
         MIGRATION_13_14,
         MIGRATION_14_15,
+        MIGRATION_15_16,
     )
 }
 

@@ -22,4 +22,10 @@ data class LottoWinningStatRoundEntity(
     val rank2Count: Int,
     @ColumnInfo(name = "rank1_count")
     val rank1Count: Int,
+    @ColumnInfo(name = "evaluated_ticket_count")
+    val evaluatedTicketCount: Int,
+    @ColumnInfo(name = "style_pass_count")
+    val stylePassCount: Int,
+    @ColumnInfo(name = "style_score_total")
+    val styleScoreTotal: Int,
 )

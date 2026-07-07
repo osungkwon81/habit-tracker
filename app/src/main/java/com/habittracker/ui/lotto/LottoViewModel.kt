@@ -36,7 +36,6 @@ private const val balancedSource = "균형형"
 private const val dispersedSource = "분산형"
 private const val sourceChatGpt = "균형형"
 private const val sourceGemini = "분산형"
-private const val savedTicketBatchSize = 5
 private const val savedDrawHistoryLimit = 120
 
 enum class LottoStatsRange(val label: String) {
@@ -367,7 +366,7 @@ class LottoViewModel(
             delay(16)
             runCatching {
                 withContext(Dispatchers.Default) {
-                    LottoNumberGenerator.generateChatGpt(history, mode = mode)
+                    LottoNumberGenerator.generateBalanced(history, mode = mode)
                 }
             }.onSuccess { tickets ->
                 generatedChatGpt.value = tickets
@@ -388,7 +387,7 @@ class LottoViewModel(
             delay(16)
             runCatching {
                 withContext(Dispatchers.Default) {
-                    LottoNumberGenerator.generateGemini(history, mode = mode)
+                    LottoNumberGenerator.generateDiversified(history, mode = mode)
                 }
             }.onSuccess { tickets ->
                 generatedGemini.value = tickets
@@ -461,7 +460,7 @@ class LottoViewModel(
                 sourceLabel = sourceLabel,
                 tickets = tickets,
             )
-        }.onSuccess {
+        }.onSuccess { savedCount ->
             when (sourceLabel) {
                 sourceChatGpt -> generatedChatGpt.value = emptyList()
                 sourceGemini -> generatedGemini.value = emptyList()
@@ -469,7 +468,7 @@ class LottoViewModel(
             if (lastGeneratedSource.value == sourceLabel) {
                 lastGeneratedSource.value = null
             }
-            statusMessage.value = "${roundNo}회차 ${sourceLabel} 번호 ${savedTicketBatchSize}게임이 저장되었습니다."
+            statusMessage.value = "${roundNo}회차 ${sourceLabel} 번호 ${savedCount}게임이 저장되었습니다."
         }.onFailure { error ->
             statusMessage.value = error.message ?: "생성 번호 저장에 실패했습니다."
         }
@@ -548,6 +547,9 @@ private fun toWinningTypeStat(entity: LottoWinningStatEntity): LottoWinningTypeS
             "2등" to entity.rank2Count,
             "1등" to entity.rank1Count,
         ),
+        evaluatedTicketCount = entity.evaluatedTicketCount,
+        stylePassCount = entity.stylePassCount,
+        averageStyleScore = if (entity.evaluatedTicketCount == 0) 0 else entity.styleScoreTotal / entity.evaluatedTicketCount,
     )
 
 data class LottoUiState(
@@ -584,4 +586,7 @@ data class LottoUiState(
 data class LottoWinningTypeStat(
     val sourceLabel: String,
     val counts: Map<String, Int>,
+    val evaluatedTicketCount: Int,
+    val stylePassCount: Int,
+    val averageStyleScore: Int,
 )

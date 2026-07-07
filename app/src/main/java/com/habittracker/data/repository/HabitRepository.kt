@@ -38,6 +38,8 @@ import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.time.LocalDate
 import java.time.LocalDateTime
+import kotlin.math.abs
+import kotlin.math.max
 
 class HabitRepository(
     context: Context,
@@ -56,11 +58,8 @@ class HabitRepository(
         const val cardSeedVersionKey = "card-seed-version"
         const val currentCardSeedVersion = 2
         const val lottoStatVersionKey = "lotto-winning-stat-version"
-        const val currentLottoStatVersion = 2
-        val defaultWinningStats = mapOf(
-            "균형형" to intArrayOf(0, 1, 0, 0, 0),
-            "분산형" to intArrayOf(0, 2, 0, 0, 0),
-        )
+        const val currentLottoStatVersion = 3
+        val trackedLottoSources = listOf("균형형", "분산형")
     }
 
     val managedTaskValueTypes: List<ValueType> = listOf(ValueType.NUMBER, ValueType.EXERCISE)
@@ -201,7 +200,7 @@ class HabitRepository(
     suspend fun ensureLottoWinningStatsInitialized() {
         val statCount = habitDao.getLottoWinningStatCount()
         val statVersion = lottoPrefs.getInt(lottoStatVersionKey, 0)
-        if (statCount >= defaultWinningStats.size && statVersion >= currentLottoStatVersion) return
+        if (statCount >= trackedLottoSources.size && statVersion >= currentLottoStatVersion) return
         persistChange {
             recalculateAllLottoWinningStats()
         }
@@ -391,14 +390,14 @@ class HabitRepository(
         }
     }
 
-    suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
+    suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>): Int {
         require(roundNo > 0) { "저장할 회차를 확인해 주세요." }
         require(tickets.isNotEmpty()) { "저장할 생성 번호가 없습니다." }
 
         val limitedTickets = tickets.take(5)
         val roundNotePrefix = buildLottoRoundNote(roundNo)
 
-        persistChange {
+        return persistChange {
             database.withTransaction {
                 val existingTickets = habitDao.getLottoTicketsBySourceAndNotePrefix(sourceLabel = sourceLabel, notePrefix = roundNotePrefix)
                 val groupedNotes = existingTickets.mapNotNull(LottoTicketEntity::note).distinct()
@@ -417,6 +416,7 @@ class HabitRepository(
                     )
                 }
             }
+            limitedTickets.size
         }
     }
 
@@ -857,19 +857,19 @@ class HabitRepository(
 
     private suspend fun updateLottoWinningStatsForRound(roundNo: Int, draw: LottoDrawEntity) {
         val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
-        val roundStats = listOf("균형형", "분산형").map { sourceLabel ->
+        val roundStats = trackedLottoSources.map { sourceLabel ->
             val counts = IntArray(5)
-            roundTickets
-                .filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
-                .forEach { ticket ->
-                    when (calculateWinningRank(ticket, draw)) {
-                        5 -> counts[0] += 1
-                        4 -> counts[1] += 1
-                        3 -> counts[2] += 1
-                        2 -> counts[3] += 1
-                        1 -> counts[4] += 1
-                    }
+            val sourceTickets = roundTickets.filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
+            val styleEvaluations = sourceTickets.map { ticket -> evaluateTicketStyle(sourceLabel, ticket.numbers()) }
+            sourceTickets.forEach { ticket ->
+                when (calculateWinningRank(ticket, draw)) {
+                    5 -> counts[0] += 1
+                    4 -> counts[1] += 1
+                    3 -> counts[2] += 1
+                    2 -> counts[3] += 1
+                    1 -> counts[4] += 1
                 }
+            }
             LottoWinningStatRoundEntity(
                 roundNo = roundNo,
                 sourceLabel = sourceLabel,
@@ -878,6 +878,9 @@ class HabitRepository(
                 rank3Count = counts[2],
                 rank2Count = counts[3],
                 rank1Count = counts[4],
+                evaluatedTicketCount = styleEvaluations.size,
+                stylePassCount = styleEvaluations.count(TicketStyleEvaluation::passed),
+                styleScoreTotal = styleEvaluations.sumOf(TicketStyleEvaluation::score),
             )
         }
 
@@ -887,16 +890,18 @@ class HabitRepository(
         val aggregate = habitDao.getAllLottoWinningStatRounds()
             .groupBy(LottoWinningStatRoundEntity::sourceLabel)
 
-        val totals = listOf("균형형", "분산형").map { sourceLabel ->
-            val base = defaultWinningStats[sourceLabel] ?: intArrayOf(0, 0, 0, 0, 0)
+        val totals = trackedLottoSources.map { sourceLabel ->
             val sourceRounds = aggregate[sourceLabel].orEmpty()
             LottoWinningStatEntity(
                 sourceLabel = sourceLabel,
-                rank5Count = base[0] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
-                rank4Count = base[1] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
-                rank3Count = base[2] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
-                rank2Count = base[3] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
-                rank1Count = base[4] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+                rank5Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
+                rank4Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
+                rank3Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
+                rank2Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
+                rank1Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+                evaluatedTicketCount = sourceRounds.sumOf(LottoWinningStatRoundEntity::evaluatedTicketCount),
+                stylePassCount = sourceRounds.sumOf(LottoWinningStatRoundEntity::stylePassCount),
+                styleScoreTotal = sourceRounds.sumOf(LottoWinningStatRoundEntity::styleScoreTotal),
             )
         }
         habitDao.upsertLottoWinningStats(totals)
@@ -906,19 +911,19 @@ class HabitRepository(
         val draws = habitDao.getAllLottoDrawsDesc()
         val roundStats = draws.flatMap { draw ->
             val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(draw.roundNo))
-            listOf("균형형", "분산형").map { sourceLabel ->
+            trackedLottoSources.map { sourceLabel ->
                 val counts = IntArray(5)
-                roundTickets
-                    .filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
-                    .forEach { ticket ->
-                        when (calculateWinningRank(ticket, draw)) {
-                            5 -> counts[0] += 1
-                            4 -> counts[1] += 1
-                            3 -> counts[2] += 1
-                            2 -> counts[3] += 1
-                            1 -> counts[4] += 1
-                        }
+                val sourceTickets = roundTickets.filter { normalizeWinningSource(it.sourceLabel) == sourceLabel }
+                val styleEvaluations = sourceTickets.map { ticket -> evaluateTicketStyle(sourceLabel, ticket.numbers()) }
+                sourceTickets.forEach { ticket ->
+                    when (calculateWinningRank(ticket, draw)) {
+                        5 -> counts[0] += 1
+                        4 -> counts[1] += 1
+                        3 -> counts[2] += 1
+                        2 -> counts[3] += 1
+                        1 -> counts[4] += 1
                     }
+                }
                 LottoWinningStatRoundEntity(
                     roundNo = draw.roundNo,
                     sourceLabel = sourceLabel,
@@ -927,6 +932,9 @@ class HabitRepository(
                     rank3Count = counts[2],
                     rank2Count = counts[3],
                     rank1Count = counts[4],
+                    evaluatedTicketCount = styleEvaluations.size,
+                    stylePassCount = styleEvaluations.count(TicketStyleEvaluation::passed),
+                    styleScoreTotal = styleEvaluations.sumOf(TicketStyleEvaluation::score),
                 )
             }
         }
@@ -937,16 +945,18 @@ class HabitRepository(
         }
 
         val aggregate = roundStats.groupBy(LottoWinningStatRoundEntity::sourceLabel)
-        val totals = listOf("균형형", "분산형").map { sourceLabel ->
-            val base = defaultWinningStats[sourceLabel] ?: intArrayOf(0, 0, 0, 0, 0)
+        val totals = trackedLottoSources.map { sourceLabel ->
             val sourceRounds = aggregate[sourceLabel].orEmpty()
             LottoWinningStatEntity(
                 sourceLabel = sourceLabel,
-                rank5Count = base[0] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
-                rank4Count = base[1] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
-                rank3Count = base[2] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
-                rank2Count = base[3] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
-                rank1Count = base[4] + sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+                rank5Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank5Count),
+                rank4Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank4Count),
+                rank3Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank3Count),
+                rank2Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank2Count),
+                rank1Count = sourceRounds.sumOf(LottoWinningStatRoundEntity::rank1Count),
+                evaluatedTicketCount = sourceRounds.sumOf(LottoWinningStatRoundEntity::evaluatedTicketCount),
+                stylePassCount = sourceRounds.sumOf(LottoWinningStatRoundEntity::stylePassCount),
+                styleScoreTotal = sourceRounds.sumOf(LottoWinningStatRoundEntity::styleScoreTotal),
             )
         }
         habitDao.upsertLottoWinningStats(totals)
@@ -971,6 +981,90 @@ class HabitRepository(
             else -> null
         }
     }
+
+    private fun evaluateTicketStyle(sourceLabel: String, numbers: List<Int>): TicketStyleEvaluation = when (sourceLabel) {
+        "균형형" -> evaluateBalancedTicket(numbers)
+        "분산형" -> evaluateDiversifiedTicket(numbers)
+        else -> TicketStyleEvaluation(score = 0, passed = false)
+    }
+
+    private fun evaluateBalancedTicket(numbers: List<Int>): TicketStyleEvaluation {
+        if (numbers.size != 6) return TicketStyleEvaluation(score = 0, passed = false)
+        val sorted = numbers.sorted()
+        val spread = sorted.last() - sorted.first()
+        val oddCount = sorted.count { it % 2 != 0 }
+        val lowCount = sorted.count { it <= 22 }
+        val highCount = sorted.count { it >= 32 }
+        val bucketCounts = sorted.groupingBy { (it - 1) / 10 }.eachCount()
+        val variance = ticketVariance(sorted)
+        val lowMiddleHighGap = countGap(
+            sorted.count { it <= 15 },
+            sorted.count { it in 16..30 },
+            sorted.count { it >= 31 },
+        )
+
+        var score = 0
+        if (oddCount in 2..4) score += 20
+        if (lowCount in 2..4) score += 20
+        if (highCount in 1..3) score += 15
+        if (spread in 24..38) score += 15
+        if (bucketCounts.size >= 4 && bucketCounts.values.none { it > 2 }) score += 15
+        if (variance in 70.0..185.0) score += 10
+        if (lowMiddleHighGap <= 2) score += 5
+
+        return TicketStyleEvaluation(score = score, passed = score >= 70)
+    }
+
+    private fun evaluateDiversifiedTicket(numbers: List<Int>): TicketStyleEvaluation {
+        if (numbers.size != 6) return TicketStyleEvaluation(score = 0, passed = false)
+        val sorted = numbers.sorted()
+        val spread = sorted.last() - sorted.first()
+        val highCount = sorted.count { it >= 32 }
+        val bucketCount = sorted.map { (it - 1) / 10 }.distinct().size
+        val tailDuplicates = sorted.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
+        val variance = ticketVariance(sorted)
+        val ac = acValue(sorted)
+
+        var score = 0
+        if (highCount >= 2) score += 25
+        if (bucketCount >= 4) score += 20
+        if (spread >= 30) score += 20
+        if (tailDuplicates <= 2) score += 10
+        if (ac >= 6) score += 15
+        if (variance >= 120.0) score += 10
+
+        return TicketStyleEvaluation(score = score, passed = score >= 70)
+    }
+
+    private fun ticketVariance(numbers: List<Int>): Double {
+        val average = numbers.average()
+        return numbers.sumOf { number ->
+            val diff = number - average
+            diff * diff
+        } / numbers.size
+    }
+
+    private fun acValue(numbers: List<Int>): Int {
+        val sorted = numbers.sorted()
+        val diffs = mutableSetOf<Int>()
+        for (firstIndex in sorted.indices) {
+            for (secondIndex in firstIndex + 1 until sorted.size) {
+                diffs += abs(sorted[secondIndex] - sorted[firstIndex])
+            }
+        }
+        return diffs.size - (sorted.size - 1)
+    }
+
+    private fun countGap(first: Int, second: Int, third: Int): Int {
+        val maxValue = max(first, max(second, third))
+        val minValue = minOf(first, second, third)
+        return maxValue - minValue
+    }
+
+    private data class TicketStyleEvaluation(
+        val score: Int,
+        val passed: Boolean,
+    )
 
     private fun nextLottoSetIndex(notes: List<String>): Int {
         val usedIndexes = notes.map { note ->

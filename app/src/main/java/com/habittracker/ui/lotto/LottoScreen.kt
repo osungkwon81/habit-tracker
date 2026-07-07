@@ -918,8 +918,16 @@ private fun WinningTypeTable(winningTypeStats: List<LottoWinningTypeStat>) {
             }
         }
         winningTypeStats.forEach { stat ->
+            val passRate = if (stat.evaluatedTicketCount == 0) 0 else (stat.stylePassCount * 100) / stat.evaluatedTicketCount
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stat.sourceLabel, modifier = Modifier.weight(1.2f), fontWeight = FontWeight.SemiBold)
+                Column(modifier = Modifier.weight(1.2f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(text = stat.sourceLabel, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "적합률 ${passRate}% · 평균 ${stat.averageStyleScore}점",
+                        color = LottoTextMutedColor,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 ranks.forEach { rank ->
                     Text(text = "${stat.counts[rank] ?: 0}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
                 }

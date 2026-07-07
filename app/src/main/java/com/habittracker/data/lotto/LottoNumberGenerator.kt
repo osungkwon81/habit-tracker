@@ -1,8 +1,8 @@
 package com.habittracker.data.lotto
 
-import java.security.SecureRandom
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.random.Random
 
 data class LottoGeneratedTicket(
     val numbers: List<Int>,
@@ -27,9 +27,9 @@ object LottoNumberGenerator {
     private const val targetVariance = 145.0
     private const val minimumBacktestTrainingDraws = 36
     private const val minimumBacktestSamples = 24
-    private val secureRandom = SecureRandom()
+    private val random = Random.Default
 
-    fun generateChatGpt(
+    fun generateBalanced(
         history: List<List<Int>>,
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
@@ -42,7 +42,7 @@ object LottoNumberGenerator {
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = ::generateRandomCombination,
+            generator = { generatePredictedCombination(trendProfile, CoverageStrategy.BALANCED) },
             validator = { numbers -> isBalancedCandidate(numbers, trendProfile) },
             scorer = { numbers ->
                 scoreCoverageCandidate(
@@ -58,14 +58,18 @@ object LottoNumberGenerator {
                 val covered = numbers.joinToString("-")
                 val highCount = numbers.count { it >= 32 }
                 val spread = numbers.last() - numbers.first()
-                "${mode.label} 모드, 백테스트 조임/저장회차 분석/빈도 반영, 점수 ${"%.1f".format(score)}, 고번호 ${highCount}개, 폭 ${spread}, 직전겹침 ${overlap}개, 조합 $covered"
+                val fit = backtestFitLabel(
+                    analysisScore = scoreHistoryAnalysisCandidate(numbers, trendProfile.historyAnalysis),
+                    profile = trendProfile.backtestProfile,
+                )
+                "${mode.label} 모드, 예측점수 ${"%.1f".format(score)}, 백테스트 ${fit}, 빈도/미출현/번호쌍 반영, 고번호 ${highCount}개, 폭 ${spread}, 직전겹침 ${overlap}개, 조합 $covered"
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
         )
     }
 
-    fun generateGemini(
+    fun generateDiversified(
         history: List<List<Int>>,
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
@@ -79,7 +83,7 @@ object LottoNumberGenerator {
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = ::generateRandomCombination,
+            generator = { generatePredictedCombination(trendProfile, CoverageStrategy.DIVERSIFIED) },
             validator = { numbers -> isDiversifiedCandidate(numbers, trendProfile) },
             scorer = { numbers ->
                 scoreCoverageCandidate(
@@ -95,12 +99,30 @@ object LottoNumberGenerator {
                 val unpopularScore = publicPickAvoidanceScore(numbers)
                 val rareCount = numbers.count { trendProfile.recentFrequency.getValue(it).toDouble() <= trendProfile.recentFrequencyMean }
                 val spread = numbers.last() - numbers.first()
-                "${mode.label} 모드, 백테스트 조임/공유당첨 회피/구간분산 우선, 점수 ${"%.1f".format(score)}, 평균이하빈도 ${rareCount}개, 공유회피 ${"%.1f".format(unpopularScore)}, 폭 ${spread}, 이월 ${carryCount}개"
+                val fit = backtestFitLabel(
+                    analysisScore = scoreHistoryAnalysisCandidate(numbers, trendProfile.historyAnalysis),
+                    profile = trendProfile.backtestProfile,
+                )
+                "${mode.label} 모드, 예측점수 ${"%.1f".format(score)}, 백테스트 ${fit}, 공유당첨 회피/구간분산 우선, 평균이하빈도 ${rareCount}개, 공유회피 ${"%.1f".format(unpopularScore)}, 폭 ${spread}, 이월 ${carryCount}개"
             },
             mode = mode,
             strategy = CoverageStrategy.DIVERSIFIED,
         )
     }
+
+    fun generateChatGpt(
+        history: List<List<Int>>,
+        gameCount: Int = defaultGameCount,
+        mode: LottoGenerationMode = LottoGenerationMode.BASIC,
+    ): List<LottoGeneratedTicket> =
+        generateBalanced(history = history, gameCount = gameCount, mode = mode)
+
+    fun generateGemini(
+        history: List<List<Int>>,
+        gameCount: Int = defaultGameCount,
+        mode: LottoGenerationMode = LottoGenerationMode.BASIC,
+    ): List<LottoGeneratedTicket> =
+        generateDiversified(history = history, gameCount = gameCount, mode = mode)
 
     private fun buildTrendProfile(history: List<List<Int>>): TrendProfile {
         val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
@@ -134,14 +156,109 @@ object LottoNumberGenerator {
     }
 
     private fun generateRandomCombination(): List<Int> {
-        val pool = (1..maxNumber).toMutableList()
-        for (index in pool.lastIndex downTo 1) {
-            val swapIndex = secureRandom.nextInt(index + 1)
-            val temp = pool[index]
-            pool[index] = pool[swapIndex]
-            pool[swapIndex] = temp
+        val selected = mutableSetOf<Int>()
+        while (selected.size < pickCount) {
+            selected += random.nextInt(maxNumber) + 1
         }
-        return pool.take(pickCount).sorted()
+        return selected.sorted()
+    }
+
+    private fun generatePredictedCombination(
+        trendProfile: TrendProfile,
+        strategy: CoverageStrategy,
+    ): List<Int> {
+        val selected = mutableSetOf<Int>()
+
+        while (selected.size < pickCount) {
+            val candidates = (1..maxNumber).filter { number -> number !in selected }
+            if (candidates.isEmpty()) return generateRandomCombination()
+            selected += pickWeightedNumber(
+                candidates = candidates,
+                selected = selected,
+                trendProfile = trendProfile,
+                strategy = strategy,
+            )
+        }
+
+        return selected.sorted()
+    }
+
+    private fun pickWeightedNumber(
+        candidates: List<Int>,
+        selected: Set<Int>,
+        trendProfile: TrendProfile,
+        strategy: CoverageStrategy,
+    ): Int {
+        val weights = candidates.map { number ->
+            predictedNumberWeight(
+                number = number,
+                selected = selected,
+                trendProfile = trendProfile,
+                strategy = strategy,
+            ).coerceAtLeast(0.05)
+        }
+        val totalWeight = weights.sum()
+        if (totalWeight <= 0.0) return candidates[random.nextInt(candidates.size)]
+
+        var threshold = random.nextDouble() * totalWeight
+        for (index in candidates.indices) {
+            threshold -= weights[index]
+            if (threshold <= 0.0) return candidates[index]
+        }
+        return candidates.last()
+    }
+
+    private fun predictedNumberWeight(
+        number: Int,
+        selected: Set<Int>,
+        trendProfile: TrendProfile,
+        strategy: CoverageStrategy,
+    ): Double {
+        val longMean = trendProfile.longFrequencyMean.coerceAtLeast(1.0)
+        val recentMean = trendProfile.recentFrequencyMean.coerceAtLeast(1.0)
+        val gapTarget = trendProfile.lastSeenGap.values.average().coerceAtLeast(1.0)
+        val longFrequency = trendProfile.longFrequency.getValue(number).toDouble()
+        val recentFrequency = trendProfile.recentFrequency.getValue(number).toDouble()
+        val gap = trendProfile.lastSeenGap.getValue(number).toDouble()
+        val longFit = 1.0 + max(0.0, 1.0 - abs(longFrequency - longMean) / longMean) * 0.8
+        val recentFit = when (strategy) {
+            CoverageStrategy.BALANCED ->
+                1.0 + max(0.0, 1.0 - abs(recentFrequency - recentMean) / recentMean) * 0.7
+            CoverageStrategy.DIVERSIFIED ->
+                if (recentFrequency <= recentMean) 1.45 else 0.85
+        }
+        val gapFit = 1.0 + minOf(gap / gapTarget, 2.0) * when (strategy) {
+            CoverageStrategy.BALANCED -> 0.22
+            CoverageStrategy.DIVERSIFIED -> 0.34
+        }
+        val highNumberFit = when {
+            number >= 32 && strategy == CoverageStrategy.DIVERSIFIED -> 1.18
+            number >= 32 -> 1.05
+            else -> 1.0
+        }
+
+        return longFit * recentFit * gapFit * highNumberFit * selectedPairFreshnessFit(number, selected, trendProfile, strategy)
+    }
+
+    private fun selectedPairFreshnessFit(
+        number: Int,
+        selected: Set<Int>,
+        trendProfile: TrendProfile,
+        strategy: CoverageStrategy,
+    ): Double {
+        if (selected.isEmpty()) return 1.0
+
+        val pairMean = trendProfile.pairFrequencyMean.coerceAtLeast(0.1)
+        val averagePairFrequency = selected.map { picked ->
+            val pair = if (number < picked) number to picked else picked to number
+            trendProfile.pairFrequency.getValue(pair).toDouble()
+        }.average()
+        val excess = max(0.0, averagePairFrequency - pairMean)
+        val penalty = when (strategy) {
+            CoverageStrategy.BALANCED -> 0.10
+            CoverageStrategy.DIVERSIFIED -> 0.18
+        }
+        return (1.0 / (1.0 + excess * penalty)).coerceIn(0.55, 1.2)
     }
 
     private fun isBaseCoverageCandidate(numbers: List<Int>): Boolean {
@@ -467,6 +584,16 @@ object LottoNumberGenerator {
             analysisScore >= profile.averageScore -> 1.4
             analysisScore >= profile.minimumAcceptedScore -> 0.6
             else -> -(profile.minimumAcceptedScore - analysisScore) * 0.7
+        }
+    }
+
+    private fun backtestFitLabel(analysisScore: Double, profile: BacktestProfile): String {
+        if (profile.sampleCount < minimumBacktestSamples) return "표본부족"
+        return when {
+            analysisScore >= profile.strongScore -> "강함"
+            analysisScore >= profile.averageScore -> "평균상회"
+            analysisScore >= profile.minimumAcceptedScore -> "통과"
+            else -> "미달"
         }
     }
 
