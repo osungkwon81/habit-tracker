@@ -31,13 +31,20 @@ data class LottoTicketEntity(
     val note: String? = null,
     @ColumnInfo(name = "is_purchased")
     val isPurchased: Boolean = false,
+    @ColumnInfo(name = "generation_version")
+    val generationVersion: String = "legacy",
     @ColumnInfo(name = "created_at")
     val createdAt: LocalDateTime = LocalDateTime.now(),
 ) {
     fun numbers(): List<Int> = listOf(number1, number2, number3, number4, number5, number6)
 
     companion object {
-        fun from(sourceLabel: String, numbers: List<Int>, note: String? = null): LottoTicketEntity {
+        fun from(
+            sourceLabel: String,
+            numbers: List<Int>,
+            note: String? = null,
+            generationVersion: String = "manual",
+        ): LottoTicketEntity {
             require(numbers.size == 6) { "로또 번호는 6개여야 합니다." }
             val sortedNumbers = numbers.sorted()
             return LottoTicketEntity(
@@ -49,6 +56,7 @@ data class LottoTicketEntity(
                 number5 = sortedNumbers[4],
                 number6 = sortedNumbers[5],
                 note = note,
+                generationVersion = generationVersion,
             )
         }
     }

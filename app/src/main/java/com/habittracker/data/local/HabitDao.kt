@@ -258,6 +258,9 @@ interface HabitDao {
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
 
+    @Query("SELECT * FROM lotto_draw WHERE round_no = :roundNo LIMIT 1")
+    suspend fun getLottoDrawByRoundNo(roundNo: Int): LottoDrawEntity?
+
     @Query("SELECT MAX(round_no) FROM lotto_draw")
     suspend fun getLatestLottoRoundNo(): Int?
 
@@ -317,12 +320,24 @@ interface HabitDao {
     @Query(
         """
         UPDATE lotto_ticket
-        SET is_purchased = 1
-        WHERE source_label = :sourceLabel
-          AND note = :note
+        SET is_purchased = 1,
+            source_label = :sourceLabel
+        WHERE note = :note
+          AND (
+              source_label = :sourceLabel
+              OR (:sourceLabel = '균형형' AND (
+                  source_label LIKE '%균형형%'
+                  OR lower(source_label) LIKE '%chatgpt%'
+                  OR lower(source_label) LIKE '%gpt%'
+              ))
+              OR (:sourceLabel = '분산형' AND (
+                  source_label LIKE '%분산형%'
+                  OR lower(source_label) LIKE '%gemini%'
+              ))
+          )
         """,
     )
-    suspend fun markLottoTicketsPurchasedBySourceAndNote(sourceLabel: String, note: String)
+    suspend fun markLottoTicketsPurchasedBySourceAndNote(sourceLabel: String, note: String): Int
 
     @Query(
         """

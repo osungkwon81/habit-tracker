@@ -324,6 +324,19 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_16_17 = object : Migration(16, 17) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            if (!database.hasColumn(tableName = "lotto_ticket", columnName = "generation_version")) {
+                database.execSQL(
+                    """
+                    ALTER TABLE `lotto_ticket`
+                    ADD COLUMN `generation_version` TEXT NOT NULL DEFAULT 'legacy'
+                    """.trimIndent(),
+                )
+            }
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -336,6 +349,7 @@ object HabitTrackerMigrations {
         MIGRATION_13_14,
         MIGRATION_14_15,
         MIGRATION_15_16,
+        MIGRATION_16_17,
     )
 }
 

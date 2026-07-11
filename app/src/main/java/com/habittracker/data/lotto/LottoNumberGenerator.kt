@@ -20,6 +20,9 @@ enum class LottoGenerationMode(
 }
 
 object LottoNumberGenerator {
+    // 생성 로직을 바꿀 때마다 이 값을 올려야 버전별 당첨 통계를 분리할 수 있다.
+    const val CURRENT_GENERATION_VERSION = "2026-07-11-v1"
+
     private const val maxNumber = 45
     private const val pickCount = 6
     private const val defaultGameCount = 5

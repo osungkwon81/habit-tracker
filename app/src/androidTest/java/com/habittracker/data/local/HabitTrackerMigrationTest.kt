@@ -69,11 +69,12 @@ class HabitTrackerMigrationTest {
             }
 
             database.openHelper.readableDatabase.query(
-                "SELECT source_label, note FROM lotto_ticket WHERE id = 1",
+                "SELECT source_label, note, generation_version FROM lotto_ticket WHERE id = 1",
             ).useCursor { cursor ->
                 assertTrue(cursor.moveToFirst())
                 assertEquals("수동입력", cursor.getString(0))
                 assertEquals("legacy-ticket", cursor.getString(1))
+                assertEquals("legacy", cursor.getString(2))
             }
         } finally {
             database.close()

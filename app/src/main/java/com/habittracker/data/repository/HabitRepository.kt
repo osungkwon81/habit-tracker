@@ -31,6 +31,7 @@ import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import com.habittracker.data.lotto.LottoNumberGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -379,7 +380,15 @@ class HabitRepository(
         require(sourceLabel.isNotBlank()) { "구매 처리할 세트 출처를 찾을 수 없습니다." }
         require(note.isNotBlank()) { "구매 처리할 세트를 찾을 수 없습니다." }
         persistChange {
-            habitDao.markLottoTicketsPurchasedBySourceAndNote(sourceLabel, note)
+            database.withTransaction {
+                val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(sourceLabel, note)
+                require(updatedCount > 0) { "구매 처리할 세트를 찾을 수 없습니다." }
+                val roundNo = extractLottoRoundNo(note)
+                val draw = roundNo?.let { habitDao.getLottoDrawByRoundNo(it) }
+                if (roundNo != null && draw != null) {
+                    updateLottoWinningStatsForRound(roundNo = roundNo, draw = draw)
+                }
+            }
         }
     }
 
@@ -412,6 +421,7 @@ class HabitRepository(
                             sourceLabel = sourceLabel,
                             numbers = ticket.numbers,
                             note = setNote,
+                            generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
                         ),
                     )
                 }
@@ -854,6 +864,13 @@ class HabitRepository(
 
     private fun buildLottoSetNote(roundNo: Int, setIndex: Int): String =
         "${buildLottoRoundNote(roundNo)}$lottoSetNoteSeparator$setIndex"
+
+    private fun extractLottoRoundNo(note: String): Int? =
+        note
+            .takeIf { it.startsWith(lottoRoundNotePrefix) }
+            ?.removePrefix(lottoRoundNotePrefix)
+            ?.substringBefore(lottoSetNoteSeparator)
+            ?.toIntOrNull()
 
     private suspend fun updateLottoWinningStatsForRound(roundNo: Int, draw: LottoDrawEntity) {
         val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
