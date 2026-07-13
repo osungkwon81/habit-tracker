@@ -33,6 +33,22 @@ data class LottoTicketEntity(
     val isPurchased: Boolean = false,
     @ColumnInfo(name = "generation_version")
     val generationVersion: String = "legacy",
+    @ColumnInfo(name = "analysis_score")
+    val analysisScore: Double? = null,
+    @ColumnInfo(name = "data_score")
+    val dataScore: Double? = null,
+    @ColumnInfo(name = "pattern_score")
+    val patternScore: Double? = null,
+    @ColumnInfo(name = "distribution_score")
+    val distributionScore: Double? = null,
+    @ColumnInfo(name = "avoidance_score")
+    val avoidanceScore: Double? = null,
+    @ColumnInfo(name = "validation_score")
+    val validationScore: Double? = null,
+    @ColumnInfo(name = "generation_mode")
+    val generationMode: String? = null,
+    @ColumnInfo(name = "recommendation_rank")
+    val recommendationRank: Int? = null,
     @ColumnInfo(name = "created_at")
     val createdAt: LocalDateTime = LocalDateTime.now(),
 ) {
@@ -44,6 +60,14 @@ data class LottoTicketEntity(
             numbers: List<Int>,
             note: String? = null,
             generationVersion: String = "manual",
+            analysisScore: Double? = null,
+            dataScore: Double? = null,
+            patternScore: Double? = null,
+            distributionScore: Double? = null,
+            avoidanceScore: Double? = null,
+            validationScore: Double? = null,
+            generationMode: String? = null,
+            recommendationRank: Int? = null,
         ): LottoTicketEntity {
             require(numbers.size == 6) { "로또 번호는 6개여야 합니다." }
             val sortedNumbers = numbers.sorted()
@@ -57,6 +81,14 @@ data class LottoTicketEntity(
                 number6 = sortedNumbers[5],
                 note = note,
                 generationVersion = generationVersion,
+                analysisScore = analysisScore,
+                dataScore = dataScore,
+                patternScore = patternScore,
+                distributionScore = distributionScore,
+                avoidanceScore = avoidanceScore,
+                validationScore = validationScore,
+                generationMode = generationMode,
+                recommendationRank = recommendationRank,
             )
         }
     }

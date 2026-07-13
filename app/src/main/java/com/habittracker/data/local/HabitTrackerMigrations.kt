@@ -337,6 +337,73 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_17_18 = object : Migration(17, 18) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            listOf(
+                "analysis_score",
+                "data_score",
+                "pattern_score",
+                "distribution_score",
+                "avoidance_score",
+                "validation_score",
+            ).forEach { columnName ->
+                if (!database.hasColumn(tableName = "lotto_ticket", columnName = columnName)) {
+                    database.execSQL("ALTER TABLE `lotto_ticket` ADD COLUMN `$columnName` REAL")
+                }
+            }
+            if (!database.hasColumn(tableName = "lotto_ticket", columnName = "generation_mode")) {
+                database.execSQL("ALTER TABLE `lotto_ticket` ADD COLUMN `generation_mode` TEXT")
+            }
+            if (!database.hasColumn(tableName = "lotto_ticket", columnName = "recommendation_rank")) {
+                database.execSQL("ALTER TABLE `lotto_ticket` ADD COLUMN `recommendation_rank` INTEGER")
+            }
+
+            database.execSQL("DROP TABLE IF EXISTS `lotto_winning_stat`")
+            database.execSQL("DROP TABLE IF EXISTS `lotto_winning_stat_round`")
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `lotto_winning_stat` (
+                    `source_label` TEXT NOT NULL,
+                    `generation_version` TEXT NOT NULL,
+                    `rank5_count` INTEGER NOT NULL,
+                    `rank4_count` INTEGER NOT NULL,
+                    `rank3_count` INTEGER NOT NULL,
+                    `rank2_count` INTEGER NOT NULL,
+                    `rank1_count` INTEGER NOT NULL,
+                    `evaluated_ticket_count` INTEGER NOT NULL,
+                    `style_pass_count` INTEGER NOT NULL,
+                    `style_score_total` INTEGER NOT NULL,
+                    `scored_ticket_count` INTEGER NOT NULL,
+                    `analysis_score_total` REAL NOT NULL,
+                    `match_count_total` INTEGER NOT NULL,
+                    PRIMARY KEY(`source_label`, `generation_version`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `lotto_winning_stat_round` (
+                    `round_no` INTEGER NOT NULL,
+                    `source_label` TEXT NOT NULL,
+                    `generation_version` TEXT NOT NULL,
+                    `rank5_count` INTEGER NOT NULL,
+                    `rank4_count` INTEGER NOT NULL,
+                    `rank3_count` INTEGER NOT NULL,
+                    `rank2_count` INTEGER NOT NULL,
+                    `rank1_count` INTEGER NOT NULL,
+                    `evaluated_ticket_count` INTEGER NOT NULL,
+                    `style_pass_count` INTEGER NOT NULL,
+                    `style_score_total` INTEGER NOT NULL,
+                    `scored_ticket_count` INTEGER NOT NULL,
+                    `analysis_score_total` REAL NOT NULL,
+                    `match_count_total` INTEGER NOT NULL,
+                    PRIMARY KEY(`round_no`, `source_label`, `generation_version`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -350,6 +417,7 @@ object HabitTrackerMigrations {
         MIGRATION_14_15,
         MIGRATION_15_16,
         MIGRATION_16_17,
+        MIGRATION_17_18,
     )
 }
 

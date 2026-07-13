@@ -540,6 +540,7 @@ class LottoViewModel(
 private fun toWinningTypeStat(entity: LottoWinningStatEntity): LottoWinningTypeStat =
     LottoWinningTypeStat(
         sourceLabel = entity.sourceLabel,
+        generationVersion = entity.generationVersion,
         counts = mapOf(
             "5등" to entity.rank5Count,
             "4등" to entity.rank4Count,
@@ -550,6 +551,8 @@ private fun toWinningTypeStat(entity: LottoWinningStatEntity): LottoWinningTypeS
         evaluatedTicketCount = entity.evaluatedTicketCount,
         stylePassCount = entity.stylePassCount,
         averageStyleScore = if (entity.evaluatedTicketCount == 0) 0 else entity.styleScoreTotal / entity.evaluatedTicketCount,
+        averageAnalysisScore = if (entity.scoredTicketCount == 0) null else entity.analysisScoreTotal / entity.scoredTicketCount,
+        averageMatchCount = if (entity.evaluatedTicketCount == 0) 0.0 else entity.matchCountTotal.toDouble() / entity.evaluatedTicketCount,
     )
 
 data class LottoUiState(
@@ -585,8 +588,11 @@ data class LottoUiState(
 
 data class LottoWinningTypeStat(
     val sourceLabel: String,
+    val generationVersion: String,
     val counts: Map<String, Int>,
     val evaluatedTicketCount: Int,
     val stylePassCount: Int,
     val averageStyleScore: Int,
+    val averageAnalysisScore: Double?,
+    val averageMatchCount: Double,
 )

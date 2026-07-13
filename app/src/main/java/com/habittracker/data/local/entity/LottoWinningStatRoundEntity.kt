@@ -5,13 +5,15 @@ import androidx.room.Entity
 
 @Entity(
     tableName = "lotto_winning_stat_round",
-    primaryKeys = ["round_no", "source_label"],
+    primaryKeys = ["round_no", "source_label", "generation_version"],
 )
 data class LottoWinningStatRoundEntity(
     @ColumnInfo(name = "round_no")
     val roundNo: Int,
     @ColumnInfo(name = "source_label")
     val sourceLabel: String,
+    @ColumnInfo(name = "generation_version")
+    val generationVersion: String,
     @ColumnInfo(name = "rank5_count")
     val rank5Count: Int,
     @ColumnInfo(name = "rank4_count")
@@ -28,4 +30,10 @@ data class LottoWinningStatRoundEntity(
     val stylePassCount: Int,
     @ColumnInfo(name = "style_score_total")
     val styleScoreTotal: Int,
+    @ColumnInfo(name = "scored_ticket_count")
+    val scoredTicketCount: Int,
+    @ColumnInfo(name = "analysis_score_total")
+    val analysisScoreTotal: Double,
+    @ColumnInfo(name = "match_count_total")
+    val matchCountTotal: Int,
 )

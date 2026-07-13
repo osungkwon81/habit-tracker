@@ -124,13 +124,16 @@ interface HabitDao {
             WHEN '균형형' THEN 0
             WHEN '분산형' THEN 1
             ELSE 2
-        END
+        END, generation_version DESC
         """,
     )
     fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLottoWinningStats(stats: List<LottoWinningStatEntity>)
+
+    @Query("DELETE FROM lotto_winning_stat")
+    suspend fun deleteAllLottoWinningStats()
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLottoWinningStatRounds(stats: List<LottoWinningStatRoundEntity>)
@@ -143,9 +146,6 @@ interface HabitDao {
 
     @Query("SELECT * FROM lotto_winning_stat_round")
     suspend fun getAllLottoWinningStatRounds(): List<LottoWinningStatRoundEntity>
-
-    @Query("SELECT COUNT(*) FROM lotto_winning_stat")
-    suspend fun getLottoWinningStatCount(): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLottoWinning(winning: LottoWinningEntity): Long
@@ -333,6 +333,7 @@ interface HabitDao {
               OR (:sourceLabel = '분산형' AND (
                   source_label LIKE '%분산형%'
                   OR lower(source_label) LIKE '%gemini%'
+                  OR source_label LIKE '%제미나이%'
               ))
           )
         """,

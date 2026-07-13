@@ -2,13 +2,16 @@ package com.habittracker.data.local.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
-@Entity(tableName = "lotto_winning_stat")
+@Entity(
+    tableName = "lotto_winning_stat",
+    primaryKeys = ["source_label", "generation_version"],
+)
 data class LottoWinningStatEntity(
-    @PrimaryKey
     @ColumnInfo(name = "source_label")
     val sourceLabel: String,
+    @ColumnInfo(name = "generation_version")
+    val generationVersion: String,
     @ColumnInfo(name = "rank5_count")
     val rank5Count: Int,
     @ColumnInfo(name = "rank4_count")
@@ -25,4 +28,10 @@ data class LottoWinningStatEntity(
     val stylePassCount: Int,
     @ColumnInfo(name = "style_score_total")
     val styleScoreTotal: Int,
+    @ColumnInfo(name = "scored_ticket_count")
+    val scoredTicketCount: Int,
+    @ColumnInfo(name = "analysis_score_total")
+    val analysisScoreTotal: Double,
+    @ColumnInfo(name = "match_count_total")
+    val matchCountTotal: Int,
 )

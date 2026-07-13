@@ -622,7 +622,7 @@ private fun SavedNumbersSection(
 private fun normalizeSourceLabel(ticket: LottoTicketEntity): String {
     val source = ticket.sourceLabel.lowercase()
     return when {
-        source.contains("분산형") || source.contains("gemini") -> "분산형"
+        source.contains("분산형") || source.contains("gemini") || source.contains("제미나이") -> "분산형"
         source.contains("균형형") || source.contains("chatgpt") || source.contains("gpt") -> "균형형"
         else -> ticket.sourceLabel
     }
@@ -630,7 +630,10 @@ private fun normalizeSourceLabel(ticket: LottoTicketEntity): String {
 
 @Composable
 private fun SavedTicketCard(ticket: LottoTicketEntity) {
-    LottoNumbersCard(numbers = ticket.numbers())
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LottoNumbersCard(numbers = ticket.numbers())
+        SavedTicketAnalysisText(ticket)
+    }
 }
 
 @Composable
@@ -721,6 +724,7 @@ private fun RoundSavedTicketDeck(
                                                 )
                                             }
                                             LottoNumbersCard(numbers = ticket.numbers())
+                                            SavedTicketAnalysisText(ticket)
                                         }
                                     }
                                 }
@@ -928,19 +932,19 @@ private fun WinningStyleRateSummary(winningTypeStats: List<LottoWinningTypeStat>
         return
     }
 
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         winningTypeStats.forEach { stat ->
             val winningCount = totalWinningCount(stat)
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(text = "${stat.sourceLabel} 구매 대비 당첨률", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
-                Text(text = "${purchaseWinningRate(stat)}%", color = LottoTextStrongColor, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(text = statDisplayLabel(stat), color = LottoTextStrongColor, fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = "당첨 ${winningCount}/${stat.evaluatedTicketCount}건",
+                    text = "구매 대비 당첨 ${purchaseWinningRate(stat)}% · ${winningCount}/${stat.evaluatedTicketCount}건 · 평균 일치 ${"%.2f".format(stat.averageMatchCount)}개",
                     color = LottoTextMutedColor,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    text = "스타일 적합 ${stylePassRate(stat)}% · 통과 ${stat.stylePassCount}/${stat.evaluatedTicketCount}건 · 평균 ${stat.averageStyleScore}점",
+                    text = "저장 분석점수 ${stat.averageAnalysisScore?.let { "%.1f".format(it) } ?: "-"} · " +
+                        "스타일 적합 ${stylePassRate(stat)}% · 평균 ${stat.averageStyleScore}점",
                     color = LottoTextMutedColor,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -964,7 +968,10 @@ private fun WinningTypeTable(winningTypeStats: List<LottoWinningTypeStat>) {
         }
         winningTypeStats.forEach { stat ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text = stat.sourceLabel, modifier = Modifier.weight(1.2f), fontWeight = FontWeight.SemiBold)
+                Column(modifier = Modifier.weight(1.2f)) {
+                    Text(text = stat.sourceLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                    Text(text = stat.generationVersion, color = LottoTextMutedColor, style = MaterialTheme.typography.labelSmall)
+                }
                 ranks.forEach { rank ->
                     Text(text = "${stat.counts[rank] ?: 0}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
                 }
@@ -976,11 +983,40 @@ private fun WinningTypeTable(winningTypeStats: List<LottoWinningTypeStat>) {
 private fun stylePassRate(stat: LottoWinningTypeStat): Int =
     if (stat.evaluatedTicketCount == 0) 0 else (stat.stylePassCount * 100) / stat.evaluatedTicketCount
 
-private fun purchaseWinningRate(stat: LottoWinningTypeStat): Int =
-    if (stat.evaluatedTicketCount == 0) 0 else (totalWinningCount(stat) * 100) / stat.evaluatedTicketCount
+private fun purchaseWinningRate(stat: LottoWinningTypeStat): String =
+    if (stat.evaluatedTicketCount == 0) "0.0" else "%.1f".format(totalWinningCount(stat) * 100.0 / stat.evaluatedTicketCount)
 
 private fun totalWinningCount(stat: LottoWinningTypeStat): Int =
     stat.counts.values.sum()
+
+private fun statDisplayLabel(stat: LottoWinningTypeStat): String =
+    "${stat.sourceLabel} · ${stat.generationVersion}"
+
+@Composable
+private fun SavedTicketAnalysisText(ticket: LottoTicketEntity) {
+    val totalScore = ticket.analysisScore ?: return
+    val modeLabel = when (ticket.generationMode) {
+        "FAST" -> "빠른"
+        "BASIC" -> "기본"
+        "PRECISE" -> "정밀"
+        else -> ticket.generationMode
+    }
+    Text(
+        text = "분석 ${"%.1f".format(totalScore)} · 데이터 ${ticket.dataScore?.let { "%.1f".format(it) } ?: "-"} · " +
+            "패턴 ${ticket.patternScore?.let { "%.1f".format(it) } ?: "-"} · 구조 ${ticket.distributionScore?.let { "%.1f".format(it) } ?: "-"}",
+        color = LottoTextMutedColor,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        text = listOfNotNull(
+            modeLabel?.let { "$it 모드" },
+            ticket.recommendationRank?.let { "추천 ${it}위" },
+            ticket.generationVersion,
+        ).joinToString(" · "),
+        color = LottoTextMutedColor,
+        style = MaterialTheme.typography.labelSmall,
+    )
+}
 
 @Composable
 private fun StatMiniCard(title: String, value: String, modifier: Modifier = Modifier) {
