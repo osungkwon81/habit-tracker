@@ -118,7 +118,9 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
         item {
             AppHeroCard(
                 title = "화분 관리",
-                description = "물줄 날짜가 지난 화분은 체크 전까지 계속 목록에 남습니다.",
+                description = "물주기 예정일과 완료 상태를 관리합니다.",
+                icon = "♧",
+                eyebrow = "LIFE · PLANT",
                 action = {
                     AppPrimaryButton(
                         text = "화분 등록",
@@ -136,7 +138,6 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                AppSupportText("예정일이 오늘 이전이어도 완료 체크 전까지 계속 표시됩니다.")
                 if (uiState.duePlants.isEmpty()) {
                     AppEmptyCard("오늘 물줘야 할 화분이 없습니다.")
                 } else {
@@ -251,6 +252,8 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
             AppHeroCard(
                 title = if (uiState.selectedPlantId == null) "화분 등록" else "화분 수정",
                 description = "1개월은 30일 기준으로 다음 물주기 날짜를 계산합니다.",
+                icon = "♧",
+                eyebrow = "LIFE · PLANT",
                 action = {
                     AppSecondaryButton(
                         text = "목록으로",

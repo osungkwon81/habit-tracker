@@ -118,7 +118,9 @@ fun DailyEntryScreen(
         item {
             AppHeroCard(
                 title = "일일 기록",
-                description = null,
+                description = "날짜별 습관과 운동 기록을 입력합니다.",
+                icon = "✓",
+                eyebrow = "HABIT · DAILY",
                 action = {
                     onOpenAdmin?.let { openAdmin ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {

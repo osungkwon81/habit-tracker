@@ -1,0 +1,103 @@
+package com.habittracker.data.stock
+
+import com.habittracker.data.local.entity.StockOrderEntity
+import java.time.LocalDate
+import java.time.LocalDateTime
+
+enum class StockOrderStatus {
+    SUBMITTED,
+    PARTIALLY_FILLED,
+    FILLED,
+    CANCELED,
+    UNKNOWN,
+    REJECTED,
+}
+
+enum class StockOrderSource(val label: String) {
+    MANUAL("직접 주문"),
+    STOP_LOSS("손절"),
+    TAKE_PROFIT("익절"),
+    TRAILING_STOP("트레일링 스톱"),
+    TIME_EXIT("기간 청산"),
+    REBALANCE("리밸런싱"),
+}
+
+enum class StockExitRuleType(val label: String, val unit: String) {
+    STOP_LOSS("손절", "%"),
+    TAKE_PROFIT("익절", "%"),
+    TRAILING_STOP("고점 추적", "%"),
+    TIME_EXIT("보유 기간", "일"),
+}
+
+enum class StockRuleAction(val label: String) {
+    NOTIFY_ONLY("알림만"),
+    AUTO_SELL("자동 매도"),
+}
+
+data class KisBuyableQuantity(
+    val quantity: Long,
+    val amount: Long,
+)
+
+data class KisMarketIndex(
+    val code: String,
+    val name: String,
+    val currentValue: String,
+    val changeRatePercent: Double,
+)
+
+data class KisOrderExecution(
+    val orderNumber: String,
+    val productCode: String,
+    val productName: String,
+    val side: KisOrderSide,
+    val orderDate: LocalDate,
+    val orderTime: String,
+    val orderedQuantity: Long,
+    val filledQuantity: Long,
+    val filledAveragePrice: Long?,
+    val remainingQuantity: Long,
+    val canceledQuantity: Long,
+    val rejectedQuantity: Long,
+    val isCanceled: Boolean,
+)
+
+data class StockBuyLotRow(
+    val order: StockOrderEntity,
+    val currentPrice: Long?,
+    val estimatedReturnPercent: Double?,
+)
+
+data class StockRebalanceLine(
+    val productCode: String,
+    val productName: String,
+    val targetPercent: Double,
+    val currentPercent: Double,
+    val currentQuantity: Long,
+    val targetQuantity: Long,
+    val orderSide: KisOrderSide?,
+    val orderQuantity: Long,
+    val referencePrice: Long,
+)
+
+data class StockJournalAnalysis(
+    val filledBuyCount: Int,
+    val filledSellCount: Int,
+    val realizedTradeCount: Int,
+    val profitableTradeCount: Int,
+    val estimatedRealizedProfit: Long,
+    val winRatePercent: Double?,
+    val sourceCounts: Map<StockOrderSource, Int>,
+)
+
+data class StockAutomationNotice(
+    val title: String,
+    val message: String,
+    val productCode: String? = null,
+)
+
+data class StockAutomationCycleResult(
+    val checkedAt: LocalDateTime,
+    val notices: List<StockAutomationNotice>,
+    val skippedReason: String? = null,
+)

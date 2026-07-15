@@ -51,6 +51,14 @@ import com.habittracker.ui.plant.PlantScreen
 import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsScreen
 import com.habittracker.ui.stats.MonthlyStatsViewModel
+import com.habittracker.ui.stock.StockScreen
+import com.habittracker.ui.stock.StockAutomationScreen
+import com.habittracker.ui.stock.StockJournalScreen
+import com.habittracker.ui.stock.StockOrderScreen
+import com.habittracker.ui.stock.StockPortfolioScreen
+import com.habittracker.ui.stock.StockRebalanceScreen
+import com.habittracker.ui.stock.StockSettingsScreen
+import com.habittracker.ui.stock.StockViewModel
 import com.habittracker.ui.theme.HabitTrackerTheme
 import java.time.LocalDate
 
@@ -129,7 +137,7 @@ private fun HabitTrackerApp() {
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
                     onOpenDiary = { navController.navigate(AppDestination.DIARY.route) },
                     onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
-                    onOpenStats = { navController.navigate(AppDestination.STATS.route) },
+                    onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
                     onOpenCard = { navController.navigate(AppDestination.CARD.route) },
@@ -164,6 +172,42 @@ private fun HabitTrackerApp() {
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = AppViewModelFactory())
                 MonthlyStatsScreen(viewModel = viewModel, onOpenEntry = { navController.navigate(AppDestination.ENTRY.route) })
+            }
+            composable(AppDestination.STOCK.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockScreen(
+                    viewModel = viewModel,
+                    onOpenOrder = { navController.navigate(AppDestination.STOCK_ORDER.route) },
+                    onOpenPortfolio = { navController.navigate(AppDestination.STOCK_PORTFOLIO.route) },
+                    onOpenAutomation = { navController.navigate(AppDestination.STOCK_AUTOMATION.route) },
+                    onOpenRebalance = { navController.navigate(AppDestination.STOCK_REBALANCE.route) },
+                    onOpenJournal = { navController.navigate(AppDestination.STOCK_JOURNAL.route) },
+                    onOpenSettings = { navController.navigate(AppDestination.STOCK_SETTINGS.route) },
+                )
+            }
+            composable(AppDestination.STOCK_ORDER.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockOrderScreen(viewModel)
+            }
+            composable(AppDestination.STOCK_PORTFOLIO.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockPortfolioScreen(viewModel)
+            }
+            composable(AppDestination.STOCK_AUTOMATION.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockAutomationScreen(viewModel)
+            }
+            composable(AppDestination.STOCK_REBALANCE.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockRebalanceScreen(viewModel)
+            }
+            composable(AppDestination.STOCK_JOURNAL.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockJournalScreen(viewModel)
+            }
+            composable(AppDestination.STOCK_SETTINGS.route) {
+                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                StockSettingsScreen(viewModel)
             }
             composable(AppDestination.ADMIN.route) {
                 val viewModel: AdminViewModel = viewModel(factory = AppViewModelFactory())

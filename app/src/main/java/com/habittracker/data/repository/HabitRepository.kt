@@ -18,8 +18,14 @@ import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.LottoWinningStatEntity
 import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
+import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.data.local.entity.StockAutomationEventEntity
+import com.habittracker.data.local.entity.StockExitRuleEntity
+import com.habittracker.data.local.entity.StockOrderEntity
+import com.habittracker.data.local.entity.StockSafetyConfigEntity
+import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
@@ -32,14 +38,46 @@ import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoNumberGenerator
+import com.habittracker.data.lotto.LottoPerformanceAnalyzer
+import com.habittracker.data.lotto.LottoPerformanceSample
+import com.habittracker.data.lotto.LottoScorePerformance
+import com.habittracker.data.security.AndroidKeystoreStringCipher
+import com.habittracker.data.stock.KisApiConfig
+import com.habittracker.data.stock.KisBalanceStock
+import com.habittracker.data.stock.KisCashOrderDraft
+import com.habittracker.data.stock.KisDomesticStockClient
+import com.habittracker.data.stock.KisEnvironment
+import com.habittracker.data.stock.KisMarketCapStock
+import com.habittracker.data.stock.KisOrderSide
+import com.habittracker.data.stock.StockAutomationCycleResult
+import com.habittracker.data.stock.StockAutomationNotice
+import com.habittracker.data.stock.StockBuyLotRow
+import com.habittracker.data.stock.StockExitRuleType
+import com.habittracker.data.stock.StockJournalAnalysis
+import com.habittracker.data.stock.StockOrderSource
+import com.habittracker.data.stock.StockOrderStatus
+import com.habittracker.data.stock.StockRebalanceLine
+import com.habittracker.data.stock.StockRuleAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.MessageDigest
+import java.net.SocketTimeoutException
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.temporal.ChronoUnit
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 
 class HabitRepository(
@@ -55,11 +93,20 @@ class HabitRepository(
         const val taskColorPrefsName = "task-color-prefs"
         const val cardPrefsName = "card-prefs"
         const val lottoPrefsName = "lotto-prefs"
+        const val kisMarketCapPrefsName = "kis-market-cap-prefs"
+        const val kisMarketCalendarPrefsName = "kis-market-calendar-prefs"
+        const val kisMarketCapCacheDateKey = "cache-date"
+        const val kisMarketCapCacheItemsKey = "cache-items"
+        const val kisMarketOpenDateKey = "market-open-date"
+        const val kisMarketOpenValueKey = "market-open-value"
         const val cardPaymentDayKey = "card-payment-day"
         const val cardSeedVersionKey = "card-seed-version"
         const val currentCardSeedVersion = 2
         const val lottoStatVersionKey = "lotto-winning-stat-version"
         const val currentLottoStatVersion = 5
+        const val stockSafetyConfigId = 1
+        const val stockLimitOrderCode = "00"
+        const val stockMarketOrderCode = "01"
     }
 
     val managedTaskValueTypes: List<ValueType> = listOf(ValueType.NUMBER, ValueType.EXERCISE)
@@ -67,6 +114,14 @@ class HabitRepository(
     private val taskColorPrefs = context.getSharedPreferences(taskColorPrefsName, Context.MODE_PRIVATE)
     private val cardPrefs = context.getSharedPreferences(cardPrefsName, Context.MODE_PRIVATE)
     private val lottoPrefs = context.getSharedPreferences(lottoPrefsName, Context.MODE_PRIVATE)
+    private val kisMarketCapPrefs = context.getSharedPreferences(kisMarketCapPrefsName, Context.MODE_PRIVATE)
+    private val kisMarketCalendarPrefs = context.getSharedPreferences(kisMarketCalendarPrefsName, Context.MODE_PRIVATE)
+    private val kisMarketCapCacheMutex = Mutex()
+    private val kisAccessTokenMutex = Mutex()
+    private val stockOrderMutex = Mutex()
+    private val stockAutomationMutex = Mutex()
+    private val kisConfigCipher = AndroidKeystoreStringCipher()
+    private val kisDomesticStockClient = KisDomesticStockClient()
 
     private suspend fun <T> persistChange(block: suspend () -> T): T = withContext(NonCancellable + Dispatchers.IO) {
         val result = block()
@@ -85,6 +140,30 @@ class HabitRepository(
 
     fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>> =
         habitDao.observeAllSavedLottoTickets()
+
+    fun observeLottoScorePerformances(): Flow<List<LottoScorePerformance>> = combine(
+        habitDao.observeScoredPurchasedLottoTickets(),
+        habitDao.observeAllLottoDraws(),
+    ) { tickets, draws ->
+        val drawMap = draws.associateBy(LottoDrawEntity::roundNo)
+        val samples = tickets.mapNotNull { ticket ->
+            val roundNo = ticket.note?.let(::extractLottoRoundNo) ?: return@mapNotNull null
+            val draw = drawMap[roundNo] ?: return@mapNotNull null
+            val totalScore = ticket.analysisScore ?: return@mapNotNull null
+            LottoPerformanceSample(
+                sourceLabel = normalizeWinningSource(ticket.sourceLabel),
+                generationVersion = ticket.generationVersion,
+                totalScore = totalScore,
+                dataScore = ticket.dataScore,
+                patternScore = ticket.patternScore,
+                distributionScore = ticket.distributionScore,
+                avoidanceScore = ticket.avoidanceScore,
+                validationScore = ticket.validationScore,
+                matchCount = ticket.numbers().count(draw.numbers()::contains),
+            )
+        }
+        LottoPerformanceAnalyzer.analyze(samples)
+    }
 
     fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
@@ -159,6 +238,782 @@ class HabitRepository(
 
     suspend fun getPlant(plantId: Long): PlantEntity? =
         habitDao.getPlantById(plantId)
+
+    suspend fun getKisApiConfig(environment: KisEnvironment): KisApiConfig? = withContext(Dispatchers.IO) {
+        habitDao.getKisApiConfig(environment.apiValue)?.toKisApiConfig(kisConfigCipher)
+    }
+
+    suspend fun hasKisApiConfig(environment: KisEnvironment): Boolean = withContext(Dispatchers.IO) {
+        habitDao.hasKisApiConfig(environment.apiValue)
+    }
+
+    suspend fun getKisAccessTokenExpiredAt(environment: KisEnvironment): LocalDateTime? = withContext(Dispatchers.IO) {
+        habitDao.getKisAccessTokenExpiredAt(environment.apiValue)
+    }
+
+    suspend fun getKisBalanceStocks(): List<KisBalanceStock> = withContext(Dispatchers.IO) {
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        kisDomesticStockClient.getBalance(config, accessToken)
+    }
+
+    suspend fun getKisMarketCapStocks(): List<KisMarketCapStock> = withContext(Dispatchers.IO) {
+        kisMarketCapCacheMutex.withLock {
+            val today = LocalDate.now()
+            readKisMarketCapCache(today).takeIf { it.isNotEmpty() }
+                ?: run {
+                    val (config, accessToken) = getKisConfigAndAccessToken()
+                    kisDomesticStockClient.getMarketCapRanking(config, accessToken).also { stocks ->
+                        if (stocks.isNotEmpty()) saveKisMarketCapCache(today, stocks)
+                    }
+                }
+        }
+    }
+
+    suspend fun isKisMarketOpenDay(date: LocalDate): Boolean = withContext(Dispatchers.IO) {
+        if (kisMarketCalendarPrefs.getString(kisMarketOpenDateKey, null) == date.toString()) {
+            return@withContext kisMarketCalendarPrefs.getBoolean(kisMarketOpenValueKey, false)
+        }
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        kisDomesticStockClient.isMarketOpenDay(config, accessToken, date).also { isOpen ->
+            kisMarketCalendarPrefs.edit()
+                .putString(kisMarketOpenDateKey, date.toString())
+                .putBoolean(kisMarketOpenValueKey, isOpen)
+                .apply()
+        }
+    }
+
+    fun observeStockOrders(): Flow<List<StockOrderEntity>> = habitDao.observeStockOrders()
+
+    fun observeStockExitRules(): Flow<List<StockExitRuleEntity>> = habitDao.observeStockExitRules()
+
+    fun observeStockTargetAllocations(): Flow<List<StockTargetAllocationEntity>> =
+        habitDao.observeStockTargetAllocations()
+
+    fun observeStockSafetyConfig(): Flow<StockSafetyConfigEntity?> = habitDao.observeStockSafetyConfig()
+
+    fun observeStockAutomationEvents(limit: Int = 100): Flow<List<StockAutomationEventEntity>> =
+        habitDao.observeStockAutomationEvents(limit)
+
+    suspend fun getStockSafetyConfig(): StockSafetyConfigEntity = withContext(Dispatchers.IO) {
+        habitDao.getStockSafetyConfig() ?: StockSafetyConfigEntity(id = stockSafetyConfigId)
+    }
+
+    suspend fun saveStockSafetyConfig(config: StockSafetyConfigEntity) {
+        if (config.monitoringEnabled) {
+            require(config.monitorIntervalMinutes?.let { it > 0 } == true) { "모니터링 주기를 1분 이상 입력해 주세요." }
+        }
+        if (config.crashGuardEnabled) {
+            require(config.crashBenchmarkCode in setOf("0001", "1001", "2001")) { "급락 감시 기준 지수를 선택해 주세요." }
+            require(config.crashThresholdPercent?.let { it > 0.0 } == true) { "급락 차단 기준을 0보다 크게 입력해 주세요." }
+        }
+        require(config.maxOrderAmount == null || config.maxOrderAmount > 0L) { "1회 최대 주문금액은 0보다 커야 합니다." }
+        require(config.dailyBuyLimit == null || config.dailyBuyLimit > 0L) { "하루 최대 매수금액은 0보다 커야 합니다." }
+        persistChange {
+            habitDao.upsertStockSafetyConfig(config.copy(id = stockSafetyConfigId, updatedAt = LocalDateTime.now()))
+        }
+    }
+
+    suspend fun setStockMonitoringEnabled(enabled: Boolean) {
+        val current = getStockSafetyConfig()
+        saveStockSafetyConfig(current.copy(monitoringEnabled = enabled))
+    }
+
+    suspend fun setGlobalStockOrderBlock(blocked: Boolean, reason: String? = null) {
+        val current = getStockSafetyConfig()
+        persistChange {
+            habitDao.upsertStockSafetyConfig(
+                current.copy(
+                    globalOrderBlocked = blocked,
+                    blockReason = reason?.trim()?.takeIf(String::isNotBlank),
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+        saveStockAutomationEvent(
+            level = if (blocked) "WARN" else "INFO",
+            eventType = if (blocked) "ORDER_BLOCKED" else "ORDER_BLOCK_RELEASED",
+            message = if (blocked) "전체 주문을 차단했습니다. ${reason.orEmpty()}" else "사용자가 전체 주문 차단을 해제했습니다.",
+        )
+    }
+
+    suspend fun saveStockExitRule(
+        ruleId: Long?,
+        productCode: String,
+        productName: String,
+        ruleType: StockExitRuleType,
+        triggerValue: Double,
+        sellQuantityPercent: Double,
+        actionMode: StockRuleAction,
+        orderDivisionCode: String,
+    ) {
+        val sanitizedCode = productCode.trim()
+        require(sanitizedCode.length in 6..7) { "종목코드를 선택해 주세요." }
+        require(triggerValue > 0.0) { "발동 기준은 0보다 커야 합니다." }
+        if (actionMode == StockRuleAction.AUTO_SELL) {
+            require(sellQuantityPercent > 0.0 && sellQuantityPercent <= 100.0) {
+                "매도 비율은 0 초과 100 이하로 입력해 주세요."
+            }
+        }
+        require(orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) { "자동 매도 주문 방식은 지정가 또는 시장가만 사용할 수 있습니다." }
+        val now = LocalDateTime.now()
+        persistChange {
+            habitDao.upsertStockExitRule(
+                StockExitRuleEntity(
+                    id = ruleId ?: 0,
+                    productCode = sanitizedCode,
+                    productName = productName.trim().ifBlank { sanitizedCode },
+                    ruleType = ruleType.name,
+                    triggerValue = triggerValue,
+                    sellQuantityPercent = if (actionMode == StockRuleAction.AUTO_SELL) sellQuantityPercent else 0.0,
+                    actionMode = actionMode.name,
+                    orderDivisionCode = orderDivisionCode,
+                    referenceHighPrice = null,
+                    enabled = true,
+                    lastTriggeredAt = null,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+        }
+    }
+
+    suspend fun setStockExitRuleEnabled(rule: StockExitRuleEntity, enabled: Boolean) {
+        persistChange {
+            habitDao.updateStockExitRule(
+                rule.copy(
+                    enabled = enabled,
+                    referenceHighPrice = if (enabled) null else rule.referenceHighPrice,
+                    lastTriggeredAt = if (enabled) null else rule.lastTriggeredAt,
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteStockExitRule(ruleId: Long) {
+        persistChange { habitDao.deleteStockExitRule(ruleId) }
+    }
+
+    suspend fun saveStockTargetAllocation(productCode: String, productName: String, targetPercent: Double) {
+        val sanitizedCode = productCode.trim()
+        require(sanitizedCode.length in 6..7) { "종목코드를 선택해 주세요." }
+        require(targetPercent > 0.0 && targetPercent <= 100.0) { "목표 비중은 0 초과 100 이하로 입력해 주세요." }
+        val others = habitDao.getEnabledStockTargetAllocations().filterNot { it.productCode == sanitizedCode }
+        require(others.sumOf(StockTargetAllocationEntity::targetPercent) + targetPercent <= 100.0001) {
+            "목표 비중 합계는 100%를 초과할 수 없습니다."
+        }
+        persistChange {
+            habitDao.upsertStockTargetAllocation(
+                StockTargetAllocationEntity(
+                    productCode = sanitizedCode,
+                    productName = productName.trim().ifBlank { sanitizedCode },
+                    targetPercent = targetPercent,
+                    enabled = true,
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
+    suspend fun deleteStockTargetAllocation(productCode: String) {
+        persistChange { habitDao.deleteStockTargetAllocation(productCode) }
+    }
+
+    suspend fun placeKisCashOrder(
+        draft: KisCashOrderDraft,
+        productName: String,
+        source: StockOrderSource = StockOrderSource.MANUAL,
+        requireAutomaticEnabled: Boolean = false,
+    ): StockOrderEntity = withContext(Dispatchers.IO) {
+        stockOrderMutex.withLock {
+            val quantity = draft.orderQuantity.toLongOrNull()
+            require(quantity?.let { it > 0L } == true) { "주문 수량은 1주 이상이어야 합니다." }
+            val requestedPrice = draft.orderUnitPrice.toLongOrNull()
+            require(requestedPrice?.let { it >= 0L } == true) { "주문단가를 확인해 주세요." }
+            require(draft.productCode.length in 6..7) { "종목코드를 확인해 주세요." }
+            require(draft.orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) {
+                "주문 방식은 지정가 또는 시장가만 사용할 수 있습니다."
+            }
+            if (draft.orderDivisionCode == stockLimitOrderCode) {
+                require(requestedPrice > 0L) { "지정가는 1원 이상으로 입력해 주세요." }
+            } else {
+                require(requestedPrice == 0L) { "시장가 주문단가는 0이어야 합니다." }
+            }
+
+            var safety = getStockSafetyConfig()
+            require(!safety.globalOrderBlocked) { "전체 주문이 차단되어 있습니다. ${safety.blockReason.orEmpty()}" }
+            if (requireAutomaticEnabled) {
+                require(safety.automaticOrderEnabled) { "자동 주문 실행이 꺼져 있습니다." }
+            }
+            require(habitDao.countUnfinishedStockOrders(draft.productCode, draft.side.name) == 0) {
+                "같은 종목의 ${draft.side.label} 미완료 주문이 있습니다. 체결 상태를 먼저 동기화해 주세요."
+            }
+
+            val (config, accessToken) = getKisConfigAndAccessToken()
+            safety = refreshCrashGuard(safety, config, accessToken)
+            require(!safety.globalOrderBlocked) { "급락 안전장치로 전체 주문이 차단되었습니다. ${safety.blockReason.orEmpty()}" }
+
+            val currentPrice = kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode)
+                .currentPrice.toLongOrNull()
+                ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
+            val estimatedUnitPrice = if (draft.orderDivisionCode == stockLimitOrderCode) requestedPrice else currentPrice
+            val estimatedAmount = Math.multiplyExact(quantity, estimatedUnitPrice)
+            safety.maxOrderAmount?.let { limit ->
+                require(estimatedAmount <= limit) { "예상 주문금액이 1회 최대 주문금액을 초과합니다. ($estimatedAmount > $limit)" }
+            }
+
+            if (draft.side == KisOrderSide.BUY) {
+                val dailyUsed = habitDao.getSubmittedBuyAmount(LocalDate.now())
+                safety.dailyBuyLimit?.let { limit ->
+                    require(dailyUsed + estimatedAmount <= limit) {
+                        "오늘 누적 예상 매수금액이 하루 한도를 초과합니다. (${dailyUsed + estimatedAmount} > $limit)"
+                    }
+                }
+                val buyable = kisDomesticStockClient.getBuyableQuantity(
+                    config = config,
+                    accessToken = accessToken,
+                    productCode = draft.productCode,
+                    unitPrice = draft.orderUnitPrice,
+                    orderDivisionCode = if (draft.orderDivisionCode == stockLimitOrderCode) {
+                        stockMarketOrderCode
+                    } else {
+                        draft.orderDivisionCode
+                    },
+                )
+                require(quantity <= buyable.quantity) {
+                    "매수가능수량을 초과합니다. (요청=${quantity}주, 가능=${buyable.quantity}주)"
+                }
+            } else {
+                val sellable = kisDomesticStockClient.getSellableQuantity(config, accessToken, draft.productCode)
+                    .quantity.toLongOrNull() ?: 0L
+                require(quantity <= sellable) {
+                    "매도가능수량을 초과합니다. (요청=${quantity}주, 가능=${sellable}주)"
+                }
+            }
+
+            val now = LocalDateTime.now()
+            val result = try {
+                kisDomesticStockClient.placeCashOrder(config, accessToken, draft)
+            } catch (timeout: SocketTimeoutException) {
+                val unknownOrder = StockOrderEntity(
+                    orderNumber = "UNKNOWN-${System.currentTimeMillis()}",
+                    orderDate = now.toLocalDate(),
+                    orderTime = now.format(java.time.format.DateTimeFormatter.ofPattern("HHmmss")),
+                    side = draft.side.name,
+                    productCode = draft.productCode,
+                    productName = productName.trim().ifBlank { draft.productCode },
+                    requestedQuantity = quantity,
+                    requestedUnitPrice = requestedPrice,
+                    referencePrice = currentPrice,
+                    orderDivisionCode = draft.orderDivisionCode,
+                    exchangeCode = draft.exchangeIdDivisionCode,
+                    source = source.name,
+                    status = StockOrderStatus.UNKNOWN.name,
+                    message = "주문 응답 시간 초과. KIS 주문내역 확인 전 재주문 금지",
+                    createdAt = now,
+                    updatedAt = now,
+                )
+                persistChange { habitDao.insertStockOrder(unknownOrder) }
+                saveStockAutomationEvent(
+                    level = "ERROR",
+                    eventType = "ORDER_UNKNOWN",
+                    productCode = draft.productCode,
+                    message = "${productName.ifBlank { draft.productCode }} ${draft.side.label} 주문 응답이 시간 초과되었습니다. KIS 주문내역을 직접 확인해 주세요.",
+                )
+                throw IllegalStateException("주문 응답이 시간 초과되었습니다. 중복 주문 방지를 위해 KIS 주문내역을 확인하기 전에는 재주문하지 마세요.", timeout)
+            }
+            val order = StockOrderEntity(
+                orderNumber = result.orderNumber,
+                orderDate = now.toLocalDate(),
+                orderTime = result.orderTime,
+                side = draft.side.name,
+                productCode = draft.productCode,
+                productName = productName.trim().ifBlank { draft.productCode },
+                requestedQuantity = quantity,
+                requestedUnitPrice = requestedPrice,
+                referencePrice = currentPrice,
+                orderDivisionCode = draft.orderDivisionCode,
+                exchangeCode = draft.exchangeIdDivisionCode,
+                source = source.name,
+                status = StockOrderStatus.SUBMITTED.name,
+                message = result.message,
+                createdAt = now,
+                updatedAt = now,
+            )
+            persistChange { habitDao.insertStockOrder(order) }
+            saveStockAutomationEvent(
+                level = "INFO",
+                eventType = "ORDER_SUBMITTED",
+                productCode = draft.productCode,
+                message = "${order.productName} ${draft.side.label} ${quantity}주 주문을 접수했습니다. (주문번호=${result.orderNumber})",
+            )
+            order
+        }
+    }
+
+    suspend fun syncStockOrderExecutions(): Int = withContext(Dispatchers.IO) {
+        stockOrderMutex.withLock {
+            val unfinished = habitDao.getUnfinishedStockOrders().filterNot { it.orderNumber.startsWith("UNKNOWN-") }
+            if (unfinished.isEmpty()) return@withLock 0
+            val (config, accessToken) = getKisConfigAndAccessToken()
+            var updatedCount = 0
+            unfinished.forEach { order ->
+                val execution = kisDomesticStockClient.getOrderExecutions(
+                    config = config,
+                    accessToken = accessToken,
+                    startDate = order.orderDate,
+                    endDate = order.orderDate,
+                    orderNumber = order.orderNumber,
+                ).firstOrNull { it.orderNumber == order.orderNumber && it.orderDate == order.orderDate }
+                    ?: return@forEach
+                applyStockExecution(
+                    order = order,
+                    filledQuantity = execution.filledQuantity,
+                    filledAveragePrice = execution.filledAveragePrice,
+                    canceledQuantity = execution.canceledQuantity,
+                    rejectedQuantity = execution.rejectedQuantity,
+                    isCanceled = execution.isCanceled,
+                )
+                updatedCount += 1
+            }
+            updatedCount
+        }
+    }
+
+    suspend fun resolveUnknownStockOrder(orderId: Long) {
+        val order = habitDao.getStockOrders().firstOrNull { it.id == orderId }
+            ?: throw IllegalArgumentException("주문 기록을 찾을 수 없습니다. (id=$orderId)")
+        require(order.status == StockOrderStatus.UNKNOWN.name) { "확인 대기 주문이 아닙니다." }
+        persistChange {
+            habitDao.updateStockOrder(
+                order.copy(
+                    status = StockOrderStatus.REJECTED.name,
+                    message = "사용자가 KIS 주문내역 확인 후 미접수로 처리",
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
+    suspend fun getStockBuyLotRows(): List<StockBuyLotRow> = withContext(Dispatchers.IO) {
+        val orders = habitDao.getStockOrders().filter { it.side == KisOrderSide.BUY.name && it.filledQuantity > 0L }
+        if (orders.isEmpty()) return@withContext emptyList()
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        val currentPrices = orders.map(StockOrderEntity::productCode).distinct().associateWith { productCode ->
+            runCatching { kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode).currentPrice.toLong() }
+                .getOrNull()
+        }
+        orders.map { order ->
+            val buyPrice = order.filledAveragePrice ?: order.referencePrice
+            val currentPrice = currentPrices[order.productCode]
+            val returnPercent = currentPrice?.takeIf { buyPrice > 0L }
+                ?.let { (it - buyPrice).toDouble() / buyPrice.toDouble() * 100.0 }
+            StockBuyLotRow(order, currentPrice, returnPercent)
+        }
+    }
+
+    suspend fun calculateStockRebalance(): List<StockRebalanceLine> = withContext(Dispatchers.IO) {
+        val targets = habitDao.getEnabledStockTargetAllocations()
+        require(targets.isNotEmpty()) { "목표 비중을 먼저 등록해 주세요." }
+        require(targets.sumOf(StockTargetAllocationEntity::targetPercent) <= 100.0001) { "목표 비중 합계가 100%를 초과합니다." }
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        val balances = kisDomesticStockClient.getBalance(config, accessToken)
+        val managedCodes = targets.map(StockTargetAllocationEntity::productCode).toSet()
+        val codes = managedCodes.toList()
+        val prices = codes.associateWith { code ->
+            kisDomesticStockClient.getCurrentPrice(config, accessToken, code).currentPrice.toLongOrNull()
+                ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=$code)")
+        }
+        val totalValue = balances.filter { it.productCode in managedCodes }.sumOf { balance ->
+            (balance.quantity.toLongOrNull() ?: 0L) * prices.getValue(balance.productCode)
+        }
+        require(totalValue > 0L) { "목표로 등록한 종목의 보유 평가액이 없어 리밸런싱을 계산할 수 없습니다." }
+        val balanceMap = balances.associateBy(KisBalanceStock::productCode)
+        targets.map { target ->
+            val price = prices.getValue(target.productCode)
+            val currentQuantity = balanceMap[target.productCode]?.quantity?.toLongOrNull() ?: 0L
+            val currentValue = currentQuantity * price
+            val currentPercent = currentValue.toDouble() / totalValue.toDouble() * 100.0
+            val targetQuantity = floor((totalValue * target.targetPercent / 100.0) / price.toDouble()).toLong()
+            val difference = targetQuantity - currentQuantity
+            StockRebalanceLine(
+                productCode = target.productCode,
+                productName = target.productName,
+                targetPercent = target.targetPercent,
+                currentPercent = currentPercent,
+                currentQuantity = currentQuantity,
+                targetQuantity = targetQuantity,
+                orderSide = when {
+                    difference > 0L -> KisOrderSide.BUY
+                    difference < 0L -> KisOrderSide.SELL
+                    else -> null
+                },
+                orderQuantity = abs(difference),
+                referencePrice = price,
+            )
+        }
+    }
+
+    suspend fun executeStockRebalanceLine(line: StockRebalanceLine): StockOrderEntity {
+        val side = line.orderSide ?: throw IllegalArgumentException("주문이 필요하지 않은 리밸런싱 항목입니다.")
+        require(line.orderQuantity > 0L) { "리밸런싱 주문 수량이 없습니다." }
+        return placeKisCashOrder(
+            draft = KisCashOrderDraft(
+                side = side,
+                productCode = line.productCode,
+                orderDivisionCode = stockLimitOrderCode,
+                orderQuantity = line.orderQuantity.toString(),
+                orderUnitPrice = line.referencePrice.toString(),
+                exchangeIdDivisionCode = "KRX",
+                sellType = "01",
+                conditionPrice = "",
+            ),
+            productName = line.productName,
+            source = StockOrderSource.REBALANCE,
+        )
+    }
+
+    suspend fun getStockJournalAnalysis(): StockJournalAnalysis = withContext(Dispatchers.IO) {
+        val orders = habitDao.getStockOrders()
+        val buys = orders.filter { it.side == KisOrderSide.BUY.name && it.filledQuantity > 0L }
+        val sells = orders.filter { it.side == KisOrderSide.SELL.name && it.appliedFilledQuantity > 0L }
+        val profitable = sells.count { (it.estimatedRealizedProfit ?: 0L) > 0L }
+        val sourceCounts = orders.filter { it.filledQuantity > 0L }
+            .mapNotNull { order -> StockOrderSource.values().firstOrNull { it.name == order.source } }
+            .groupingBy { it }
+            .eachCount()
+        StockJournalAnalysis(
+            filledBuyCount = buys.size,
+            filledSellCount = sells.size,
+            realizedTradeCount = sells.size,
+            profitableTradeCount = profitable,
+            estimatedRealizedProfit = sells.sumOf { it.estimatedRealizedProfit ?: 0L },
+            winRatePercent = if (sells.isNotEmpty()) profitable.toDouble() / sells.size.toDouble() * 100.0 else null,
+            sourceCounts = sourceCounts,
+        )
+    }
+
+    suspend fun runStockAutomationCycle(): StockAutomationCycleResult = withContext(Dispatchers.IO) {
+        stockAutomationMutex.withLock {
+            val notices = mutableListOf<StockAutomationNotice>()
+            var safety = getStockSafetyConfig()
+            if (!safety.monitoringEnabled) {
+                return@withLock StockAutomationCycleResult(LocalDateTime.now(), emptyList())
+            }
+            val marketNow = ZonedDateTime.now(ZoneId.of("Asia/Seoul"))
+            val marketDate = marketNow.toLocalDate()
+            val marketTime = marketNow.toLocalTime()
+            if (
+                marketDate.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) ||
+                marketTime < LocalTime.of(9, 0) ||
+                marketTime >= LocalTime.of(15, 30)
+            ) {
+                return@withLock StockAutomationCycleResult(
+                    checkedAt = marketNow.toLocalDateTime(),
+                    notices = emptyList(),
+                    skippedReason = "정규장 09:00~15:30 외에는 자동화 규칙을 확인하지 않습니다.",
+                )
+            }
+            if (!isKisMarketOpenDay(marketDate)) {
+                return@withLock StockAutomationCycleResult(
+                    checkedAt = marketNow.toLocalDateTime(),
+                    notices = emptyList(),
+                    skippedReason = "KIS 휴장일이므로 자동화 규칙을 확인하지 않습니다.",
+                )
+            }
+            val (config, accessToken) = getKisConfigAndAccessToken()
+            val wasBlocked = safety.globalOrderBlocked
+            safety = refreshCrashGuard(safety, config, accessToken)
+            if (safety.globalOrderBlocked) {
+                if (!wasBlocked) {
+                    notices += StockAutomationNotice(
+                        title = "급락 안전장치 발동",
+                        message = "${safety.blockReason.orEmpty()} 전체 주문을 차단했습니다.",
+                    )
+                }
+                return@withLock StockAutomationCycleResult(LocalDateTime.now(), notices)
+            }
+
+            val rulesByProduct = habitDao.getEnabledStockExitRules().groupBy(StockExitRuleEntity::productCode)
+            if (rulesByProduct.isEmpty()) {
+                return@withLock StockAutomationCycleResult(LocalDateTime.now(), emptyList())
+            }
+            val balanceMap = kisDomesticStockClient.getBalance(config, accessToken).associateBy(KisBalanceStock::productCode)
+            for ((productCode, rules) in rulesByProduct) {
+                val balance = balanceMap[productCode] ?: continue
+                val holdingQuantity = balance.quantity.toLongOrNull() ?: continue
+                if (holdingQuantity <= 0L) continue
+                val averagePrice = balance.averagePrice.toDoubleOrNull()?.takeIf { it > 0.0 } ?: continue
+                val currentPrice = try {
+                    kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode).currentPrice.toLong()
+                } catch (error: Exception) {
+                    saveStockAutomationEvent(
+                        level = "ERROR",
+                        eventType = "PRICE_CHECK_FAILED",
+                        productCode = productCode,
+                        message = "${balance.productName} 현재가 확인에 실패했습니다. ${error.message.orEmpty()}",
+                    )
+                    continue
+                }
+                val returnPercent = (currentPrice.toDouble() - averagePrice) / averagePrice * 100.0
+                var autoOrderSubmitted = false
+                for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
+                    var rule = storedRule
+                    val ruleType = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType } ?: continue
+                    if (ruleType == StockExitRuleType.TRAILING_STOP) {
+                        val newHigh = max(rule.referenceHighPrice ?: currentPrice, currentPrice)
+                        if (newHigh != rule.referenceHighPrice) {
+                            rule = rule.copy(referenceHighPrice = newHigh, updatedAt = LocalDateTime.now())
+                            persistChange { habitDao.updateStockExitRule(rule) }
+                        }
+                    }
+                    val triggered = when (ruleType) {
+                        StockExitRuleType.STOP_LOSS -> returnPercent <= -rule.triggerValue
+                        StockExitRuleType.TAKE_PROFIT -> returnPercent >= rule.triggerValue
+                        StockExitRuleType.TRAILING_STOP -> {
+                            val high = rule.referenceHighPrice ?: currentPrice
+                            currentPrice.toDouble() <= high.toDouble() * (1.0 - rule.triggerValue / 100.0)
+                        }
+                        StockExitRuleType.TIME_EXIT -> {
+                            val oldestBuyDate = habitDao.getOldestOpenStockBuyDate(productCode)
+                            oldestBuyDate != null && ChronoUnit.DAYS.between(oldestBuyDate, LocalDate.now()) >= rule.triggerValue.toLong()
+                        }
+                    }
+                    if (!triggered) continue
+
+                    val triggerMessage = when (ruleType) {
+                        StockExitRuleType.STOP_LOSS -> "손절 기준 ${rule.triggerValue}% 도달 (현재 ${"%.2f".format(returnPercent)}%)"
+                        StockExitRuleType.TAKE_PROFIT -> "익절 기준 ${rule.triggerValue}% 도달 (현재 ${"%.2f".format(returnPercent)}%)"
+                        StockExitRuleType.TRAILING_STOP -> "고점 ${rule.referenceHighPrice}원 대비 ${rule.triggerValue}% 하락"
+                        StockExitRuleType.TIME_EXIT -> "보유 기간 ${rule.triggerValue.toLong()}일 도달"
+                    }
+                    val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode } ?: StockRuleAction.NOTIFY_ONLY
+                    var noticeMessage = "${balance.productName}: $triggerMessage"
+                    if (action == StockRuleAction.AUTO_SELL) {
+                        val sellQuantity = floor(holdingQuantity * rule.sellQuantityPercent / 100.0)
+                            .toLong()
+                            .coerceAtLeast(1L)
+                            .coerceAtMost(holdingQuantity)
+                        if (!safety.automaticOrderEnabled) {
+                            noticeMessage += " · 자동 주문이 꺼져 있어 주문하지 않았습니다."
+                        } else if (sellQuantity <= 0L) {
+                            noticeMessage += " · 계산된 매도 수량이 0주라 주문하지 않았습니다."
+                        } else {
+                            val source = when (ruleType) {
+                                StockExitRuleType.STOP_LOSS -> StockOrderSource.STOP_LOSS
+                                StockExitRuleType.TAKE_PROFIT -> StockOrderSource.TAKE_PROFIT
+                                StockExitRuleType.TRAILING_STOP -> StockOrderSource.TRAILING_STOP
+                                StockExitRuleType.TIME_EXIT -> StockOrderSource.TIME_EXIT
+                            }
+                            runCatching {
+                                placeKisCashOrder(
+                                    draft = KisCashOrderDraft(
+                                        side = KisOrderSide.SELL,
+                                        productCode = productCode,
+                                        orderDivisionCode = rule.orderDivisionCode,
+                                        orderQuantity = sellQuantity.toString(),
+                                        orderUnitPrice = if (rule.orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
+                                        exchangeIdDivisionCode = "KRX",
+                                        sellType = "01",
+                                        conditionPrice = "",
+                                    ),
+                                    productName = balance.productName,
+                                    source = source,
+                                    requireAutomaticEnabled = true,
+                                )
+                            }.onSuccess { order ->
+                                noticeMessage += " · ${sellQuantity}주 주문 접수 (${order.orderNumber})"
+                                autoOrderSubmitted = true
+                            }.onFailure { error ->
+                                noticeMessage += " · 주문 실패: ${error.message.orEmpty()}"
+                            }
+                        }
+                    }
+                    notices += StockAutomationNotice(
+                        title = "${ruleType.label} 알림",
+                        message = noticeMessage,
+                        productCode = productCode,
+                    )
+                    saveStockAutomationEvent(
+                        level = if (noticeMessage.contains("실패")) "ERROR" else "WARN",
+                        eventType = "EXIT_RULE_TRIGGERED",
+                        productCode = productCode,
+                        message = noticeMessage,
+                    )
+                    persistChange {
+                        habitDao.updateStockExitRule(
+                            rule.copy(
+                                enabled = false,
+                                lastTriggeredAt = LocalDateTime.now(),
+                                updatedAt = LocalDateTime.now(),
+                            ),
+                        )
+                    }
+                    if (autoOrderSubmitted) break
+                }
+            }
+            StockAutomationCycleResult(LocalDateTime.now(), notices)
+        }
+    }
+
+    private suspend fun refreshCrashGuard(
+        safety: StockSafetyConfigEntity,
+        config: KisApiConfig,
+        accessToken: String,
+    ): StockSafetyConfigEntity {
+        if (safety.globalOrderBlocked || !safety.crashGuardEnabled) return safety
+        val benchmarkCode = safety.crashBenchmarkCode ?: return safety
+        val threshold = safety.crashThresholdPercent ?: return safety
+        val index = kisDomesticStockClient.getIndexPrice(config, accessToken, benchmarkCode)
+        if (index.changeRatePercent > -threshold) return safety
+        val reason = "${index.name} 전일 대비 ${"%.2f".format(index.changeRatePercent)}%로 급락 기준 -${threshold}% 도달"
+        val blocked = safety.copy(
+            globalOrderBlocked = true,
+            blockReason = reason,
+            updatedAt = LocalDateTime.now(),
+        )
+        persistChange { habitDao.upsertStockSafetyConfig(blocked) }
+        saveStockAutomationEvent(
+            level = "WARN",
+            eventType = "CRASH_GUARD_TRIGGERED",
+            message = "$reason. 전체 주문을 차단했습니다.",
+        )
+        return blocked
+    }
+
+    private suspend fun applyStockExecution(
+        order: StockOrderEntity,
+        filledQuantity: Long,
+        filledAveragePrice: Long?,
+        canceledQuantity: Long,
+        rejectedQuantity: Long,
+        isCanceled: Boolean,
+    ) {
+        val normalizedFilledQuantity = filledQuantity.coerceAtLeast(0L).coerceAtMost(order.requestedQuantity)
+        val status = when {
+            rejectedQuantity > 0L && normalizedFilledQuantity == 0L -> StockOrderStatus.REJECTED
+            isCanceled || canceledQuantity > 0L -> StockOrderStatus.CANCELED
+            normalizedFilledQuantity == 0L -> StockOrderStatus.SUBMITTED
+            normalizedFilledQuantity < order.requestedQuantity -> StockOrderStatus.PARTIALLY_FILLED
+            else -> StockOrderStatus.FILLED
+        }
+        persistChange {
+            database.withTransaction {
+                if (order.side == KisOrderSide.BUY.name) {
+                    val newlyFilled = (normalizedFilledQuantity - order.filledQuantity).coerceAtLeast(0L)
+                    habitDao.updateStockOrder(
+                        order.copy(
+                            status = status.name,
+                            filledQuantity = normalizedFilledQuantity,
+                            filledAveragePrice = filledAveragePrice ?: order.filledAveragePrice,
+                            remainingQuantity = order.remainingQuantity + newlyFilled,
+                            updatedAt = LocalDateTime.now(),
+                        ),
+                    )
+                } else {
+                    var allocationRemaining = (normalizedFilledQuantity - order.appliedFilledQuantity).coerceAtLeast(0L)
+                    var realizedProfit = order.estimatedRealizedProfit ?: 0L
+                    val sellPrice = filledAveragePrice ?: order.filledAveragePrice ?: order.referencePrice
+                    if (allocationRemaining > 0L) {
+                        habitDao.getOpenStockBuyLots(order.productCode).forEach { buyLot ->
+                            if (allocationRemaining <= 0L) return@forEach
+                            val allocated = minOf(allocationRemaining, buyLot.remainingQuantity)
+                            val buyPrice = buyLot.filledAveragePrice ?: buyLot.referencePrice
+                            realizedProfit += (sellPrice - buyPrice) * allocated
+                            allocationRemaining -= allocated
+                            habitDao.updateStockOrder(
+                                buyLot.copy(
+                                    remainingQuantity = buyLot.remainingQuantity - allocated,
+                                    updatedAt = LocalDateTime.now(),
+                                ),
+                            )
+                        }
+                    }
+                    habitDao.updateStockOrder(
+                        order.copy(
+                            status = status.name,
+                            filledQuantity = normalizedFilledQuantity,
+                            appliedFilledQuantity = normalizedFilledQuantity - allocationRemaining,
+                            filledAveragePrice = filledAveragePrice ?: order.filledAveragePrice,
+                            estimatedRealizedProfit = realizedProfit,
+                            updatedAt = LocalDateTime.now(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun saveStockAutomationEvent(
+        level: String,
+        eventType: String,
+        productCode: String? = null,
+        message: String,
+    ) {
+        persistChange {
+            habitDao.insertStockAutomationEvent(
+                StockAutomationEventEntity(
+                    level = level,
+                    eventType = eventType,
+                    productCode = productCode,
+                    message = message.take(500),
+                    createdAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
+    private fun readKisMarketCapCache(date: LocalDate): List<KisMarketCapStock> {
+        if (kisMarketCapPrefs.getString(kisMarketCapCacheDateKey, null) != date.toString()) return emptyList()
+        val rawItems = kisMarketCapPrefs.getString(kisMarketCapCacheItemsKey, null) ?: return emptyList()
+        val items = runCatching { JSONArray(rawItems) }.getOrNull() ?: return emptyList()
+        return buildList {
+            for (index in 0 until items.length()) {
+                val item = items.optJSONObject(index) ?: continue
+                val rank = item.optInt("rank").takeIf { it > 0 } ?: continue
+                val productCode = item.optString("productCode")
+                val productName = item.optString("productName")
+                if (productCode.isNotBlank() && productName.isNotBlank()) {
+                    add(KisMarketCapStock(rank, productCode, productName))
+                }
+            }
+        }
+    }
+
+    private fun saveKisMarketCapCache(date: LocalDate, stocks: List<KisMarketCapStock>) {
+        val items = JSONArray()
+        stocks.forEach { stock ->
+            items.put(
+                JSONObject()
+                    .put("rank", stock.rank)
+                    .put("productCode", stock.productCode)
+                    .put("productName", stock.productName),
+            )
+        }
+        kisMarketCapPrefs.edit()
+            .putString(kisMarketCapCacheDateKey, date.toString())
+            .putString(kisMarketCapCacheItemsKey, items.toString())
+            .apply()
+    }
+
+    private suspend fun getKisConfigAndAccessToken(): Pair<KisApiConfig, String> = kisAccessTokenMutex.withLock {
+        val environment = KisEnvironment.REAL
+        val entity = habitDao.getKisApiConfig(environment.apiValue)
+            ?: throw IllegalStateException("KIS 설정을 먼저 저장해 주세요.")
+        val config = entity.toKisApiConfig(kisConfigCipher)
+        val cachedToken = entity.encryptedAccessToken
+            ?.takeIf { entity.accessTokenExpiredAt?.isAfter(LocalDateTime.now().plusMinutes(5)) == true }
+            ?.let(kisConfigCipher::decrypt)
+        val accessToken = cachedToken ?: kisDomesticStockClient.issueAccessToken(config).also { token ->
+            habitDao.updateKisAccessToken(
+                environment = environment.apiValue,
+                encryptedAccessToken = kisConfigCipher.encrypt(token.value),
+                accessTokenExpiredAt = token.expiresAt,
+                updatedAt = LocalDateTime.now(),
+            )
+        }.value
+        config to accessToken
+    }
 
     suspend fun getVocabularyWord(wordId: Long): VocabularyWordEntity? =
         habitDao.getVocabularyWordById(wordId)
@@ -563,6 +1418,34 @@ class HabitRepository(
         val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("삭제할 화분을 찾을 수 없습니다.")
         persistChange {
             habitDao.deletePlant(existingPlant)
+        }
+    }
+
+    suspend fun saveKisApiConfig(config: KisApiConfig) {
+        val sanitizedAppKey = config.appKey.trim()
+        val sanitizedAppSecret = config.appSecret.trim()
+        val sanitizedAccountNumber = config.accountNumber.filter(Char::isDigit)
+        val sanitizedAccountProductCode = config.accountProductCode.filter(Char::isDigit)
+
+        require(sanitizedAppKey.isNotEmpty()) { "App Key를 입력해 주세요." }
+        require(sanitizedAppSecret.isNotEmpty()) { "App Secret을 입력해 주세요." }
+        require(sanitizedAccountNumber.length == 8) { "계좌번호 앞 8자리를 입력해 주세요." }
+        require(sanitizedAccountProductCode.length == 2) { "계좌상품코드 2자리를 입력해 주세요." }
+
+        persistChange {
+            habitDao.upsertKisApiConfig(
+                KisApiConfigEntity(
+                    environment = config.environment.apiValue,
+                    encryptedAppKey = kisConfigCipher.encrypt(sanitizedAppKey),
+                    encryptedAppSecret = kisConfigCipher.encrypt(sanitizedAppSecret),
+                    encryptedAccountNumber = kisConfigCipher.encrypt(sanitizedAccountNumber),
+                    encryptedAccountProductCode = kisConfigCipher.encrypt(sanitizedAccountProductCode),
+                    encryptedHtsId = null,
+                    encryptedAccessToken = null,
+                    accessTokenExpiredAt = null,
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
         }
     }
 
@@ -1084,6 +1967,19 @@ class HabitRepository(
         }.toSet()
         return (1..maxSavedLottoSetCount).firstOrNull { it !in usedIndexes } ?: (usedIndexes.maxOrNull() ?: 0) + 1
     }
+}
+
+private fun KisApiConfigEntity.toKisApiConfig(cipher: AndroidKeystoreStringCipher): KisApiConfig {
+    val kisEnvironment = KisEnvironment.values().firstOrNull { it.apiValue == environment }
+        ?: throw IllegalStateException("지원하지 않는 KIS 환경입니다: $environment")
+
+    return KisApiConfig(
+        environment = kisEnvironment,
+        appKey = cipher.decrypt(encryptedAppKey),
+        appSecret = cipher.decrypt(encryptedAppSecret),
+        accountNumber = cipher.decrypt(encryptedAccountNumber),
+        accountProductCode = cipher.decrypt(encryptedAccountProductCode),
+    )
 }
 
 data class BulkVocabularyInsertResult(

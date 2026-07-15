@@ -404,6 +404,127 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_18_19 = object : Migration(18, 19) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `kis_api_config` (
+                    `environment` TEXT NOT NULL,
+                    `app_key_encrypted` TEXT NOT NULL,
+                    `app_secret_encrypted` TEXT NOT NULL,
+                    `account_number_encrypted` TEXT NOT NULL,
+                    `account_product_code_encrypted` TEXT NOT NULL,
+                    `hts_id_encrypted` TEXT,
+                    `access_token_encrypted` TEXT,
+                    `access_token_expired_at` TEXT,
+                    `updated_at` TEXT NOT NULL,
+                    PRIMARY KEY(`environment`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_order` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `order_number` TEXT NOT NULL,
+                    `order_date` TEXT NOT NULL,
+                    `order_time` TEXT NOT NULL,
+                    `side` TEXT NOT NULL,
+                    `product_code` TEXT NOT NULL,
+                    `product_name` TEXT NOT NULL,
+                    `requested_quantity` INTEGER NOT NULL,
+                    `requested_unit_price` INTEGER NOT NULL,
+                    `reference_price` INTEGER NOT NULL,
+                    `order_division_code` TEXT NOT NULL,
+                    `exchange_code` TEXT NOT NULL,
+                    `source` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `filled_quantity` INTEGER NOT NULL,
+                    `applied_filled_quantity` INTEGER NOT NULL,
+                    `filled_average_price` INTEGER,
+                    `remaining_quantity` INTEGER NOT NULL,
+                    `estimated_realized_profit` INTEGER,
+                    `message` TEXT,
+                    `created_at` TEXT NOT NULL,
+                    `updated_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_stock_order_order_date_order_number` ON `stock_order` (`order_date`, `order_number`)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_order_product_code` ON `stock_order` (`product_code`)")
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_order_status` ON `stock_order` (`status`)")
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_exit_rule` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `product_code` TEXT NOT NULL,
+                    `product_name` TEXT NOT NULL,
+                    `rule_type` TEXT NOT NULL,
+                    `trigger_value` REAL NOT NULL,
+                    `sell_quantity_percent` REAL NOT NULL,
+                    `action_mode` TEXT NOT NULL,
+                    `order_division_code` TEXT NOT NULL,
+                    `reference_high_price` INTEGER,
+                    `enabled` INTEGER NOT NULL,
+                    `last_triggered_at` TEXT,
+                    `created_at` TEXT NOT NULL,
+                    `updated_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_exit_rule_product_code_enabled` ON `stock_exit_rule` (`product_code`, `enabled`)")
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_target_allocation` (
+                    `product_code` TEXT NOT NULL,
+                    `product_name` TEXT NOT NULL,
+                    `target_percent` REAL NOT NULL,
+                    `enabled` INTEGER NOT NULL,
+                    `updated_at` TEXT NOT NULL,
+                    PRIMARY KEY(`product_code`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_safety_config` (
+                    `id` INTEGER NOT NULL,
+                    `monitoring_enabled` INTEGER NOT NULL,
+                    `automatic_order_enabled` INTEGER NOT NULL,
+                    `global_order_blocked` INTEGER NOT NULL,
+                    `block_reason` TEXT,
+                    `crash_guard_enabled` INTEGER NOT NULL,
+                    `crash_benchmark_code` TEXT,
+                    `crash_threshold_percent` REAL,
+                    `monitor_interval_minutes` INTEGER,
+                    `max_order_amount` INTEGER,
+                    `daily_buy_limit` INTEGER,
+                    `updated_at` TEXT NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_automation_event` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `level` TEXT NOT NULL,
+                    `event_type` TEXT NOT NULL,
+                    `product_code` TEXT,
+                    `message` TEXT NOT NULL,
+                    `created_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL("CREATE INDEX IF NOT EXISTS `index_stock_automation_event_created_at` ON `stock_automation_event` (`created_at`)")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -418,6 +539,8 @@ object HabitTrackerMigrations {
         MIGRATION_15_16,
         MIGRATION_16_17,
         MIGRATION_17_18,
+        MIGRATION_18_19,
+        MIGRATION_19_20,
     )
 }
 

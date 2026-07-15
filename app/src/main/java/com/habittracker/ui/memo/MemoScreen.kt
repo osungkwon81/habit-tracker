@@ -150,7 +150,9 @@ private fun MemoListScreen(
         item {
             AppHeroCard(
                 title = "메모",
-                description = null,
+                description = "빠른 메모와 잠금 메모를 검색합니다.",
+                icon = "✎",
+                eyebrow = "QUICK · MEMO",
                 action = {
                     AppPrimaryButton(text = "새 메모", onClick = onNewMemo, modifier = Modifier.fillMaxWidth())
                 },
@@ -192,7 +194,9 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
         item {
             AppHeroCard(
                 title = if (uiState.selectedMemoId == null) "메모 작성" else "메모 수정",
-                description = null,
+                description = "내용과 잠금 여부를 설정합니다.",
+                icon = "✎",
+                eyebrow = "QUICK · MEMO",
                 action = {
                     AppButtonRow(primaryText = "목록으로", onPrimaryClick = viewModel::showList)
                 },

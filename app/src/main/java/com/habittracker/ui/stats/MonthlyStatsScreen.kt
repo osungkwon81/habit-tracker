@@ -56,7 +56,9 @@ fun MonthlyStatsScreen(
         item {
             AppHeroCard(
                 title = "통계",
-                description = null,
+                description = "기간별 완료 기록과 운동 수치를 비교합니다.",
+                icon = "↗",
+                eyebrow = "HABIT · INSIGHTS",
                 action = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

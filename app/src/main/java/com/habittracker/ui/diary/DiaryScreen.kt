@@ -98,7 +98,9 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
         item {
             AppHeroCard(
                 title = "일기",
-                description = null,
+                description = "날짜별 일기와 사진을 찾아봅니다.",
+                icon = "☀",
+                eyebrow = "LIFE · DIARY",
                 action = {
                     AppPrimaryButton(text = "새 일기", onClick = viewModel::startNewDiary, modifier = Modifier.fillMaxWidth())
                 },
@@ -222,7 +224,9 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item {
             AppHeroCard(
                 title = "일기 작성",
-                description = null,
+                description = "날씨와 사진을 함께 기록합니다.",
+                icon = "✎",
+                eyebrow = "LIFE · DIARY",
                 action = {
                     AppSecondaryButton(text = "목록으로", onClick = viewModel::showList, modifier = Modifier.fillMaxWidth())
                 },
@@ -297,7 +301,9 @@ private fun DiaryDetailScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item {
             AppHeroCard(
                 title = "일기 상세",
-                description = null,
+                description = "저장한 하루 기록을 확인합니다.",
+                icon = "▤",
+                eyebrow = "LIFE · DIARY",
             )
         }
         item {

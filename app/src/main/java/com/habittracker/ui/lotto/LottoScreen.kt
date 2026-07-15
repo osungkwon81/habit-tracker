@@ -51,6 +51,8 @@ import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
+import com.habittracker.data.lotto.LottoScoreCorrelation
+import com.habittracker.data.lotto.LottoScorePerformance
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppLoadingCard
@@ -105,21 +107,13 @@ fun LottoScreen(viewModel: LottoViewModel) {
 
     AppScreen {
         item {
-            Box(modifier = Modifier.fillMaxWidth()) {
-                AppHeroCard(
-                    title = "로또 관리",
-                    description = null,
-                )
-                Text(
-                    text = "ver. ${LottoNumberGenerator.CURRENT_GENERATION_VERSION}",
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 26.dp, end = 24.dp),
-                    color = LottoTextMutedColor,
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.End,
-                )
-            }
+            AppHeroCard(
+                title = "로또 관리",
+                description = "번호 생성과 구입·추첨 이력을 관리합니다.",
+                icon = "◎",
+                eyebrow = "LOTTO · ANALYSIS",
+                status = "생성기 ver. ${LottoNumberGenerator.CURRENT_GENERATION_VERSION}",
+            )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -260,6 +254,7 @@ fun LottoScreen(viewModel: LottoViewModel) {
                         selectedRange = uiState.selectedStatsRange,
                         stats = uiState.stats,
                         winningTypeStats = uiState.winningTypeStats,
+                        scorePerformances = uiState.scorePerformances,
                         onSelectRange = viewModel::selectStatsRange,
                     )
                 }
@@ -883,6 +878,7 @@ private fun LottoStatsSection(
     selectedRange: LottoStatsRange,
     stats: List<LottoPeriodStatRow>,
     winningTypeStats: List<LottoWinningTypeStat>,
+    scorePerformances: List<LottoScorePerformance>,
     onSelectRange: (LottoStatsRange) -> Unit,
 ) {
     val net = totalWinning - totalPurchase
@@ -899,6 +895,10 @@ private fun LottoStatsSection(
             AppSectionHeader(title = "균형형/분산형 당첨 통계")
             WinningStyleRateSummary(winningTypeStats = winningTypeStats)
             WinningTypeTable(winningTypeStats = winningTypeStats)
+        }
+        AppSectionCard {
+            AppSectionHeader(title = "분석점수 성과")
+            ScorePerformanceSummary(scorePerformances)
         }
         AppSectionCard {
             AppSectionHeader(title = "${selectedRange.label} 흐름")
@@ -923,6 +923,65 @@ private fun LottoStatsSection(
             }
         }
     }
+}
+
+@Composable
+private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
+    if (performances.isEmpty()) {
+        Text(text = "점수가 저장된 구매 번호의 추첨 결과가 없습니다.", color = LottoTextMutedColor)
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        performances.forEach { performance ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "${performance.sourceLabel} · ${performance.generationVersion}",
+                    color = LottoTextStrongColor,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "평가 ${performance.sampleCount}건 · 평균 일치 ${"%.2f".format(performance.averageMatchCount)}개",
+                    color = LottoTextMutedColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(text = "점수 구간별", color = LottoTextMutedColor, style = MaterialTheme.typography.labelMedium)
+                performance.scoreBands.forEach { band ->
+                    val threePlusRate = band.threePlusMatchCount * 100.0 / band.sampleCount
+                    Text(
+                        text = "${band.label}점 · ${band.sampleCount}건 · 평균 ${"%.2f".format(band.averageMatchCount)}개 · " +
+                            "3개이상 ${"%.1f".format(threePlusRate)}% · 최고 ${band.maximumMatchCount}개",
+                        color = LottoTextStrongColor,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Text(text = "점수·일치 상관", color = LottoTextMutedColor, style = MaterialTheme.typography.labelMedium)
+                performance.correlations.forEach { correlation ->
+                    Text(
+                        text = "${correlation.component.label} · ${correlationResultText(correlation)}",
+                        color = LottoTextMutedColor,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun correlationResultText(correlation: LottoScoreCorrelation): String {
+    val coefficient = correlation.coefficient ?: return "표본/변동 부족 ${correlation.sampleCount}건"
+    val strength = when {
+        kotlin.math.abs(coefficient) < 0.10 -> "거의 없음"
+        kotlin.math.abs(coefficient) < 0.30 -> "약함"
+        kotlin.math.abs(coefficient) < 0.50 -> "중간"
+        else -> "강함"
+    }
+    val direction = when {
+        coefficient > 0.0 -> "양(+)"
+        coefficient < 0.0 -> "음(-)"
+        else -> "0"
+    }
+    return "$direction $strength · r=${"%.2f".format(coefficient)} · ${correlation.sampleCount}건"
 }
 
 @Composable

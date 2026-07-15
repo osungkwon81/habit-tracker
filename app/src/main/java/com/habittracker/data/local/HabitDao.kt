@@ -17,8 +17,14 @@ import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.LottoWinningStatEntity
 import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
+import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.data.local.entity.StockAutomationEventEntity
+import com.habittracker.data.local.entity.StockExitRuleEntity
+import com.habittracker.data.local.entity.StockOrderEntity
+import com.habittracker.data.local.entity.StockSafetyConfigEntity
+import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 import com.habittracker.data.local.model.DiarySearchRow
@@ -30,6 +36,7 @@ import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Dao
 interface HabitDao {
@@ -83,6 +90,19 @@ interface HabitDao {
         """,
     )
     fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        WHERE is_purchased = 1
+          AND analysis_score IS NOT NULL
+        ORDER BY created_at DESC, id DESC
+        """,
+    )
+    fun observeScoredPurchasedLottoTickets(): Flow<List<LottoTicketEntity>>
+
+    @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
+    fun observeAllLottoDraws(): Flow<List<LottoDrawEntity>>
 
     @Query(
         """
@@ -402,6 +422,123 @@ interface HabitDao {
 
     @Delete
     suspend fun deletePlant(plant: PlantEntity)
+
+    @Query("SELECT * FROM kis_api_config WHERE environment = :environment LIMIT 1")
+    suspend fun getKisApiConfig(environment: String): KisApiConfigEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM kis_api_config WHERE environment = :environment)")
+    suspend fun hasKisApiConfig(environment: String): Boolean
+
+    @Query("SELECT access_token_expired_at FROM kis_api_config WHERE environment = :environment LIMIT 1")
+    suspend fun getKisAccessTokenExpiredAt(environment: String): LocalDateTime?
+
+    @Query(
+        """
+        UPDATE kis_api_config
+        SET access_token_encrypted = :encryptedAccessToken,
+            access_token_expired_at = :accessTokenExpiredAt,
+            updated_at = :updatedAt
+        WHERE environment = :environment
+        """,
+    )
+    suspend fun updateKisAccessToken(
+        environment: String,
+        encryptedAccessToken: String,
+        accessTokenExpiredAt: LocalDateTime,
+        updatedAt: LocalDateTime,
+    )
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertKisApiConfig(config: KisApiConfigEntity)
+
+    @Query("SELECT * FROM stock_order ORDER BY order_date DESC, order_time DESC, id DESC")
+    fun observeStockOrders(): Flow<List<StockOrderEntity>>
+
+    @Query("SELECT * FROM stock_order ORDER BY order_date DESC, order_time DESC, id DESC")
+    suspend fun getStockOrders(): List<StockOrderEntity>
+
+    @Query("SELECT * FROM stock_order WHERE status IN ('SUBMITTED', 'PARTIALLY_FILLED', 'UNKNOWN') ORDER BY order_date ASC, order_time ASC")
+    suspend fun getUnfinishedStockOrders(): List<StockOrderEntity>
+
+    @Query("SELECT * FROM stock_order WHERE order_date = :orderDate AND order_number = :orderNumber LIMIT 1")
+    suspend fun getStockOrder(orderDate: LocalDate, orderNumber: String): StockOrderEntity?
+
+    @Query("SELECT * FROM stock_order WHERE side = 'BUY' AND product_code = :productCode AND remaining_quantity > 0 ORDER BY order_date ASC, order_time ASC, id ASC")
+    suspend fun getOpenStockBuyLots(productCode: String): List<StockOrderEntity>
+
+    @Query("SELECT MIN(order_date) FROM stock_order WHERE side = 'BUY' AND product_code = :productCode AND remaining_quantity > 0")
+    suspend fun getOldestOpenStockBuyDate(productCode: String): LocalDate?
+
+    @Query("SELECT COUNT(*) FROM stock_order WHERE product_code = :productCode AND side = :side AND status IN ('SUBMITTED', 'PARTIALLY_FILLED', 'UNKNOWN')")
+    suspend fun countUnfinishedStockOrders(productCode: String, side: String): Int
+
+    @Query(
+        """
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN status = 'REJECTED' THEN 0
+                WHEN status = 'CANCELED' THEN
+                    filled_quantity * COALESCE(
+                        filled_average_price,
+                        CASE WHEN requested_unit_price > 0 THEN requested_unit_price ELSE reference_price END
+                    )
+                ELSE requested_quantity *
+                    CASE WHEN requested_unit_price > 0 THEN requested_unit_price ELSE reference_price END
+            END
+        ), 0)
+        FROM stock_order
+        WHERE side = 'BUY' AND order_date = :orderDate
+        """,
+    )
+    suspend fun getSubmittedBuyAmount(orderDate: LocalDate): Long
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertStockOrder(order: StockOrderEntity): Long
+
+    @Update
+    suspend fun updateStockOrder(order: StockOrderEntity)
+
+    @Query("SELECT * FROM stock_exit_rule ORDER BY product_name ASC, product_code ASC, created_at ASC")
+    fun observeStockExitRules(): Flow<List<StockExitRuleEntity>>
+
+    @Query("SELECT * FROM stock_exit_rule WHERE enabled = 1 ORDER BY product_code ASC, created_at ASC")
+    suspend fun getEnabledStockExitRules(): List<StockExitRuleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStockExitRule(rule: StockExitRuleEntity): Long
+
+    @Update
+    suspend fun updateStockExitRule(rule: StockExitRuleEntity)
+
+    @Query("DELETE FROM stock_exit_rule WHERE id = :ruleId")
+    suspend fun deleteStockExitRule(ruleId: Long)
+
+    @Query("SELECT * FROM stock_target_allocation ORDER BY product_name ASC, product_code ASC")
+    fun observeStockTargetAllocations(): Flow<List<StockTargetAllocationEntity>>
+
+    @Query("SELECT * FROM stock_target_allocation WHERE enabled = 1 ORDER BY product_code ASC")
+    suspend fun getEnabledStockTargetAllocations(): List<StockTargetAllocationEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStockTargetAllocation(allocation: StockTargetAllocationEntity)
+
+    @Query("DELETE FROM stock_target_allocation WHERE product_code = :productCode")
+    suspend fun deleteStockTargetAllocation(productCode: String)
+
+    @Query("SELECT * FROM stock_safety_config WHERE id = 1 LIMIT 1")
+    fun observeStockSafetyConfig(): Flow<StockSafetyConfigEntity?>
+
+    @Query("SELECT * FROM stock_safety_config WHERE id = 1 LIMIT 1")
+    suspend fun getStockSafetyConfig(): StockSafetyConfigEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStockSafetyConfig(config: StockSafetyConfigEntity)
+
+    @Query("SELECT * FROM stock_automation_event ORDER BY created_at DESC, id DESC LIMIT :limit")
+    fun observeStockAutomationEvents(limit: Int): Flow<List<StockAutomationEventEntity>>
+
+    @Insert
+    suspend fun insertStockAutomationEvent(event: StockAutomationEventEntity): Long
 
     @Query(
         """

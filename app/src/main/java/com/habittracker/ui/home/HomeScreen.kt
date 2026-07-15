@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,15 +35,14 @@ import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.ui.components.AppEmptyCard
+import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppScreen
-import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSpacing
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
-import kotlin.math.roundToInt
 
 private val CalendarRecordDiaryTone = Color(0xFFF8F4EA)
 private val CalendarRecordTone = Color(0xFFEAF6EE)
@@ -58,7 +58,7 @@ fun HomeScreen(
     onOpenRecord: (LocalDate) -> Unit,
     onOpenDiary: () -> Unit,
     onOpenMemo: () -> Unit,
-    onOpenStats: () -> Unit,
+    onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
@@ -67,13 +67,6 @@ fun HomeScreen(
     val monthDays = buildCalendarDays(uiState.currentMonth)
     val recordedDates = remember(uiState.summaries, uiState.diarySummaries) {
         (uiState.summaries.keys + uiState.diarySummaries.keys).toSet().sortedDescending()
-    }
-    val totalRecordDays = uiState.summaries.size
-    val totalDiaryDays = uiState.diarySummaries.size
-    val completionRate = remember(uiState.summaries) {
-        val totalItems = uiState.summaries.values.sumOf(RecordSummaryRow::itemCount)
-        val completedItems = uiState.summaries.values.sumOf(RecordSummaryRow::completedCount)
-        if (totalItems == 0) 0 else ((completedItems.toDouble() / totalItems.toDouble()) * 100).roundToInt()
     }
     val today = LocalDate.now()
     var selectedDate by remember(uiState.currentMonth) { mutableStateOf<LocalDate?>(null) }
@@ -92,14 +85,12 @@ fun HomeScreen(
 
     AppScreen {
         item {
-            InsightSection(
-                currentMonth = uiState.currentMonth,
-                totalRecordDays = totalRecordDays,
-                totalDiaryDays = totalDiaryDays,
-                completionRate = completionRate,
-                selectedDate = selectedDate,
-                onPreviousMonth = viewModel::goToPreviousMonth,
-                onNextMonth = viewModel::goToNextMonth,
+            AppHeroCard(
+                title = "생활 기록",
+                description = "기록과 일정을 한곳에서 관리합니다.",
+                icon = "⌂",
+                eyebrow = "HABIT · HOME",
+                status = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
             )
         }
         item {
@@ -107,7 +98,7 @@ fun HomeScreen(
                 onOpenRecord = { onOpenRecord(selectedDate ?: today) },
                 onOpenDiary = onOpenDiary,
                 onOpenMemo = onOpenMemo,
-                onOpenStats = onOpenStats,
+                onOpenStock = onOpenStock,
                 onOpenLotto = onOpenLotto,
                 onOpenPlant = onOpenPlant,
                 onOpenCard = onOpenCard,
@@ -150,62 +141,26 @@ fun HomeScreen(
 }
 
 @Composable
-private fun InsightSection(
-    currentMonth: YearMonth,
-    totalRecordDays: Int,
-    totalDiaryDays: Int,
-    completionRate: Int,
-    selectedDate: LocalDate?,
-    onPreviousMonth: () -> Unit,
-    onNextMonth: () -> Unit,
-) {
-    AppSectionCard {
-        AppSectionHeader(
-            title = "이번 달",
-            subtitle = "${currentMonth.year}년 ${currentMonth.monthValue}월",
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
-        ) {
-            InsightCard(title = "기록일", value = "${totalRecordDays}일", modifier = Modifier.weight(1f))
-            InsightCard(title = "일기", value = "${totalDiaryDays}개", modifier = Modifier.weight(1f))
-            InsightCard(title = "완료율", value = "$completionRate%", modifier = Modifier.weight(1f))
-        }
-        selectedDate?.let {
-            AppSupportLine("${it.monthValue}월 ${it.dayOfMonth}일 선택")
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
-        ) {
-            AppSecondaryButton(text = "이전 달", onClick = onPreviousMonth, modifier = Modifier.weight(1f))
-            AppSecondaryButton(text = "다음 달", onClick = onNextMonth, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
 private fun WorkspaceSection(
     onOpenRecord: () -> Unit,
     onOpenDiary: () -> Unit,
     onOpenMemo: () -> Unit,
-    onOpenStats: () -> Unit,
+    onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
     AppSectionCard {
         AppSectionHeader(
-            title = "기능",
+            title = "바로가기",
         )
         val actions = listOf(
-            HomeQuickAction("메모", "빠른 노트와 잠금 메모", onOpenMemo),
-            HomeQuickAction("일기", "사진과 하루 요약", onOpenDiary),
-            HomeQuickAction("통계", "건강 흐름 확인", onOpenStats),
-            HomeQuickAction("로또", "생성 번호와 이력", onOpenLotto),
-            HomeQuickAction("화분", "물주기 일정", onOpenPlant),
-            HomeQuickAction("카드 이력", "월별 카드 사용 관리", onOpenCard),
+            HomeQuickAction("✎", "메모", "빠른 메모·잠금", Color(0xFF6D4C8E), onOpenMemo),
+            HomeQuickAction("☀", "일기", "사진과 하루 기록", Color(0xFFB36B2C), onOpenDiary),
+            HomeQuickAction("↗", "주식", "KIS 실전 매매·자동화", Color(0xFF0F6B73), onOpenStock),
+            HomeQuickAction("◎", "로또", "번호 생성·이력", Color(0xFF315C9A), onOpenLotto),
+            HomeQuickAction("♧", "화분", "물주기 일정", Color(0xFF3C7158), onOpenPlant),
+            HomeQuickAction("▤", "카드 이력", "월별 사용·결제액", Color(0xFF665F55), onOpenCard),
         )
         actions.chunked(2).forEach { rowItems ->
             Row(
@@ -227,8 +182,10 @@ private fun WorkspaceSection(
 }
 
 private data class HomeQuickAction(
+    val icon: String,
     val title: String,
     val subtitle: String,
+    val accent: Color,
     val onClick: () -> Unit,
 )
 
@@ -240,64 +197,44 @@ private fun QuickActionCard(
     Box(
         modifier = modifier
             .clip(MaterialTheme.shapes.large)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, action.accent.copy(alpha = 0.22f), MaterialTheme.shapes.large)
             .clickable(onClick = action.onClick)
-            .padding(AppSpacing.sm),
+            .padding(14.dp),
     ) {
-        Column(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = action.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = action.subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(action.accent.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(action.icon, style = MaterialTheme.typography.titleLarge, color = action.accent)
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = action.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = action.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text("›", style = MaterialTheme.typography.titleLarge, color = action.accent)
         }
     }
-}
-
-@Composable
-private fun InsightCard(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(AppSpacing.sm),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        }
-    }
-}
-
-@Composable
-private fun AppSupportLine(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 @Composable
