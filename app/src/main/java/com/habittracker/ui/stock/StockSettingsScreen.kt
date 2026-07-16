@@ -148,7 +148,7 @@ fun StockSettingsScreen(viewModel: StockViewModel) {
                 AppTextField(
                     value = uiState.maxOrderAmount,
                     onValueChange = viewModel::updateMaxOrderAmount,
-                    label = "1회 최대 주문금액 (원, 빈칸은 제한 없음)",
+                    label = "1회 최대 주문금액 (원, 빈칸 제한 없음·긴급 전체 매도 제외)",
                     singleLine = true,
                 )
                 AppTextField(

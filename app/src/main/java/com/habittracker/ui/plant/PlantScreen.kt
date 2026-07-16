@@ -1,6 +1,7 @@
 package com.habittracker.ui.plant
 
 import android.app.DatePickerDialog
+import com.habittracker.R
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -119,7 +120,7 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
             AppHeroCard(
                 title = "화분 관리",
                 description = "물주기 예정일과 완료 상태를 관리합니다.",
-                icon = "♧",
+                iconRes = R.drawable.home_quick_plant,
                 eyebrow = "LIFE · PLANT",
                 action = {
                     AppPrimaryButton(
@@ -252,7 +253,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
             AppHeroCard(
                 title = if (uiState.selectedPlantId == null) "화분 등록" else "화분 수정",
                 description = "1개월은 30일 기준으로 다음 물주기 날짜를 계산합니다.",
-                icon = "♧",
+                iconRes = R.drawable.home_quick_plant,
                 eyebrow = "LIFE · PLANT",
                 action = {
                     AppSecondaryButton(

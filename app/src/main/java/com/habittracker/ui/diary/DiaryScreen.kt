@@ -1,6 +1,7 @@
 ﻿package com.habittracker.ui.diary
 
 import android.app.DatePickerDialog
+import com.habittracker.R
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -99,7 +100,7 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
             AppHeroCard(
                 title = "일기",
                 description = "날짜별 일기와 사진을 찾아봅니다.",
-                icon = "☀",
+                iconRes = R.drawable.home_quick_diary,
                 eyebrow = "LIFE · DIARY",
                 action = {
                     AppPrimaryButton(text = "새 일기", onClick = viewModel::startNewDiary, modifier = Modifier.fillMaxWidth())
@@ -225,7 +226,7 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
             AppHeroCard(
                 title = "일기 작성",
                 description = "날씨와 사진을 함께 기록합니다.",
-                icon = "✎",
+                iconRes = R.drawable.home_quick_diary,
                 eyebrow = "LIFE · DIARY",
                 action = {
                     AppSecondaryButton(text = "목록으로", onClick = viewModel::showList, modifier = Modifier.fillMaxWidth())
@@ -302,7 +303,7 @@ private fun DiaryDetailScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
             AppHeroCard(
                 title = "일기 상세",
                 description = "저장한 하루 기록을 확인합니다.",
-                icon = "▤",
+                iconRes = R.drawable.home_quick_diary,
                 eyebrow = "LIFE · DIARY",
             )
         }

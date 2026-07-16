@@ -1,8 +1,16 @@
 package com.habittracker.data.stock
 
 import com.habittracker.data.local.entity.StockOrderEntity
+import com.habittracker.data.local.entity.StockSafetyConfigEntity
 import java.time.LocalDate
 import java.time.LocalDateTime
+
+internal const val STOCK_CRASH_GUARD_BLOCK_PREFIX = "급락 안전장치:"
+
+internal fun StockSafetyConfigEntity.isCrashGuardOrderBlock(): Boolean =
+    globalOrderBlocked && blockReason?.let { reason ->
+        reason.startsWith(STOCK_CRASH_GUARD_BLOCK_PREFIX) || reason.contains("급락 기준")
+    } == true
 
 enum class StockOrderStatus {
     SUBMITTED,
@@ -68,6 +76,17 @@ data class StockBuyLotRow(
     val estimatedReturnPercent: Double?,
 )
 
+data class StockBulkSellFailure(
+    val productCode: String,
+    val productName: String,
+    val reason: String,
+)
+
+data class StockBulkSellResult(
+    val submittedOrders: List<StockOrderEntity>,
+    val failures: List<StockBulkSellFailure>,
+)
+
 data class StockRebalanceLine(
     val productCode: String,
     val productName: String,
@@ -100,4 +119,6 @@ data class StockAutomationCycleResult(
     val checkedAt: LocalDateTime,
     val notices: List<StockAutomationNotice>,
     val skippedReason: String? = null,
+    val monitoredProductCount: Int = 0,
+    val activeRuleCount: Int = 0,
 )

@@ -1,6 +1,8 @@
 package com.habittracker.ui.components
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -106,6 +110,7 @@ fun AppHeroCard(
     title: String,
     description: String? = null,
     icon: String? = null,
+    @DrawableRes iconRes: Int? = null,
     eyebrow: String? = null,
     status: String? = null,
     modifier: Modifier = Modifier,
@@ -129,7 +134,7 @@ fun AppHeroCard(
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!icon.isNullOrBlank()) {
+                if (iconRes != null || !icon.isNullOrBlank()) {
                     Box(
                         modifier = Modifier
                             .size(58.dp)
@@ -137,7 +142,16 @@ fun AppHeroCard(
                             .background(Color.White.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(icon, style = MaterialTheme.typography.headlineSmall)
+                        if (iconRes != null) {
+                            Image(
+                                painter = painterResource(iconRes),
+                                contentDescription = title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        } else {
+                            Text(icon.orEmpty(), style = MaterialTheme.typography.headlineSmall)
+                        }
                     }
                 }
                 Column(

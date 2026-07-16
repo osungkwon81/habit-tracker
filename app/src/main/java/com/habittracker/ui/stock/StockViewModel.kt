@@ -245,6 +245,41 @@ class StockViewModel(
         }
     }
 
+    fun submitAllHoldingsSell() {
+        if (_uiState.value.isSubmittingOrder) return
+        _uiState.update { it.copy(isSubmittingOrder = true) }
+        viewModelScope.launch {
+            runCatching { repository.sellAllKisHoldings() }
+                .onSuccess { result ->
+                    val failureSummary = result.failures.take(3).joinToString("\n") { failure ->
+                        "${failure.productName} (${failure.productCode}): ${failure.reason}"
+                    }
+                    val remainingFailureCount = (result.failures.size - 3).coerceAtLeast(0)
+                    _uiState.update {
+                        it.copy(
+                            isSubmittingOrder = false,
+                            statusMessage = buildString {
+                                append("전체 매도 주문 ${result.submittedOrders.size}건을 접수했습니다.")
+                                if (result.failures.isNotEmpty()) {
+                                    append(" 실패 ${result.failures.size}건")
+                                    if (failureSummary.isNotBlank()) append("\n$failureSummary")
+                                    if (remainingFailureCount > 0) append("\n외 ${remainingFailureCount}건")
+                                }
+                            },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            isSubmittingOrder = false,
+                            statusMessage = error.message ?: "보유 종목 전체 매도에 실패했습니다.",
+                        )
+                    }
+                }
+        }
+    }
+
     fun loadPortfolioData() {
         if (!_uiState.value.isConfigSaved) return
         _uiState.update { it.copy(isLoadingPortfolio = true) }

@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.habittracker.data.stock.isCrashGuardOrderBlock
 import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppScreen
@@ -79,7 +80,13 @@ fun StockScreen(
                 AppSectionCard {
                     StockSectionTitle("전체 주문 차단 중")
                     AppStatusText(uiState.safetyConfig.blockReason ?: "사용자 긴급 정지")
-                    AppSupportText("차단 해제 전까지 직접 주문, 자동 매도, 리밸런싱 주문이 모두 중단됩니다.")
+                    AppSupportText(
+                        if (uiState.safetyConfig.isCrashGuardOrderBlock()) {
+                            "급락 안전장치로 일반 주문은 중단되지만, 보유 화면에서 사용자가 확인한 긴급 전체 시장가 매도는 실행할 수 있습니다."
+                        } else {
+                            "차단 해제 전까지 직접 주문, 자동 매도, 리밸런싱 주문과 긴급 전체 매도가 모두 중단됩니다."
+                        },
+                    )
                 }
             }
         }

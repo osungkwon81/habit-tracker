@@ -55,11 +55,13 @@ class StockAutomationService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitoringJob: Job? = null
-    private var finalSyncAttemptDate: LocalDate? = null
+    private var finalSyncAttemptKey: String? = null
     private val koreaZone: ZoneId = ZoneId.of("Asia/Seoul")
     private val marketPrepareTime: LocalTime = LocalTime.of(8, 55)
     private val marketOpenTime: LocalTime = LocalTime.of(9, 0)
     private val marketCloseTime: LocalTime = LocalTime.of(15, 30)
+    private val nxtAfterMarketOpenTime: LocalTime = LocalTime.of(15, 40)
+    private val nxtAfterMarketCloseTime: LocalTime = LocalTime.of(20, 0)
     private val statusTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
     private val repository by lazy {
         (application as HabitTrackerApplication).appContainer.habitRepository
@@ -106,7 +108,7 @@ class StockAutomationService : Service() {
                 val now = ZonedDateTime.now(koreaZone)
                 val marketWindow = resolveMarketWindow(now)
                 if (!marketWindow.isOpen) {
-                    if (marketWindow.shouldRunFinalSync) runFinalOrderSyncOnce(now.toLocalDate())
+                    marketWindow.finalSyncKey?.let { runFinalOrderSyncOnce(it) }
                     updateForegroundNotification(marketWindow.statusMessage)
                     delay(waitMillis(now, marketWindow.nextCheckAt))
                     continue
@@ -124,10 +126,12 @@ class StockAutomationService : Service() {
                     if (updatedSafety.globalOrderBlocked) {
                         "전체 주문 차단 중 · ${updatedSafety.blockReason.orEmpty()}"
                     } else {
-                        "정규장 ${intervalMinutes}분 간격 감시 중 · 최근 확인 ${result.checkedAt.toLocalTime().withNano(0)}"
+                        "${marketWindow.statusMessage}\n" +
+                            "감시 ${result.monitoredProductCount}종목 · 활성 규칙 ${result.activeRuleCount}개 · ${intervalMinutes}분 간격\n" +
+                            "최근 확인 ${result.checkedAt.toLocalTime().withNano(0)}"
                     },
                 )
-                val closeAt = now.toLocalDate().atTime(marketCloseTime).atZone(koreaZone)
+                val closeAt = now.toLocalDate().atTime(marketWindow.closeTime ?: marketCloseTime).atZone(koreaZone)
                 val regularDelay = intervalMinutes * 60_000L
                 val untilClose = Duration.between(now, closeAt).toMillis().coerceAtLeast(1_000L)
                 delay(minOf(regularDelay, untilClose))
@@ -161,23 +165,35 @@ class StockAutomationService : Service() {
             return MarketWindow(false, "개장 대기 중 · ${next.format(statusTimeFormatter)}", next)
         }
         if (time < marketCloseTime) {
-            return MarketWindow(true, "정규장 감시 중", now)
+            return MarketWindow(true, "KRX·NXT 통합장 감시 중", now, closeTime = marketCloseTime)
+        }
+        if (time < nxtAfterMarketOpenTime) {
+            val next = date.atTime(nxtAfterMarketOpenTime).atZone(koreaZone)
+            return MarketWindow(
+                isOpen = false,
+                statusMessage = "정규장 종료 · NXT 애프터마켓 대기 ${next.format(statusTimeFormatter)}",
+                nextCheckAt = next,
+                finalSyncKey = "$date-KRX",
+            )
+        }
+        if (time < nxtAfterMarketCloseTime) {
+            return MarketWindow(true, "NXT 애프터마켓 감시 중", now, closeTime = nxtAfterMarketCloseTime)
         }
         val next = nextWeekdayPrepare(date).atZone(koreaZone)
         return MarketWindow(
             isOpen = false,
-            statusMessage = "정규장 종료 · 다음 장 확인 ${next.format(statusTimeFormatter)}",
+            statusMessage = "NXT 애프터마켓 종료 · 다음 장 확인 ${next.format(statusTimeFormatter)}",
             nextCheckAt = next,
-            shouldRunFinalSync = true,
+            finalSyncKey = "$date-NXT",
         )
     }
 
-    private suspend fun runFinalOrderSyncOnce(date: LocalDate) {
+    private suspend fun runFinalOrderSyncOnce(syncKey: String) {
         val prefs = getSharedPreferences(servicePrefsName, MODE_PRIVATE)
-        if (prefs.getString(finalSyncDateKey, null) == date.toString() || finalSyncAttemptDate == date) return
-        finalSyncAttemptDate = date
+        if (prefs.getString(finalSyncDateKey, null) == syncKey || finalSyncAttemptKey == syncKey) return
+        finalSyncAttemptKey = syncKey
         runCatching { repository.syncStockOrderExecutions() }
-            .onSuccess { prefs.edit().putString(finalSyncDateKey, date.toString()).apply() }
+            .onSuccess { prefs.edit().putString(finalSyncDateKey, syncKey).apply() }
             .onFailure { error ->
                 showAlert("장 종료 체결 확인 실패", error.message ?: "체결 내역을 확인하지 못했습니다.")
             }
@@ -192,13 +208,14 @@ class StockAutomationService : Service() {
     }
 
     private fun waitMillis(now: ZonedDateTime, nextCheckAt: ZonedDateTime): Long =
-        Duration.between(now, nextCheckAt).toMillis().coerceIn(1_000L, waitingPollMillis)
+        Duration.between(now, nextCheckAt).toMillis().coerceAtLeast(1_000L)
 
     private data class MarketWindow(
         val isOpen: Boolean,
         val statusMessage: String,
         val nextCheckAt: ZonedDateTime,
-        val shouldRunFinalSync: Boolean = false,
+        val closeTime: LocalTime? = null,
+        val finalSyncKey: String? = null,
     )
 
     private fun startInForeground(message: String) {

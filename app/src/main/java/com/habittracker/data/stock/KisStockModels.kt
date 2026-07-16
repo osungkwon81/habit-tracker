@@ -22,6 +22,15 @@ enum class KisOrderSide(val label: String) {
     SELL("매도"),
 }
 
+enum class KisStockMarket(
+    val quoteDivisionCode: String,
+    val orderExchangeCode: String,
+) {
+    KRX("J", "KRX"),
+    NXT("NX", "NXT"),
+    UNIFIED("UN", "SOR"),
+}
+
 data class KisAccountRef(
     val accountNumber: String,
     val accountProductCode: String,
@@ -151,7 +160,11 @@ internal class KisDomesticStockClient {
         return KisAccessToken(accessToken, expiresAt)
     }
 
-    fun getBalance(config: KisApiConfig, accessToken: String): List<KisBalanceStock> {
+    fun getBalance(
+        config: KisApiConfig,
+        accessToken: String,
+        market: KisStockMarket = KisStockMarket.KRX,
+    ): List<KisBalanceStock> {
         val stocks = mutableListOf<KisBalanceStock>()
         var foreignKey = ""
         var nextKey = ""
@@ -162,7 +175,7 @@ internal class KisDomesticStockClient {
             val params = linkedMapOf(
                 "CANO" to config.accountNumber,
                 "ACNT_PRDT_CD" to config.accountProductCode,
-                "AFHR_FLPR_YN" to "N",
+                "AFHR_FLPR_YN" to if (market == KisStockMarket.NXT) "X" else "N",
                 "OFL_YN" to "",
                 "INQR_DVSN" to "02",
                 "UNPR_DVSN" to "01",
@@ -213,9 +226,14 @@ internal class KisDomesticStockClient {
         return stocks.filter { it.productCode.isNotBlank() }.distinctBy(KisBalanceStock::productCode)
     }
 
-    fun getCurrentPrice(config: KisApiConfig, accessToken: String, productCode: String): KisCurrentPrice {
+    fun getCurrentPrice(
+        config: KisApiConfig,
+        accessToken: String,
+        productCode: String,
+        market: KisStockMarket = KisStockMarket.KRX,
+    ): KisCurrentPrice {
         val params = linkedMapOf(
-            "FID_COND_MRKT_DIV_CODE" to "J",
+            "FID_COND_MRKT_DIV_CODE" to market.quoteDivisionCode,
             "FID_INPUT_ISCD" to productCode,
         )
         val output = requestJson(

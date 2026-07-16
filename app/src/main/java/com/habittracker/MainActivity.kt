@@ -79,7 +79,7 @@ private fun HabitTrackerApp() {
     val bottomDestinations = listOf(
         AppDestination.HOME,
         AppDestination.CARD,
-        AppDestination.ENTRY,
+        AppDestination.STOCK,
         AppDestination.MEMO,
         AppDestination.PLANT,
         AppDestination.LOTTO,
@@ -137,7 +137,6 @@ private fun HabitTrackerApp() {
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
                     onOpenDiary = { navController.navigate(AppDestination.DIARY.route) },
                     onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
-                    onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
                     onOpenCard = { navController.navigate(AppDestination.CARD.route) },

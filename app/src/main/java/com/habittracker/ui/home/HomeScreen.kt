@@ -1,5 +1,7 @@
 package com.habittracker.ui.home
 
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,9 +29,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.habittracker.R
 import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.RecordDetailRow
@@ -58,7 +63,6 @@ fun HomeScreen(
     onOpenRecord: (LocalDate) -> Unit,
     onOpenDiary: () -> Unit,
     onOpenMemo: () -> Unit,
-    onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
@@ -88,7 +92,7 @@ fun HomeScreen(
             AppHeroCard(
                 title = "생활 기록",
                 description = "기록과 일정을 한곳에서 관리합니다.",
-                icon = "⌂",
+                iconRes = R.drawable.ic_launcher_art_v3,
                 eyebrow = "HABIT · HOME",
                 status = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
             )
@@ -98,7 +102,6 @@ fun HomeScreen(
                 onOpenRecord = { onOpenRecord(selectedDate ?: today) },
                 onOpenDiary = onOpenDiary,
                 onOpenMemo = onOpenMemo,
-                onOpenStock = onOpenStock,
                 onOpenLotto = onOpenLotto,
                 onOpenPlant = onOpenPlant,
                 onOpenCard = onOpenCard,
@@ -145,7 +148,6 @@ private fun WorkspaceSection(
     onOpenRecord: () -> Unit,
     onOpenDiary: () -> Unit,
     onOpenMemo: () -> Unit,
-    onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
@@ -155,22 +157,22 @@ private fun WorkspaceSection(
             title = "바로가기",
         )
         val actions = listOf(
-            HomeQuickAction("✎", "메모", "빠른 메모·잠금", Color(0xFF6D4C8E), onOpenMemo),
-            HomeQuickAction("☀", "일기", "사진과 하루 기록", Color(0xFFB36B2C), onOpenDiary),
-            HomeQuickAction("↗", "주식", "KIS 실전 매매·자동화", Color(0xFF0F6B73), onOpenStock),
-            HomeQuickAction("◎", "로또", "번호 생성·이력", Color(0xFF315C9A), onOpenLotto),
-            HomeQuickAction("♧", "화분", "물주기 일정", Color(0xFF3C7158), onOpenPlant),
-            HomeQuickAction("▤", "카드 이력", "월별 사용·결제액", Color(0xFF665F55), onOpenCard),
+            HomeQuickAction(R.drawable.home_quick_plant, "화분", "물주기 일정", Color(0xFF3C7158), onOpenPlant),
+            HomeQuickAction(R.drawable.home_quick_record, "기록", "습관·일정 한 번에 기록", Color(0xFF0F6B73), onOpenRecord),
+            HomeQuickAction(R.drawable.home_quick_memo, "메모", "빠른 메모·잠금", Color(0xFF6D4C8E), onOpenMemo),
+            HomeQuickAction(R.drawable.home_quick_card, "카드 이력", "월별 사용·결제액", Color(0xFF665F55), onOpenCard),
+            HomeQuickAction(R.drawable.home_quick_lotto, "로또", "번호 생성·이력", Color(0xFF315C9A), onOpenLotto),
+            HomeQuickAction(R.drawable.home_quick_diary, "일기", "사진과 하루 기록", Color(0xFFB36B2C), onOpenDiary),
         )
         actions.chunked(2).forEach { rowItems ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
             ) {
-                rowItems.forEach { action ->
+                rowItems.forEachIndexed { index, action ->
                     QuickActionCard(
                         action = action,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(if (index == 0) 0.94f else 1.06f),
                     )
                 }
                 if (rowItems.size == 1) {
@@ -182,7 +184,7 @@ private fun WorkspaceSection(
 }
 
 private data class HomeQuickAction(
-    val icon: String,
+    @DrawableRes val iconRes: Int,
     val title: String,
     val subtitle: String,
     val accent: Color,
@@ -212,9 +214,13 @@ private fun QuickActionCard(
                     .size(44.dp)
                     .clip(RoundedCornerShape(15.dp))
                     .background(action.accent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
             ) {
-                Text(action.icon, style = MaterialTheme.typography.titleLarge, color = action.accent)
+                Image(
+                    painter = painterResource(action.iconRes),
+                    contentDescription = action.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
             }
             Column(
                 modifier = Modifier.weight(1f),

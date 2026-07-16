@@ -1,6 +1,7 @@
 package com.habittracker.ui.stats
 
 import androidx.compose.foundation.Canvas
+import com.habittracker.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +58,7 @@ fun MonthlyStatsScreen(
             AppHeroCard(
                 title = "통계",
                 description = "기간별 완료 기록과 운동 수치를 비교합니다.",
-                icon = "↗",
+                iconRes = R.drawable.home_quick_record,
                 eyebrow = "HABIT · INSIGHTS",
                 action = {
                     Row(

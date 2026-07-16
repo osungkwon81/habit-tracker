@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.habittracker.data.stock.StockBuyLotRow
+import com.habittracker.data.stock.isCrashGuardOrderBlock
 import com.habittracker.ui.components.AppLoadingCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
@@ -29,10 +30,48 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var pendingSellRow by remember { mutableStateOf<StockBuyLotRow?>(null) }
     var sellQuantity by remember { mutableStateOf("") }
+    var showSellAllConfirmation by remember { mutableStateOf(false) }
+    val isEmergencySellBlocked = uiState.safetyConfig.globalOrderBlocked &&
+        !uiState.safetyConfig.isCrashGuardOrderBlock()
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
     LaunchedEffect(uiState.isConfigSaved) {
         if (uiState.isConfigSaved) viewModel.loadPortfolioData()
+    }
+
+    if (showSellAllConfirmation) {
+        val totalQuantity = uiState.ownedStocks.sumOf { it.quantity.toLongOrNull() ?: 0L }
+        AlertDialog(
+            onDismissRequest = { showSellAllConfirmation = false },
+            title = { Text("긴급 전체 시장가 매도 확인") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                    Text("보유 ${uiState.ownedStocks.size}종목 · 총 ${totalQuantity}주를 종목별 시장가로 주문합니다.")
+                    AppSupportText("정규장에는 SOR 통합 시장가, NXT 애프터마켓에는 NXT 시장가로 순차 전송합니다. 일부 종목이 실패해도 나머지 주문은 계속 처리합니다.")
+                    Text(
+                        "빠른 체결을 우선하므로 표시 가격보다 낮게 체결되거나 일부 수량만 체결될 수 있습니다. 실제 계좌에 전량 매도 주문을 전송합니다.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (uiState.safetyConfig.isCrashGuardOrderBlock()) {
+                        AppSupportText("급락 안전장치로 다른 주문은 차단 중이지만, 사용자가 확인한 긴급 전체 매도는 실행할 수 있습니다.")
+                    }
+                }
+            },
+            confirmButton = {
+                AppPrimaryButton(
+                    text = "긴급 시장가 매도 전송",
+                    onClick = {
+                        showSellAllConfirmation = false
+                        viewModel.submitAllHoldingsSell()
+                    },
+                    enabled = !uiState.isSubmittingOrder && !isEmergencySellBlocked,
+                )
+            },
+            dismissButton = {
+                AppSecondaryButton(text = "취소", onClick = { showSellAllConfirmation = false })
+            },
+        )
     }
 
     pendingSellRow?.let { row ->
@@ -134,6 +173,16 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                     )
                 }
                 if (uiState.ownedStocks.isEmpty()) AppSupportText("조회된 보유 종목이 없습니다.")
+                AppPrimaryButton(
+                    text = if (uiState.isSubmittingOrder) "주문 전송 중" else "긴급 전체 시장가 매도",
+                    onClick = { showSellAllConfirmation = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = uiState.isConfigSaved &&
+                        uiState.ownedStocks.isNotEmpty() &&
+                        !uiState.isSubmittingOrder &&
+                        !isEmergencySellBlocked,
+                )
+                AppSupportText("정규장 09:00~15:30 또는 NXT 애프터마켓 15:40~20:00에 실행할 수 있으며, 긴급 매도에는 1회 최대 주문금액을 적용하지 않습니다.")
             }
         }
         item {

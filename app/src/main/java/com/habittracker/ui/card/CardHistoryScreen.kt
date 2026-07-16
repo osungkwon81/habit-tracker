@@ -1,6 +1,7 @@
 package com.habittracker.ui.card
 
 import androidx.compose.foundation.Canvas
+import com.habittracker.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -70,7 +71,7 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             AppHeroCard(
                 title = "카드 이력",
                 description = "카드 사용 내역과 월별 결제 예정액을 관리합니다.",
-                icon = "▤",
+                iconRes = R.drawable.home_quick_card,
                 eyebrow = "MONEY · CARD",
                 action = {
                     CardTopSummaryContent(summary = topSummary)

@@ -1,6 +1,7 @@
 ﻿package com.habittracker.ui.entry
 
 import android.app.DatePickerDialog
+import com.habittracker.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -119,7 +120,7 @@ fun DailyEntryScreen(
             AppHeroCard(
                 title = "일일 기록",
                 description = "날짜별 습관과 운동 기록을 입력합니다.",
-                icon = "✓",
+                iconRes = R.drawable.home_quick_record,
                 eyebrow = "HABIT · DAILY",
                 action = {
                     onOpenAdmin?.let { openAdmin ->

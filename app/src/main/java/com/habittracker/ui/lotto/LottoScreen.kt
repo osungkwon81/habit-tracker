@@ -1,6 +1,7 @@
 ﻿package com.habittracker.ui.lotto
 
 import androidx.compose.foundation.background
+import com.habittracker.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -110,7 +111,7 @@ fun LottoScreen(viewModel: LottoViewModel) {
             AppHeroCard(
                 title = "로또 관리",
                 description = "번호 생성과 구입·추첨 이력을 관리합니다.",
-                icon = "◎",
+                iconRes = R.drawable.home_quick_lotto,
                 eyebrow = "LOTTO · ANALYSIS",
                 status = "생성기 ver. ${LottoNumberGenerator.CURRENT_GENERATION_VERSION}",
             )

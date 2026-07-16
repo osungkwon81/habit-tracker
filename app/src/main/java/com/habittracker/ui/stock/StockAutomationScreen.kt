@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.habittracker.data.stock.StockAutomationService
 import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockRuleAction
+import com.habittracker.data.stock.isCrashGuardOrderBlock
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
@@ -67,7 +68,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 icon = "🛡",
                 eyebrow = "STOCK · AUTOMATION",
                 title = "자동 매도·알림",
-                description = "정규장 중 켜진 규칙만 감시하며, 전역 스위치가 켜져야 자동 매도합니다.",
+                description = "정규장과 NXT 애프터마켓에서 켜진 규칙을 감시하며, 전역 스위치가 켜져야 자동 매도합니다.",
             )
         }
         item {
@@ -75,6 +76,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 StockSectionTitle("긴급 정지")
                 if (uiState.safetyConfig.globalOrderBlocked) {
                     AppStatusText(uiState.safetyConfig.blockReason ?: "전체 주문 차단 중")
+                    if (uiState.safetyConfig.isCrashGuardOrderBlock()) {
+                        AppSupportText("급락 안전장치가 발동해 일반 주문은 차단 중이며, 사용자가 확인한 긴급 전체 시장가 매도만 허용됩니다.")
+                    }
                     AppPrimaryButton(
                         text = "KIS 상태 확인 후 차단 해제",
                         onClick = { viewModel.setGlobalOrderBlock(false) },
@@ -96,7 +100,8 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 AppStatusText(
                     if (uiState.safetyConfig.monitoringEnabled) "모니터링 사용 중" else "모니터링 중지됨",
                 )
-                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30에만 설정된 주기로 규칙과 급락 안전장치를 확인합니다.")
+                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30과 NXT 애프터마켓 15:40~20:00에 설정된 주기로 규칙과 급락 안전장치를 확인합니다.")
+                AppSupportText("조건 충족 알림에는 종목·시장 구분·현재가·평균가·수익률·보유수량·발동 조건·주문 결과가 표시됩니다.")
                 if (notificationPermissionDenied) {
                     Text(
                         "알림 권한이 거부되어 모니터링을 시작하지 않았습니다.",

@@ -49,8 +49,11 @@ import com.habittracker.data.stock.KisDomesticStockClient
 import com.habittracker.data.stock.KisEnvironment
 import com.habittracker.data.stock.KisMarketCapStock
 import com.habittracker.data.stock.KisOrderSide
+import com.habittracker.data.stock.KisStockMarket
 import com.habittracker.data.stock.StockAutomationCycleResult
 import com.habittracker.data.stock.StockAutomationNotice
+import com.habittracker.data.stock.StockBulkSellFailure
+import com.habittracker.data.stock.StockBulkSellResult
 import com.habittracker.data.stock.StockBuyLotRow
 import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockJournalAnalysis
@@ -58,8 +61,11 @@ import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderStatus
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
+import com.habittracker.data.stock.STOCK_CRASH_GUARD_BLOCK_PREFIX
+import com.habittracker.data.stock.isCrashGuardOrderBlock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
@@ -122,6 +128,10 @@ class HabitRepository(
     private val stockAutomationMutex = Mutex()
     private val kisConfigCipher = AndroidKeystoreStringCipher()
     private val kisDomesticStockClient = KisDomesticStockClient()
+    private val regularMarketOpenTime = LocalTime.of(9, 0)
+    private val regularMarketCloseTime = LocalTime.of(15, 30)
+    private val nxtAfterMarketOpenTime = LocalTime.of(15, 40)
+    private val nxtAfterMarketCloseTime = LocalTime.of(20, 0)
 
     private suspend fun <T> persistChange(block: suspend () -> T): T = withContext(NonCancellable + Dispatchers.IO) {
         val result = block()
@@ -253,7 +263,9 @@ class HabitRepository(
 
     suspend fun getKisBalanceStocks(): List<KisBalanceStock> = withContext(Dispatchers.IO) {
         val (config, accessToken) = getKisConfigAndAccessToken()
-        kisDomesticStockClient.getBalance(config, accessToken)
+        val marketTime = ZonedDateTime.now(ZoneId.of("Asia/Seoul")).toLocalTime()
+        val market = resolveActiveStockMarket(marketTime) ?: KisStockMarket.KRX
+        kisDomesticStockClient.getBalance(config, accessToken, market)
     }
 
     suspend fun getKisMarketCapStocks(): List<KisMarketCapStock> = withContext(Dispatchers.IO) {
@@ -424,8 +436,12 @@ class HabitRepository(
         productName: String,
         source: StockOrderSource = StockOrderSource.MANUAL,
         requireAutomaticEnabled: Boolean = false,
+        isEmergencyLiquidation: Boolean = false,
     ): StockOrderEntity = withContext(Dispatchers.IO) {
         stockOrderMutex.withLock {
+            require(!isEmergencyLiquidation || draft.side == KisOrderSide.SELL) {
+                "긴급 청산은 매도 주문에만 사용할 수 있습니다."
+            }
             val quantity = draft.orderQuantity.toLongOrNull()
             require(quantity?.let { it > 0L } == true) { "주문 수량은 1주 이상이어야 합니다." }
             val requestedPrice = draft.orderUnitPrice.toLongOrNull()
@@ -434,6 +450,9 @@ class HabitRepository(
             require(draft.orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) {
                 "주문 방식은 지정가 또는 시장가만 사용할 수 있습니다."
             }
+            val quoteMarket = KisStockMarket.values()
+                .firstOrNull { it.orderExchangeCode == draft.exchangeIdDivisionCode }
+                ?: throw IllegalArgumentException("거래소는 KRX, NXT 또는 SOR만 사용할 수 있습니다.")
             if (draft.orderDivisionCode == stockLimitOrderCode) {
                 require(requestedPrice > 0L) { "지정가는 1원 이상으로 입력해 주세요." }
             } else {
@@ -441,7 +460,9 @@ class HabitRepository(
             }
 
             var safety = getStockSafetyConfig()
-            require(!safety.globalOrderBlocked) { "전체 주문이 차단되어 있습니다. ${safety.blockReason.orEmpty()}" }
+            require(!isStockOrderBlocked(safety, isEmergencyLiquidation)) {
+                "전체 주문이 차단되어 있습니다. ${safety.blockReason.orEmpty()}"
+            }
             if (requireAutomaticEnabled) {
                 require(safety.automaticOrderEnabled) { "자동 주문 실행이 꺼져 있습니다." }
             }
@@ -450,16 +471,22 @@ class HabitRepository(
             }
 
             val (config, accessToken) = getKisConfigAndAccessToken()
-            safety = refreshCrashGuard(safety, config, accessToken)
-            require(!safety.globalOrderBlocked) { "급락 안전장치로 전체 주문이 차단되었습니다. ${safety.blockReason.orEmpty()}" }
+            if (!isEmergencyLiquidation) {
+                safety = refreshCrashGuard(safety, config, accessToken)
+            }
+            require(!isStockOrderBlocked(safety, isEmergencyLiquidation)) {
+                "급락 안전장치로 전체 주문이 차단되었습니다. ${safety.blockReason.orEmpty()}"
+            }
 
-            val currentPrice = kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode)
+            val currentPrice = kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode, quoteMarket)
                 .currentPrice.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
             val estimatedUnitPrice = if (draft.orderDivisionCode == stockLimitOrderCode) requestedPrice else currentPrice
             val estimatedAmount = Math.multiplyExact(quantity, estimatedUnitPrice)
-            safety.maxOrderAmount?.let { limit ->
-                require(estimatedAmount <= limit) { "예상 주문금액이 1회 최대 주문금액을 초과합니다. ($estimatedAmount > $limit)" }
+            if (!isEmergencyLiquidation) {
+                safety.maxOrderAmount?.let { limit ->
+                    require(estimatedAmount <= limit) { "예상 주문금액이 1회 최대 주문금액을 초과합니다. ($estimatedAmount > $limit)" }
+                }
             }
 
             if (draft.side == KisOrderSide.BUY) {
@@ -549,6 +576,57 @@ class HabitRepository(
             )
             order
         }
+    }
+
+    suspend fun sellAllKisHoldings(): StockBulkSellResult = withContext(Dispatchers.IO) {
+        val marketNow = ZonedDateTime.now(ZoneId.of("Asia/Seoul"))
+        require(marketNow.dayOfWeek !in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY)) {
+            "주말에는 보유 종목 전체 매도를 실행할 수 없습니다."
+        }
+        val market = resolveActiveStockMarket(marketNow.toLocalTime())
+            ?: throw IllegalStateException("전체 매도는 정규장 09:00~15:30 또는 NXT 애프터마켓 15:40~20:00에 실행해 주세요.")
+        require(isKisMarketOpenDay(marketNow.toLocalDate())) { "KIS 휴장일에는 보유 종목 전체 매도를 실행할 수 없습니다." }
+
+        val safety = getStockSafetyConfig()
+        require(!isStockOrderBlocked(safety, isEmergencyLiquidation = true)) {
+            "사용자가 전체 주문을 긴급 차단한 상태입니다. 차단을 해제한 뒤 다시 시도해 주세요."
+        }
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        val balances = kisDomesticStockClient.getBalance(config, accessToken, market)
+            .filter { it.quantity.toLongOrNull()?.let { quantity -> quantity > 0L } == true }
+        require(balances.isNotEmpty()) { "매도할 보유 종목이 없습니다." }
+
+        val submittedOrders = mutableListOf<StockOrderEntity>()
+        val failures = mutableListOf<StockBulkSellFailure>()
+        balances.forEachIndexed { index, balance ->
+            val quantity = balance.quantity.toLongOrNull() ?: 0L
+            runCatching {
+                placeKisCashOrder(
+                    draft = KisCashOrderDraft(
+                        side = KisOrderSide.SELL,
+                        productCode = balance.productCode,
+                        orderDivisionCode = stockMarketOrderCode,
+                        orderQuantity = quantity.toString(),
+                        orderUnitPrice = "0",
+                        exchangeIdDivisionCode = market.orderExchangeCode,
+                        sellType = "01",
+                        conditionPrice = "",
+                    ),
+                    productName = balance.productName,
+                    source = StockOrderSource.MANUAL,
+                    isEmergencyLiquidation = true,
+                )
+            }.onSuccess(submittedOrders::add)
+                .onFailure { error ->
+                    failures += StockBulkSellFailure(
+                        productCode = balance.productCode,
+                        productName = balance.productName,
+                        reason = error.message ?: "주문 접수에 실패했습니다.",
+                    )
+                }
+            if (index < balances.lastIndex) delay(250L)
+        }
+        StockBulkSellResult(submittedOrders, failures)
     }
 
     suspend fun syncStockOrderExecutions(): Int = withContext(Dispatchers.IO) {
@@ -703,15 +781,15 @@ class HabitRepository(
             val marketNow = ZonedDateTime.now(ZoneId.of("Asia/Seoul"))
             val marketDate = marketNow.toLocalDate()
             val marketTime = marketNow.toLocalTime()
+            val market = resolveActiveStockMarket(marketTime)
             if (
                 marketDate.dayOfWeek in setOf(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY) ||
-                marketTime < LocalTime.of(9, 0) ||
-                marketTime >= LocalTime.of(15, 30)
+                market == null
             ) {
                 return@withLock StockAutomationCycleResult(
                     checkedAt = marketNow.toLocalDateTime(),
                     notices = emptyList(),
-                    skippedReason = "정규장 09:00~15:30 외에는 자동화 규칙을 확인하지 않습니다.",
+                    skippedReason = "정규장 09:00~15:30 및 NXT 애프터마켓 15:40~20:00 외에는 자동화 규칙을 확인하지 않습니다.",
                 )
             }
             if (!isKisMarketOpenDay(marketDate)) {
@@ -738,14 +816,16 @@ class HabitRepository(
             if (rulesByProduct.isEmpty()) {
                 return@withLock StockAutomationCycleResult(LocalDateTime.now(), emptyList())
             }
-            val balanceMap = kisDomesticStockClient.getBalance(config, accessToken).associateBy(KisBalanceStock::productCode)
+            val activeRuleCount = rulesByProduct.values.sumOf { rules -> rules.size }
+            var monitoredProductCount = 0
+            val balanceMap = kisDomesticStockClient.getBalance(config, accessToken, market).associateBy(KisBalanceStock::productCode)
             for ((productCode, rules) in rulesByProduct) {
                 val balance = balanceMap[productCode] ?: continue
                 val holdingQuantity = balance.quantity.toLongOrNull() ?: continue
                 if (holdingQuantity <= 0L) continue
                 val averagePrice = balance.averagePrice.toDoubleOrNull()?.takeIf { it > 0.0 } ?: continue
                 val currentPrice = try {
-                    kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode).currentPrice.toLong()
+                    kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode, market).currentPrice.toLong()
                 } catch (error: Exception) {
                     saveStockAutomationEvent(
                         level = "ERROR",
@@ -755,6 +835,7 @@ class HabitRepository(
                     )
                     continue
                 }
+                monitoredProductCount += 1
                 val returnPercent = (currentPrice.toDouble() - averagePrice) / averagePrice * 100.0
                 var autoOrderSubmitted = false
                 for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
@@ -782,22 +863,30 @@ class HabitRepository(
                     if (!triggered) continue
 
                     val triggerMessage = when (ruleType) {
-                        StockExitRuleType.STOP_LOSS -> "손절 기준 ${rule.triggerValue}% 도달 (현재 ${"%.2f".format(returnPercent)}%)"
-                        StockExitRuleType.TAKE_PROFIT -> "익절 기준 ${rule.triggerValue}% 도달 (현재 ${"%.2f".format(returnPercent)}%)"
-                        StockExitRuleType.TRAILING_STOP -> "고점 ${rule.referenceHighPrice}원 대비 ${rule.triggerValue}% 하락"
-                        StockExitRuleType.TIME_EXIT -> "보유 기간 ${rule.triggerValue.toLong()}일 도달"
+                        StockExitRuleType.STOP_LOSS -> "발동 조건: 손절 -${formatStockRuleValue(rule.triggerValue)}% 이하"
+                        StockExitRuleType.TAKE_PROFIT -> "발동 조건: 익절 +${formatStockRuleValue(rule.triggerValue)}% 이상"
+                        StockExitRuleType.TRAILING_STOP -> "발동 조건: 고점 ${formatStockPrice(rule.referenceHighPrice ?: currentPrice)} 대비 -${formatStockRuleValue(rule.triggerValue)}%"
+                        StockExitRuleType.TIME_EXIT -> "발동 조건: 보유 ${rule.triggerValue.toLong()}일 도달"
                     }
                     val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode } ?: StockRuleAction.NOTIFY_ONLY
-                    var noticeMessage = "${balance.productName}: $triggerMessage"
-                    if (action == StockRuleAction.AUTO_SELL) {
+                    val noticeLines = mutableListOf(
+                        "${balance.productName} ($productCode) · ${market.stockNotificationLabel()}",
+                        "현재가 ${formatStockPrice(currentPrice)} · 평균가 ${formatStockPrice(averagePrice.toLong())} · 수익률 ${formatStockReturn(returnPercent)}",
+                        "보유 ${holdingQuantity}주",
+                        triggerMessage,
+                    )
+                    if (action == StockRuleAction.NOTIFY_ONLY) {
+                        noticeLines += "처리: 알림만 · 주문 없음"
+                    } else {
                         val sellQuantity = floor(holdingQuantity * rule.sellQuantityPercent / 100.0)
                             .toLong()
                             .coerceAtLeast(1L)
                             .coerceAtMost(holdingQuantity)
+                        val orderTypeLabel = if (rule.orderDivisionCode == stockMarketOrderCode) "시장가" else "현재가 지정가"
                         if (!safety.automaticOrderEnabled) {
-                            noticeMessage += " · 자동 주문이 꺼져 있어 주문하지 않았습니다."
+                            noticeLines += "처리: 자동매도 꺼짐 · ${orderTypeLabel} ${sellQuantity}주 주문 없음"
                         } else if (sellQuantity <= 0L) {
-                            noticeMessage += " · 계산된 매도 수량이 0주라 주문하지 않았습니다."
+                            noticeLines += "처리: 계산된 매도 수량 0주 · 주문 없음"
                         } else {
                             val source = when (ruleType) {
                                 StockExitRuleType.STOP_LOSS -> StockOrderSource.STOP_LOSS
@@ -813,7 +902,7 @@ class HabitRepository(
                                         orderDivisionCode = rule.orderDivisionCode,
                                         orderQuantity = sellQuantity.toString(),
                                         orderUnitPrice = if (rule.orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
-                                        exchangeIdDivisionCode = "KRX",
+                                        exchangeIdDivisionCode = market.orderExchangeCode,
                                         sellType = "01",
                                         conditionPrice = "",
                                     ),
@@ -822,15 +911,16 @@ class HabitRepository(
                                     requireAutomaticEnabled = true,
                                 )
                             }.onSuccess { order ->
-                                noticeMessage += " · ${sellQuantity}주 주문 접수 (${order.orderNumber})"
+                                noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 접수 · 주문번호 ${order.orderNumber}"
                                 autoOrderSubmitted = true
                             }.onFailure { error ->
-                                noticeMessage += " · 주문 실패: ${error.message.orEmpty()}"
+                                noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 실패 · ${error.message.orEmpty()}"
                             }
                         }
                     }
+                    val noticeMessage = noticeLines.joinToString("\n")
                     notices += StockAutomationNotice(
-                        title = "${ruleType.label} 알림",
+                        title = "[${balance.productName}] ${ruleType.label} 조건 충족",
                         message = noticeMessage,
                         productCode = productCode,
                     )
@@ -852,9 +942,38 @@ class HabitRepository(
                     if (autoOrderSubmitted) break
                 }
             }
-            StockAutomationCycleResult(LocalDateTime.now(), notices)
+            StockAutomationCycleResult(
+                checkedAt = LocalDateTime.now(),
+                notices = notices,
+                monitoredProductCount = monitoredProductCount,
+                activeRuleCount = activeRuleCount,
+            )
         }
     }
+
+    private fun resolveActiveStockMarket(time: LocalTime): KisStockMarket? = when {
+        time >= regularMarketOpenTime && time < regularMarketCloseTime -> KisStockMarket.UNIFIED
+        time >= nxtAfterMarketOpenTime && time < nxtAfterMarketCloseTime -> KisStockMarket.NXT
+        else -> null
+    }
+
+    private fun KisStockMarket.stockNotificationLabel(): String = when (this) {
+        KisStockMarket.KRX -> "KRX"
+        KisStockMarket.NXT -> "NXT 애프터마켓"
+        KisStockMarket.UNIFIED -> "KRX·NXT 통합장"
+    }
+
+    private fun formatStockPrice(price: Long): String = "%,d원".format(price)
+
+    private fun formatStockReturn(returnPercent: Double): String = "%+.2f%%".format(returnPercent)
+
+    private fun formatStockRuleValue(value: Double): String = "%.2f".format(value).trimEnd('0').trimEnd('.')
+
+    private fun isStockOrderBlocked(
+        safety: StockSafetyConfigEntity,
+        isEmergencyLiquidation: Boolean,
+    ): Boolean = safety.globalOrderBlocked &&
+        !(isEmergencyLiquidation && safety.isCrashGuardOrderBlock())
 
     private suspend fun refreshCrashGuard(
         safety: StockSafetyConfigEntity,
@@ -866,7 +985,7 @@ class HabitRepository(
         val threshold = safety.crashThresholdPercent ?: return safety
         val index = kisDomesticStockClient.getIndexPrice(config, accessToken, benchmarkCode)
         if (index.changeRatePercent > -threshold) return safety
-        val reason = "${index.name} 전일 대비 ${"%.2f".format(index.changeRatePercent)}%로 급락 기준 -${threshold}% 도달"
+        val reason = "$STOCK_CRASH_GUARD_BLOCK_PREFIX ${index.name} 전일 대비 ${"%.2f".format(index.changeRatePercent)}%로 급락 기준 -${threshold}% 도달"
         val blocked = safety.copy(
             globalOrderBlocked = true,
             blockReason = reason,

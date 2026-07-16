@@ -1,6 +1,7 @@
 package com.habittracker.ui.admin
 
 import androidx.compose.foundation.background
+import com.habittracker.R
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -84,7 +85,7 @@ fun AdminScreen(
             AppHeroCard(
                 title = "관리",
                 description = "일일 기록에 사용할 항목을 추가하고 정리합니다.",
-                icon = "⚙",
+                iconRes = R.drawable.home_quick_record,
                 eyebrow = "HABIT · SETTINGS",
                 action = {
                     onOpenEntry?.let { openEntry ->
