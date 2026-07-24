@@ -5,10 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
@@ -19,8 +22,9 @@ private const val diaryListMode = "list"
 private const val diaryDetailMode = "detail"
 private const val diaryEditorMode = "editor"
 private const val diaryPageSize = 20
+private const val diarySearchDebounceMillis = 300L
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class DiaryViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
@@ -29,14 +33,18 @@ class DiaryViewModel(
     private val message = MutableStateFlow<String?>(null)
     private val searchQuery = MutableStateFlow("")
     private val screenMode = MutableStateFlow(diaryListMode)
+    private val visibleLimit = MutableStateFlow(diaryPageSize)
 
-    private val diaryListFlow = searchQuery.flatMapLatest { query ->
-        if (query.isBlank()) {
-            repository.observeDiaryList(diaryPageSize)
-        } else {
-            repository.observeDiaryListByQuery(query, diaryPageSize)
+    private val diaryListFlow = combine(searchQuery, visibleLimit) { query, limit -> query to limit }
+        .debounce(diarySearchDebounceMillis)
+        .distinctUntilChanged()
+        .flatMapLatest { (query, limit) ->
+            if (query.isBlank()) {
+                repository.observeDiaryList(limit)
+            } else {
+                repository.observeDiaryListByQuery(query, limit)
+            }
         }
-    }
 
     val uiState: StateFlow<DiaryUiState> = combine(
         combine(selectedDate, reloadToken) { date, token -> date to token }
@@ -61,6 +69,7 @@ class DiaryViewModel(
             statusMessage = statusMessage,
             searchQuery = query,
             searchResults = diaryList,
+            canLoadMore = diaryList.size >= visibleLimit.value,
             screenMode = mode,
         )
     }.stateIn(
@@ -84,10 +93,16 @@ class DiaryViewModel(
 
     fun updateSearchQuery(query: String) {
         searchQuery.value = query
+        visibleLimit.value = diaryPageSize
     }
 
     fun searchDiaries() {
         message.value = null
+    }
+
+    fun loadMoreDiaries() {
+        if (!uiState.value.canLoadMore) return
+        visibleLimit.value += diaryPageSize
     }
 
     fun openSearchResult(diaryDate: LocalDate) {
@@ -144,5 +159,6 @@ data class DiaryUiState(
     val statusMessage: String? = null,
     val searchQuery: String = "",
     val searchResults: List<DiarySearchRow> = emptyList(),
+    val canLoadMore: Boolean = false,
     val screenMode: String = diaryListMode,
 )

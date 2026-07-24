@@ -9,7 +9,10 @@ import java.time.LocalDateTime
 
 @Entity(
     tableName = "lotto_purchase",
-    indices = [Index(value = ["purchase_date"])],
+    indices = [
+        Index(value = ["purchase_date"]),
+        Index(value = ["round_no"]),
+    ],
 )
 data class LottoPurchaseEntity(
     @PrimaryKey(autoGenerate = true)
@@ -18,6 +21,8 @@ data class LottoPurchaseEntity(
     val purchaseDate: LocalDate,
     @ColumnInfo(name = "lotto_type")
     val lottoType: String,
+    @ColumnInfo(name = "round_no")
+    val roundNo: Int? = null,
     @ColumnInfo(name = "amount")
     val amount: Int,
     @ColumnInfo(name = "memo")

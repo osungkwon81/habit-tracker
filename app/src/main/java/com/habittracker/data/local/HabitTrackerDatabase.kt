@@ -57,7 +57,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         StockSellAllocationEntity::class,
         StockAutomationEventEntity::class,
     ],
-    version = 25,
+    version = 26,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -66,7 +66,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 25
+        const val DB_VERSION = 26
 
         fun builder(context: Context) =
             Room.databaseBuilder(

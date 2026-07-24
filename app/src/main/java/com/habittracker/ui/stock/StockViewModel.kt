@@ -1,5 +1,6 @@
 package com.habittracker.ui.stock
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.StockAutomationEventEntity
@@ -21,20 +22,26 @@ import com.habittracker.data.stock.StockJournalAnalysis
 import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
+
+private const val stockAutomationEventPageSize = 50
+private const val stockViewModelLogTag = "StockViewModel"
 
 class StockViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(StockUiState())
     val uiState: StateFlow<StockUiState> = _uiState.asStateFlow()
+    private val automationEventLimit = MutableStateFlow(stockAutomationEventPageSize)
     private var safetyFormInitialized = false
 
     init {
@@ -42,6 +49,7 @@ class StockViewModel(
         loadConfigCompletion()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeTradingData() {
         viewModelScope.launch {
             repository.observeStockOrders().collect { orders ->
@@ -69,9 +77,16 @@ class StockViewModel(
             }
         }
         viewModelScope.launch {
-            repository.observeStockAutomationEvents().collect { events ->
-                _uiState.update { it.copy(automationEvents = events) }
-            }
+            automationEventLimit
+                .flatMapLatest { limit -> repository.observeStockAutomationEvents(limit) }
+                .collect { events ->
+                    _uiState.update {
+                        it.copy(
+                            automationEvents = events,
+                            canLoadMoreAutomationEvents = events.size >= automationEventLimit.value,
+                        )
+                    }
+                }
         }
         viewModelScope.launch {
             repository.observeStockSafetyConfig().collect { config ->
@@ -140,6 +155,12 @@ class StockViewModel(
                     }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "KIS_BALANCE_QUERY_FAILED",
+                        title = "보유 종목 조회 실패",
+                        error = error,
+                        fallbackMessage = "보유 종목을 조회하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(
                             isLoadingOwnedStocks = false,
@@ -160,6 +181,12 @@ class StockViewModel(
                     _uiState.update { it.copy(marketCapStocks = stocks, isLoadingMarketCapStocks = false) }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "KIS_MARKET_CAP_QUERY_FAILED",
+                        title = "매수 종목 조회 실패",
+                        error = error,
+                        fallbackMessage = "매수 종목을 조회하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(
                             isLoadingMarketCapStocks = false,
@@ -211,6 +238,12 @@ class StockViewModel(
                     )
                 }
             }.onFailure { error ->
+                recordStockError(
+                    eventType = "ORDER_SUBMIT_FAILED",
+                    title = "주문 접수 실패",
+                    error = error,
+                    fallbackMessage = "주문을 접수하지 못했습니다.",
+                )
                 _uiState.update {
                     it.copy(isSubmittingOrder = false, statusMessage = error.message ?: "주문 접수에 실패했습니다.")
                 }
@@ -257,6 +290,12 @@ class StockViewModel(
                     )
                 }
             }.onFailure { error ->
+                recordStockError(
+                    eventType = "ORDER_SUBMIT_FAILED",
+                    title = "매도 주문 접수 실패",
+                    error = error,
+                    fallbackMessage = "매도 주문을 접수하지 못했습니다.",
+                )
                 _uiState.update {
                     it.copy(isSubmittingOrder = false, statusMessage = error.message ?: "매도 주문 접수에 실패했습니다.")
                 }
@@ -289,6 +328,12 @@ class StockViewModel(
                     }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "ORDER_SUBMIT_FAILED",
+                        title = "보유 종목 전체 매도 실패",
+                        error = error,
+                        fallbackMessage = "보유 종목 전체 매도에 실패했습니다.",
+                    )
                     _uiState.update {
                         it.copy(
                             isSubmittingOrder = false,
@@ -317,6 +362,12 @@ class StockViewModel(
                     )
                 }
             }.onFailure { error ->
+                recordStockError(
+                    eventType = "KIS_PORTFOLIO_REFRESH_FAILED",
+                    title = "매수 내역 갱신 실패",
+                    error = error,
+                    fallbackMessage = "매수 내역을 갱신하지 못했습니다.",
+                )
                 _uiState.update {
                     it.copy(isLoadingPortfolio = false, statusMessage = "매수 내역 갱신에 실패했습니다. ${error.message.orEmpty()}")
                 }
@@ -332,6 +383,12 @@ class StockViewModel(
                     _uiState.update { it.copy(isSyncingOrders = false, statusMessage = "체결 기록 ${count}건을 동기화했습니다.") }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "ORDER_SYNC_FAILED",
+                        title = "체결 상태 확인 실패",
+                        error = error,
+                        fallbackMessage = "체결 상태를 확인하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(isSyncingOrders = false, statusMessage = "체결 상태 확인에 실패했습니다. ${error.message.orEmpty()}")
                     }
@@ -468,6 +525,12 @@ class StockViewModel(
                     onResult(true)
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "MONITORING_STATE_CHANGE_FAILED",
+                        title = "모니터링 상태 변경 실패",
+                        error = error,
+                        fallbackMessage = "모니터링 상태를 변경하지 못했습니다.",
+                    )
                     _uiState.update { it.copy(statusMessage = error.message ?: "모니터링 상태 변경에 실패했습니다.") }
                     onResult(false)
                 }
@@ -494,6 +557,12 @@ class StockViewModel(
                     }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "AUTOMATION_CHECK_FAILED",
+                        title = "자동화 확인 실패",
+                        error = error,
+                        fallbackMessage = "자동화 규칙을 확인하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(isRunningAutomation = false, statusMessage = "자동화 확인에 실패했습니다. ${error.message.orEmpty()}")
                     }
@@ -584,6 +653,12 @@ class StockViewModel(
                     _uiState.update { it.copy(rebalancePlan = plan, isCalculatingRebalance = false) }
                 }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "REBALANCE_CALCULATION_FAILED",
+                        title = "리밸런싱 계산 실패",
+                        error = error,
+                        fallbackMessage = "리밸런싱을 계산하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(isCalculatingRebalance = false, statusMessage = "리밸런싱 계산에 실패했습니다. ${error.message.orEmpty()}")
                     }
@@ -605,12 +680,30 @@ class StockViewModel(
                 .onSuccess {
                     _uiState.update { it.copy(isLoadingJournal = false) }
                 }.onFailure { error ->
+                    recordStockError(
+                        eventType = "ORDER_SYNC_FAILED",
+                        title = "매매일지 분석 실패",
+                        error = error,
+                        fallbackMessage = "매매일지를 분석하지 못했습니다.",
+                    )
                     _uiState.update {
                         it.copy(isLoadingJournal = false, statusMessage = "매매일지 분석에 실패했습니다. ${error.message.orEmpty()}")
                     }
                 }
         }
     }
+
+    fun loadMoreStockAutomationEvents() {
+        if (!_uiState.value.canLoadMoreAutomationEvents) return
+        automationEventLimit.value += stockAutomationEventPageSize
+    }
+
+    fun clearStockAutomationEvents() =
+        launchAction("주식 알림·오류 기록 삭제에 실패했습니다.") {
+            repository.clearStockAutomationEvents()
+            automationEventLimit.value = stockAutomationEventPageSize
+            _uiState.update { it.copy(statusMessage = "주식 알림·오류 기록을 모두 삭제했습니다.") }
+        }
 
     fun resolveUnknownOrder(orderId: Long) =
         launchAction("확인 대기 주문 처리에 실패했습니다.") {
@@ -628,6 +721,12 @@ class StockViewModel(
             }.onSuccess { (saved, expiresAt) ->
                 _uiState.update { it.copy(isConfigSaved = saved, accessTokenExpiredAt = expiresAt) }
             }.onFailure { error ->
+                recordStockError(
+                    eventType = "KIS_CONFIG_CHECK_FAILED",
+                    title = "KIS 설정 상태 확인 실패",
+                    error = error,
+                    fallbackMessage = "KIS 설정 상태를 확인하지 못했습니다.",
+                )
                 _uiState.update { it.copy(statusMessage = error.message ?: "KIS 설정 상태 확인에 실패했습니다.") }
             }
         }
@@ -657,8 +756,36 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching { block() }
                 .onFailure { error ->
+                    recordStockError(
+                        eventType = "STOCK_ACTION_FAILED",
+                        title = failurePrefix,
+                        error = error,
+                        fallbackMessage = failurePrefix,
+                    )
                     _uiState.update { it.copy(statusMessage = "$failurePrefix ${error.message.orEmpty()}") }
                 }
+        }
+    }
+
+    private suspend fun recordStockError(
+        eventType: String,
+        title: String,
+        error: Throwable,
+        fallbackMessage: String,
+    ) {
+        val message = error.message?.takeIf(String::isNotBlank) ?: fallbackMessage
+        runCatching {
+            repository.saveStockErrorEvent(
+                eventType = eventType,
+                title = title,
+                message = message,
+            )
+        }.onFailure { saveError ->
+            Log.e(
+                stockViewModelLogTag,
+                "Failed to persist stock error event. (eventType=$eventType)",
+                saveError,
+            )
         }
     }
 }
@@ -725,6 +852,7 @@ data class StockUiState(
     val manualTradeQuantity: String = "",
     val manualTradePrice: String = "",
     val automationEvents: List<StockAutomationEventEntity> = emptyList(),
+    val canLoadMoreAutomationEvents: Boolean = false,
     val isLoadingJournal: Boolean = false,
     val statusMessage: String? = null,
 ) {

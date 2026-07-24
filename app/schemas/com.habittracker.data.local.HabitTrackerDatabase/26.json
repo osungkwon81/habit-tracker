@@ -1,0 +1,2062 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 26,
+    "identityHash": "27f0d60ad78f241677fc62ead5110917",
+    "entities": [
+      {
+        "tableName": "task_item_master",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `code` TEXT NOT NULL, `name` TEXT NOT NULL, `category` TEXT NOT NULL, `value_type` TEXT NOT NULL, `unit` TEXT, `description` TEXT, `is_active` INTEGER NOT NULL, `sort_order` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "code",
+            "columnName": "code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "valueType",
+            "columnName": "value_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "isActive",
+            "columnName": "is_active",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sort_order",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_task_item_master_code",
+            "unique": true,
+            "columnNames": [
+              "code"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_item_master_code` ON `${TABLE_NAME}` (`code`)"
+          },
+          {
+            "name": "index_task_item_master_category",
+            "unique": false,
+            "columnNames": [
+              "category"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_task_item_master_category` ON `${TABLE_NAME}` (`category`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "daily_record",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `record_date` TEXT NOT NULL, `memo` TEXT, `is_holiday` INTEGER NOT NULL, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordDate",
+            "columnName": "record_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memo",
+            "columnName": "memo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "isHoliday",
+            "columnName": "is_holiday",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_daily_record_record_date",
+            "unique": true,
+            "columnNames": [
+              "record_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_daily_record_record_date` ON `${TABLE_NAME}` (`record_date`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "daily_record_item",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `daily_record_id` INTEGER NOT NULL, `task_item_master_id` INTEGER NOT NULL, `number_value` REAL, `boolean_value` INTEGER, `text_value` TEXT, `duration_minutes` INTEGER, `checked` INTEGER NOT NULL, `note` TEXT, FOREIGN KEY(`daily_record_id`) REFERENCES `daily_record`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`task_item_master_id`) REFERENCES `task_item_master`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailyRecordId",
+            "columnName": "daily_record_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskItemMasterId",
+            "columnName": "task_item_master_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "numberValue",
+            "columnName": "number_value",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "booleanValue",
+            "columnName": "boolean_value",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "textValue",
+            "columnName": "text_value",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "durationMinutes",
+            "columnName": "duration_minutes",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "checked",
+            "columnName": "checked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_daily_record_item_daily_record_id",
+            "unique": false,
+            "columnNames": [
+              "daily_record_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_daily_record_item_daily_record_id` ON `${TABLE_NAME}` (`daily_record_id`)"
+          },
+          {
+            "name": "index_daily_record_item_task_item_master_id",
+            "unique": false,
+            "columnNames": [
+              "task_item_master_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_daily_record_item_task_item_master_id` ON `${TABLE_NAME}` (`task_item_master_id`)"
+          },
+          {
+            "name": "index_daily_record_item_daily_record_id_task_item_master_id",
+            "unique": true,
+            "columnNames": [
+              "daily_record_id",
+              "task_item_master_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_daily_record_item_daily_record_id_task_item_master_id` ON `${TABLE_NAME}` (`daily_record_id`, `task_item_master_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "daily_record",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "daily_record_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "task_item_master",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "task_item_master_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "task_item_attachment",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `task_item_master_id` INTEGER NOT NULL, `file_uri` TEXT NOT NULL, `file_name` TEXT NOT NULL, `mime_type` TEXT NOT NULL, `description` TEXT, FOREIGN KEY(`task_item_master_id`) REFERENCES `task_item_master`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskItemMasterId",
+            "columnName": "task_item_master_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileUri",
+            "columnName": "file_uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "file_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mime_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_task_item_attachment_task_item_master_id",
+            "unique": false,
+            "columnNames": [
+              "task_item_master_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_task_item_attachment_task_item_master_id` ON `${TABLE_NAME}` (`task_item_master_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "task_item_master",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "task_item_master_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "daily_record_item_attachment",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `daily_record_item_id` INTEGER NOT NULL, `file_uri` TEXT NOT NULL, `file_name` TEXT NOT NULL, `mime_type` TEXT NOT NULL, `description` TEXT, FOREIGN KEY(`daily_record_item_id`) REFERENCES `daily_record_item`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailyRecordItemId",
+            "columnName": "daily_record_item_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileUri",
+            "columnName": "file_uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "file_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mime_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_daily_record_item_attachment_daily_record_item_id",
+            "unique": false,
+            "columnNames": [
+              "daily_record_item_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_daily_record_item_attachment_daily_record_item_id` ON `${TABLE_NAME}` (`daily_record_item_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "daily_record_item",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "daily_record_item_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "daily_diary",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `diary_date` TEXT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `weather` TEXT NOT NULL, `image_uris` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "diaryDate",
+            "columnName": "diary_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weather",
+            "columnName": "weather",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageUris",
+            "columnName": "image_uris",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_daily_diary_diary_date",
+            "unique": true,
+            "columnNames": [
+              "diary_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_daily_diary_diary_date` ON `${TABLE_NAME}` (`diary_date`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_draw",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`round_no` INTEGER NOT NULL, `number1` INTEGER NOT NULL, `number2` INTEGER NOT NULL, `number3` INTEGER NOT NULL, `number4` INTEGER NOT NULL, `number5` INTEGER NOT NULL, `number6` INTEGER NOT NULL, `bonus_number` INTEGER, `data_source` TEXT NOT NULL DEFAULT 'LEGACY', `saved_at` TEXT NOT NULL, PRIMARY KEY(`round_no`))",
+        "fields": [
+          {
+            "fieldPath": "roundNo",
+            "columnName": "round_no",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number1",
+            "columnName": "number1",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number2",
+            "columnName": "number2",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number3",
+            "columnName": "number3",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number4",
+            "columnName": "number4",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number5",
+            "columnName": "number5",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number6",
+            "columnName": "number6",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bonusNumber",
+            "columnName": "bonus_number",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dataSource",
+            "columnName": "data_source",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'LEGACY'"
+          },
+          {
+            "fieldPath": "savedAt",
+            "columnName": "saved_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "round_no"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_generation_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`generation_version` TEXT NOT NULL, `config_json` TEXT NOT NULL, `config_hash` TEXT NOT NULL, `created_at` TEXT NOT NULL, PRIMARY KEY(`generation_version`, `config_hash`))",
+        "fields": [
+          {
+            "fieldPath": "generationVersion",
+            "columnName": "generation_version",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configJson",
+            "columnName": "config_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configHash",
+            "columnName": "config_hash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "generation_version",
+            "config_hash"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_ticket",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `source_label` TEXT NOT NULL, `number1` INTEGER NOT NULL, `number2` INTEGER NOT NULL, `number3` INTEGER NOT NULL, `number4` INTEGER NOT NULL, `number5` INTEGER NOT NULL, `number6` INTEGER NOT NULL, `note` TEXT, `round_no` INTEGER, `set_no` INTEGER, `is_purchased` INTEGER NOT NULL, `is_evaluation_target` INTEGER NOT NULL, `purchase_confirmed_at` TEXT, `generation_version` TEXT NOT NULL, `generation_config_hash` TEXT, `history_through_round` INTEGER, `generation_seed` INTEGER, `analysis_score` REAL, `data_score` REAL, `pattern_score` REAL, `distribution_score` REAL, `avoidance_score` REAL, `validation_score` REAL, `generation_mode` TEXT, `recommendation_rank` INTEGER, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceLabel",
+            "columnName": "source_label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number1",
+            "columnName": "number1",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number2",
+            "columnName": "number2",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number3",
+            "columnName": "number3",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number4",
+            "columnName": "number4",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number5",
+            "columnName": "number5",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "number6",
+            "columnName": "number6",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "roundNo",
+            "columnName": "round_no",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "setNo",
+            "columnName": "set_no",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "isPurchased",
+            "columnName": "is_purchased",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isEvaluationTarget",
+            "columnName": "is_evaluation_target",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "purchaseConfirmedAt",
+            "columnName": "purchase_confirmed_at",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "generationVersion",
+            "columnName": "generation_version",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generationConfigHash",
+            "columnName": "generation_config_hash",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "historyThroughRound",
+            "columnName": "history_through_round",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "generationSeed",
+            "columnName": "generation_seed",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "analysisScore",
+            "columnName": "analysis_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dataScore",
+            "columnName": "data_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "patternScore",
+            "columnName": "pattern_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "distributionScore",
+            "columnName": "distribution_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "avoidanceScore",
+            "columnName": "avoidance_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "validationScore",
+            "columnName": "validation_score",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "generationMode",
+            "columnName": "generation_mode",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "recommendationRank",
+            "columnName": "recommendation_rank",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_lotto_ticket_created_at",
+            "unique": false,
+            "columnNames": [
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lotto_ticket_created_at` ON `${TABLE_NAME}` (`created_at`)"
+          },
+          {
+            "name": "index_lotto_ticket_round_no_source_label",
+            "unique": false,
+            "columnNames": [
+              "round_no",
+              "source_label"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lotto_ticket_round_no_source_label` ON `${TABLE_NAME}` (`round_no`, `source_label`)"
+          },
+          {
+            "name": "index_lotto_ticket_round_no_source_label_set_no_recommendation_rank",
+            "unique": true,
+            "columnNames": [
+              "round_no",
+              "source_label",
+              "set_no",
+              "recommendation_rank"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_lotto_ticket_round_no_source_label_set_no_recommendation_rank` ON `${TABLE_NAME}` (`round_no`, `source_label`, `set_no`, `recommendation_rank`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_purchase",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `purchase_date` TEXT NOT NULL, `lotto_type` TEXT NOT NULL, `round_no` INTEGER, `amount` INTEGER NOT NULL, `memo` TEXT, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "purchaseDate",
+            "columnName": "purchase_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lottoType",
+            "columnName": "lotto_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "roundNo",
+            "columnName": "round_no",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memo",
+            "columnName": "memo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_lotto_purchase_purchase_date",
+            "unique": false,
+            "columnNames": [
+              "purchase_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lotto_purchase_purchase_date` ON `${TABLE_NAME}` (`purchase_date`)"
+          },
+          {
+            "name": "index_lotto_purchase_round_no",
+            "unique": false,
+            "columnNames": [
+              "round_no"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lotto_purchase_round_no` ON `${TABLE_NAME}` (`round_no`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_winning",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `round_no` INTEGER NOT NULL, `lotto_type` TEXT NOT NULL DEFAULT '로또', `amount` INTEGER NOT NULL, `source_label` TEXT NOT NULL, `memo` TEXT, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "roundNo",
+            "columnName": "round_no",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lottoType",
+            "columnName": "lotto_type",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'로또'"
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceLabel",
+            "columnName": "source_label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memo",
+            "columnName": "memo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_lotto_winning_round_no",
+            "unique": false,
+            "columnNames": [
+              "round_no"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_lotto_winning_round_no` ON `${TABLE_NAME}` (`round_no`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_winning_stat",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source_label` TEXT NOT NULL, `generation_version` TEXT NOT NULL, `rank5_count` INTEGER NOT NULL, `rank4_count` INTEGER NOT NULL, `rank3_count` INTEGER NOT NULL, `rank2_count` INTEGER NOT NULL, `rank1_count` INTEGER NOT NULL, `evaluated_ticket_count` INTEGER NOT NULL, `style_pass_count` INTEGER NOT NULL, `style_score_total` INTEGER NOT NULL, `scored_ticket_count` INTEGER NOT NULL, `analysis_score_total` REAL NOT NULL, `match_count_total` INTEGER NOT NULL, PRIMARY KEY(`source_label`, `generation_version`))",
+        "fields": [
+          {
+            "fieldPath": "sourceLabel",
+            "columnName": "source_label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generationVersion",
+            "columnName": "generation_version",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank5Count",
+            "columnName": "rank5_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank4Count",
+            "columnName": "rank4_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank3Count",
+            "columnName": "rank3_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank2Count",
+            "columnName": "rank2_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank1Count",
+            "columnName": "rank1_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evaluatedTicketCount",
+            "columnName": "evaluated_ticket_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stylePassCount",
+            "columnName": "style_pass_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "styleScoreTotal",
+            "columnName": "style_score_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scoredTicketCount",
+            "columnName": "scored_ticket_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisScoreTotal",
+            "columnName": "analysis_score_total",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "matchCountTotal",
+            "columnName": "match_count_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "source_label",
+            "generation_version"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "lotto_winning_stat_round",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`round_no` INTEGER NOT NULL, `source_label` TEXT NOT NULL, `generation_version` TEXT NOT NULL, `rank5_count` INTEGER NOT NULL, `rank4_count` INTEGER NOT NULL, `rank3_count` INTEGER NOT NULL, `rank2_count` INTEGER NOT NULL, `rank1_count` INTEGER NOT NULL, `evaluated_ticket_count` INTEGER NOT NULL, `style_pass_count` INTEGER NOT NULL, `style_score_total` INTEGER NOT NULL, `scored_ticket_count` INTEGER NOT NULL, `analysis_score_total` REAL NOT NULL, `match_count_total` INTEGER NOT NULL, PRIMARY KEY(`round_no`, `source_label`, `generation_version`))",
+        "fields": [
+          {
+            "fieldPath": "roundNo",
+            "columnName": "round_no",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceLabel",
+            "columnName": "source_label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generationVersion",
+            "columnName": "generation_version",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank5Count",
+            "columnName": "rank5_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank4Count",
+            "columnName": "rank4_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank3Count",
+            "columnName": "rank3_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank2Count",
+            "columnName": "rank2_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rank1Count",
+            "columnName": "rank1_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evaluatedTicketCount",
+            "columnName": "evaluated_ticket_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stylePassCount",
+            "columnName": "style_pass_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "styleScoreTotal",
+            "columnName": "style_score_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scoredTicketCount",
+            "columnName": "scored_ticket_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisScoreTotal",
+            "columnName": "analysis_score_total",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "matchCountTotal",
+            "columnName": "match_count_total",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "round_no",
+            "source_label",
+            "generation_version"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "card_history",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `use_date` TEXT NOT NULL, `amount` INTEGER NOT NULL, `memo` TEXT, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "useDate",
+            "columnName": "use_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memo",
+            "columnName": "memo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_card_history_use_date",
+            "unique": false,
+            "columnNames": [
+              "use_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_card_history_use_date` ON `${TABLE_NAME}` (`use_date`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "memo_note",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `content` TEXT NOT NULL, `is_locked` INTEGER NOT NULL, `is_pinned` INTEGER NOT NULL, `password_hash` TEXT, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isLocked",
+            "columnName": "is_locked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPinned",
+            "columnName": "is_pinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passwordHash",
+            "columnName": "password_hash",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "vocabulary_word",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `word` TEXT NOT NULL, `meaning` TEXT NOT NULL, `pronunciation` TEXT, `correct_count` INTEGER NOT NULL, `wrong_count` INTEGER NOT NULL, `exposure_count` INTEGER NOT NULL, `flashcard_study_seconds` INTEGER NOT NULL, `test_study_seconds` INTEGER NOT NULL, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "word",
+            "columnName": "word",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "meaning",
+            "columnName": "meaning",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pronunciation",
+            "columnName": "pronunciation",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "correctCount",
+            "columnName": "correct_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wrongCount",
+            "columnName": "wrong_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exposureCount",
+            "columnName": "exposure_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashcardStudySeconds",
+            "columnName": "flashcard_study_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testStudySeconds",
+            "columnName": "test_study_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_vocabulary_word_word_meaning",
+            "unique": true,
+            "columnNames": [
+              "word",
+              "meaning"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_vocabulary_word_word_meaning` ON `${TABLE_NAME}` (`word`, `meaning`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "plant",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `image_uri` TEXT, `memo` TEXT, `watering_interval_days` INTEGER NOT NULL, `last_watered_date` TEXT NOT NULL, `next_watering_date` TEXT NOT NULL, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imageUri",
+            "columnName": "image_uri",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "memo",
+            "columnName": "memo",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "wateringIntervalDays",
+            "columnName": "watering_interval_days",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastWateredDate",
+            "columnName": "last_watered_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextWateringDate",
+            "columnName": "next_watering_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_plant_next_watering_date",
+            "unique": false,
+            "columnNames": [
+              "next_watering_date"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_plant_next_watering_date` ON `${TABLE_NAME}` (`next_watering_date`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "kis_api_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`environment` TEXT NOT NULL, `app_key_encrypted` TEXT NOT NULL, `app_secret_encrypted` TEXT NOT NULL, `account_number_encrypted` TEXT NOT NULL, `account_product_code_encrypted` TEXT NOT NULL, `hts_id_encrypted` TEXT, `access_token_encrypted` TEXT, `access_token_expired_at` TEXT, `updated_at` TEXT NOT NULL, PRIMARY KEY(`environment`))",
+        "fields": [
+          {
+            "fieldPath": "environment",
+            "columnName": "environment",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedAppKey",
+            "columnName": "app_key_encrypted",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedAppSecret",
+            "columnName": "app_secret_encrypted",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedAccountNumber",
+            "columnName": "account_number_encrypted",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedAccountProductCode",
+            "columnName": "account_product_code_encrypted",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "encryptedHtsId",
+            "columnName": "hts_id_encrypted",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "encryptedAccessToken",
+            "columnName": "access_token_encrypted",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "accessTokenExpiredAt",
+            "columnName": "access_token_expired_at",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "environment"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_order",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `order_number` TEXT NOT NULL, `order_date` TEXT NOT NULL, `order_time` TEXT NOT NULL, `side` TEXT NOT NULL, `product_code` TEXT NOT NULL, `product_name` TEXT NOT NULL, `requested_quantity` INTEGER NOT NULL, `requested_unit_price` INTEGER NOT NULL, `reference_price` INTEGER NOT NULL, `order_division_code` TEXT NOT NULL, `exchange_code` TEXT NOT NULL, `source` TEXT NOT NULL, `status` TEXT NOT NULL, `intended_buy_order_id` INTEGER, `filled_quantity` INTEGER NOT NULL, `applied_filled_quantity` INTEGER NOT NULL, `filled_average_price` INTEGER, `remaining_quantity` INTEGER NOT NULL, `estimated_realized_profit` INTEGER, `message` TEXT, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderNumber",
+            "columnName": "order_number",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderDate",
+            "columnName": "order_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderTime",
+            "columnName": "order_time",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "side",
+            "columnName": "side",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productCode",
+            "columnName": "product_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productName",
+            "columnName": "product_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestedQuantity",
+            "columnName": "requested_quantity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestedUnitPrice",
+            "columnName": "requested_unit_price",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "referencePrice",
+            "columnName": "reference_price",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderDivisionCode",
+            "columnName": "order_division_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exchangeCode",
+            "columnName": "exchange_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intendedBuyOrderId",
+            "columnName": "intended_buy_order_id",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "filledQuantity",
+            "columnName": "filled_quantity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appliedFilledQuantity",
+            "columnName": "applied_filled_quantity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "filledAveragePrice",
+            "columnName": "filled_average_price",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "remainingQuantity",
+            "columnName": "remaining_quantity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "estimatedRealizedProfit",
+            "columnName": "estimated_realized_profit",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "message",
+            "columnName": "message",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_stock_order_order_date_order_number",
+            "unique": true,
+            "columnNames": [
+              "order_date",
+              "order_number"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_stock_order_order_date_order_number` ON `${TABLE_NAME}` (`order_date`, `order_number`)"
+          },
+          {
+            "name": "index_stock_order_product_code",
+            "unique": false,
+            "columnNames": [
+              "product_code"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_order_product_code` ON `${TABLE_NAME}` (`product_code`)"
+          },
+          {
+            "name": "index_stock_order_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_order_status` ON `${TABLE_NAME}` (`status`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_exit_rule",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `product_code` TEXT NOT NULL, `product_name` TEXT NOT NULL, `rule_type` TEXT NOT NULL, `trigger_value` REAL NOT NULL, `trigger_price` INTEGER, `sell_quantity_percent` REAL NOT NULL, `action_mode` TEXT NOT NULL, `order_division_code` TEXT NOT NULL, `reference_high_price` INTEGER, `enabled` INTEGER NOT NULL, `last_triggered_at` TEXT, `created_at` TEXT NOT NULL, `updated_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productCode",
+            "columnName": "product_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productName",
+            "columnName": "product_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ruleType",
+            "columnName": "rule_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "triggerValue",
+            "columnName": "trigger_value",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "triggerPrice",
+            "columnName": "trigger_price",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sellQuantityPercent",
+            "columnName": "sell_quantity_percent",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actionMode",
+            "columnName": "action_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderDivisionCode",
+            "columnName": "order_division_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "referenceHighPrice",
+            "columnName": "reference_high_price",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTriggeredAt",
+            "columnName": "last_triggered_at",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_stock_exit_rule_product_code_enabled",
+            "unique": false,
+            "columnNames": [
+              "product_code",
+              "enabled"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_exit_rule_product_code_enabled` ON `${TABLE_NAME}` (`product_code`, `enabled`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_target_allocation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`product_code` TEXT NOT NULL, `product_name` TEXT NOT NULL, `target_percent` REAL NOT NULL, `enabled` INTEGER NOT NULL, `updated_at` TEXT NOT NULL, PRIMARY KEY(`product_code`))",
+        "fields": [
+          {
+            "fieldPath": "productCode",
+            "columnName": "product_code",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productName",
+            "columnName": "product_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetPercent",
+            "columnName": "target_percent",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enabled",
+            "columnName": "enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "product_code"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_safety_config",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `monitoring_enabled` INTEGER NOT NULL, `automatic_order_enabled` INTEGER NOT NULL, `global_order_blocked` INTEGER NOT NULL, `block_reason` TEXT, `crash_guard_enabled` INTEGER NOT NULL, `crash_benchmark_code` TEXT, `crash_threshold_percent` REAL, `monitor_interval_minutes` INTEGER, `max_order_amount` INTEGER, `daily_buy_limit` INTEGER, `updated_at` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "monitoringEnabled",
+            "columnName": "monitoring_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "automaticOrderEnabled",
+            "columnName": "automatic_order_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "globalOrderBlocked",
+            "columnName": "global_order_blocked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "blockReason",
+            "columnName": "block_reason",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "crashGuardEnabled",
+            "columnName": "crash_guard_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "crashBenchmarkCode",
+            "columnName": "crash_benchmark_code",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "crashThresholdPercent",
+            "columnName": "crash_threshold_percent",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "monitorIntervalMinutes",
+            "columnName": "monitor_interval_minutes",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "maxOrderAmount",
+            "columnName": "max_order_amount",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dailyBuyLimit",
+            "columnName": "daily_buy_limit",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_sell_allocation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sell_order_id` INTEGER NOT NULL, `buy_order_id` INTEGER NOT NULL, `quantity` INTEGER NOT NULL, `buy_unit_price` INTEGER NOT NULL, `sell_unit_price` INTEGER NOT NULL, `realized_profit` INTEGER NOT NULL, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sellOrderId",
+            "columnName": "sell_order_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "buyOrderId",
+            "columnName": "buy_order_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quantity",
+            "columnName": "quantity",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "buyUnitPrice",
+            "columnName": "buy_unit_price",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sellUnitPrice",
+            "columnName": "sell_unit_price",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "realizedProfit",
+            "columnName": "realized_profit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_stock_sell_allocation_sell_order_id",
+            "unique": false,
+            "columnNames": [
+              "sell_order_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_sell_allocation_sell_order_id` ON `${TABLE_NAME}` (`sell_order_id`)"
+          },
+          {
+            "name": "index_stock_sell_allocation_buy_order_id",
+            "unique": false,
+            "columnNames": [
+              "buy_order_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_sell_allocation_buy_order_id` ON `${TABLE_NAME}` (`buy_order_id`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "stock_automation_event",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `level` TEXT NOT NULL, `event_type` TEXT NOT NULL, `product_code` TEXT, `message` TEXT NOT NULL, `created_at` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventType",
+            "columnName": "event_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "productCode",
+            "columnName": "product_code",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "message",
+            "columnName": "message",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_stock_automation_event_created_at",
+            "unique": false,
+            "columnNames": [
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_stock_automation_event_created_at` ON `${TABLE_NAME}` (`created_at`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '27f0d60ad78f241677fc62ead5110917')"
+    ]
+  }
+}

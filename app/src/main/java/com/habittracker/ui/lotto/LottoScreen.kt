@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -151,7 +152,6 @@ fun LottoScreen(viewModel: LottoViewModel) {
                             sourceLabel = "분산형",
                             tickets = uiState.geminiResults,
                             isLatest = true,
-                            onApply = viewModel::applyGeneratedNumbers,
                             onSaveBatch = viewModel::saveGeneratedBatch,
                         )
                     }
@@ -161,7 +161,6 @@ fun LottoScreen(viewModel: LottoViewModel) {
                             sourceLabel = "균형형",
                             tickets = uiState.chatGptResults,
                             isLatest = false,
-                            onApply = viewModel::applyGeneratedNumbers,
                             onSaveBatch = viewModel::saveGeneratedBatch,
                         )
                     }
@@ -172,7 +171,6 @@ fun LottoScreen(viewModel: LottoViewModel) {
                             sourceLabel = "균형형",
                             tickets = uiState.chatGptResults,
                             isLatest = uiState.lastGeneratedSource == "균형형",
-                            onApply = viewModel::applyGeneratedNumbers,
                             onSaveBatch = viewModel::saveGeneratedBatch,
                         )
                     }
@@ -182,7 +180,6 @@ fun LottoScreen(viewModel: LottoViewModel) {
                             sourceLabel = "분산형",
                             tickets = uiState.geminiResults,
                             isLatest = false,
-                            onApply = viewModel::applyGeneratedNumbers,
                             onSaveBatch = viewModel::saveGeneratedBatch,
                         )
                     }
@@ -223,15 +220,43 @@ fun LottoScreen(viewModel: LottoViewModel) {
                 }
             }
             "purchase" -> {
-                item { PurchaseSection(onSave = viewModel::savePurchase) }
-                if (uiState.purchases.isEmpty()) item { AppEmptyCard("구입 이력이 없습니다.") } else items(uiState.purchases, key = { it.id }) { purchase ->
-                    LottoPurchaseCard(purchase = purchase, onDelete = viewModel::deletePurchase)
+                item {
+                    PurchaseSection(
+                        defaultRoundNo = uiState.nextRoundNo,
+                        onSave = viewModel::savePurchase,
+                    )
+                }
+                if (uiState.purchases.isEmpty()) {
+                    item { AppEmptyCard("구입 이력이 없습니다.") }
+                } else {
+                    itemsIndexed(uiState.purchases, key = { _, purchase -> purchase.id }) { index, purchase ->
+                        if (index == uiState.purchases.lastIndex && uiState.canLoadMorePurchases) {
+                            LaunchedEffect(purchase.id, uiState.purchases.size) {
+                                viewModel.loadMorePurchases()
+                            }
+                        }
+                        LottoPurchaseCard(purchase = purchase, onDelete = viewModel::deletePurchase)
+                    }
                 }
             }
             "winning" -> {
-                item { WinningSection(defaultRoundNo = uiState.latestSavedRoundNo, onSave = viewModel::saveWinning) }
-                if (uiState.winnings.isEmpty()) item { AppEmptyCard("내 당첨 이력이 없습니다.") } else items(uiState.winnings, key = { it.id }) { winning ->
-                    LottoWinningCard(winning = winning, onDelete = viewModel::deleteWinning)
+                item {
+                    WinningSection(
+                        defaultRoundNo = uiState.latestSavedRoundNo,
+                        onSave = viewModel::saveWinning,
+                    )
+                }
+                if (uiState.winnings.isEmpty()) {
+                    item { AppEmptyCard("내 당첨 이력이 없습니다.") }
+                } else {
+                    itemsIndexed(uiState.winnings, key = { _, winning -> winning.id }) { index, winning ->
+                        if (index == uiState.winnings.lastIndex && uiState.canLoadMoreWinnings) {
+                            LaunchedEffect(winning.id, uiState.winnings.size) {
+                                viewModel.loadMoreWinnings()
+                            }
+                        }
+                        LottoWinningCard(winning = winning, onDelete = viewModel::deleteWinning)
+                    }
                 }
             }
             "saved" -> {
@@ -292,7 +317,11 @@ private fun GeneratorSection(
     AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "번호 생성", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(text = "기본값은 정밀 모드입니다.", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = "점수는 과거 패턴 적합도이며 당첨 확률이 아닙니다. 기본값은 정밀 모드입니다.",
+                color = LottoTextMutedColor,
+                style = MaterialTheme.typography.bodySmall,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 LottoGenerationMode.entries.forEach { mode ->
                     AppSelectableChip(label = mode.label, selected = selectedMode == mode, onClick = { onModeSelected(mode) })
@@ -358,7 +387,6 @@ private fun GeneratedTicketSection(
     sourceLabel: String,
     tickets: List<LottoGeneratedTicket>,
     isLatest: Boolean,
-    onApply: (List<Int>) -> Unit,
     onSaveBatch: (String, List<LottoGeneratedTicket>) -> Unit,
 ) {
     val accentColor = if (sourceLabel == "분산형") GeminiAccent else ChatGptAccent
@@ -394,7 +422,6 @@ private fun GeneratedTicketSection(
                             Text(text = "${index + 1}번 조합", fontWeight = FontWeight.SemiBold, color = LottoTextStrongColor)
                             LottoNumbersCard(numbers = ticket.numbers)
                             ticket.comment?.let { Text(text = it, color = LottoTextMutedColor) }
-                            Button(onClick = { onApply(ticket.numbers) }, modifier = Modifier.fillMaxWidth()) { Text("입력칸 반영") }
                         }
                     }
                 }
@@ -458,11 +485,16 @@ private fun SearchSection(
 
 @Composable
 private fun LottoDrawCard(draw: LottoDrawEntity) {
+    val sourceLabel = when (draw.dataSource) {
+        "SEED" -> "기본 데이터"
+        "MANUAL" -> "직접 입력"
+        else -> "기존 데이터"
+    }
     Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = "${draw.roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             LottoNumberRow(numbers = draw.numbers(), bonusNumber = draw.bonusNumber)
-            Text(text = "저장 시각 ${draw.savedAt}", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
+            Text(text = "$sourceLabel · 저장 시각 ${draw.savedAt}", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -746,9 +778,13 @@ private fun RoundSavedTicketDeck(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PurchaseSection(onSave: (String, String, String, String, () -> Unit) -> Unit) {
+private fun PurchaseSection(
+    defaultRoundNo: Int?,
+    onSave: (String, String, String, String, String, () -> Unit) -> Unit,
+) {
     var purchaseDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var lottoType by remember { mutableStateOf("로또") }
+    var roundNo by remember(defaultRoundNo) { mutableStateOf(defaultRoundNo?.toString().orEmpty()) }
     var amount by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
     var showDatePicker by remember { mutableStateOf(false) }
@@ -798,6 +834,16 @@ private fun PurchaseSection(onSave: (String, String, String, String, () -> Unit)
             OutlinedTextField(value = purchaseDate, onValueChange = { purchaseDate = it }, modifier = Modifier.weight(1f), label = { Text("구입일") }, singleLine = true)
             AppSecondaryButton(text = "달력", onClick = { showDatePicker = true })
         }
+        if (lottoType == "로또") {
+            OutlinedTextField(
+                value = roundNo,
+                onValueChange = { roundNo = it.filter(Char::isDigit) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("구입 회차") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+        }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Text(text = "구입 금액 ${formatWon(amount.toLongOrNull() ?: 0L)}", color = LottoTextStrongColor, fontWeight = FontWeight.SemiBold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -813,6 +859,7 @@ private fun PurchaseSection(onSave: (String, String, String, String, () -> Unit)
                 onSave(
                     purchaseDate,
                     lottoType,
+                    roundNo,
                     amount,
                     memo,
                 ) {
@@ -830,7 +877,15 @@ private fun LottoPurchaseCard(purchase: LottoPurchaseEntity, onDelete: (Long) ->
     AppSectionCard {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text = "${purchase.purchaseDate} · ${purchase.lottoType}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    text = listOfNotNull(
+                        purchase.purchaseDate.toString(),
+                        purchase.lottoType,
+                        purchase.roundNo?.let { "${it}회차" },
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
                 Text(text = formatWon(purchase.amount.toLong()), color = LottoTextStrongColor, fontWeight = FontWeight.SemiBold)
                 purchase.memo?.let { Text(text = it, color = LottoTextMutedColor) }
             }
@@ -840,15 +895,29 @@ private fun LottoPurchaseCard(purchase: LottoPurchaseEntity, onDelete: (Long) ->
 }
 
 @Composable
-private fun WinningSection(defaultRoundNo: Int?, onSave: (String, String, String, () -> Unit) -> Unit) {
+private fun WinningSection(
+    defaultRoundNo: Int?,
+    onSave: (String, String, String, String, () -> Unit) -> Unit,
+) {
     val defaultRoundText = defaultRoundNo?.toString().orEmpty()
     var roundNo by remember(defaultRoundText) { mutableStateOf(defaultRoundText) }
     var amount by remember { mutableStateOf("") }
+    var sourceLabel by remember { mutableStateOf("기타") }
     var memo by remember { mutableStateOf("") }
 
     AppSectionCard {
         AppSectionHeader(title = "내 당첨 이력 입력")
         OutlinedTextField(value = roundNo, onValueChange = { roundNo = it.filter(Char::isDigit) }, modifier = Modifier.fillMaxWidth(), label = { Text("회차") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf("기타", "균형형", "분산형").forEach { source ->
+                AppSelectableChip(
+                    label = source,
+                    selected = sourceLabel == source,
+                    onClick = { sourceLabel = source },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
         OutlinedTextField(value = amount, onValueChange = { amount = it.filter(Char::isDigit) }, modifier = Modifier.fillMaxWidth(), label = { Text("당첨 금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         if (amount.isNotBlank()) {
             Text(text = formatWon(amount.toLongOrNull() ?: 0L), color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
@@ -857,9 +926,10 @@ private fun WinningSection(defaultRoundNo: Int?, onSave: (String, String, String
         AppSaveButton(
             text = "당첨 이력 저장",
             onClick = {
-                onSave(roundNo, amount, memo) {
+                onSave(roundNo, amount, sourceLabel, memo) {
                     roundNo = defaultRoundText
                     amount = ""
+                    sourceLabel = "기타"
                     memo = ""
                 }
             },
@@ -873,7 +943,11 @@ private fun LottoWinningCard(winning: LottoWinningEntity, onDelete: (Long) -> Un
     AppSectionCard {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text = "${winning.roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "${winning.roundNo}회차 · ${winning.sourceLabel}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
                 Text(text = formatWon(winning.amount), color = LottoTextStrongColor, fontWeight = FontWeight.SemiBold)
                 winning.memo?.let { Text(text = it, color = LottoTextMutedColor) }
             }
@@ -897,7 +971,7 @@ private fun LottoStatsSection(
     val net = totalWinning - totalPurchase
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         AppSectionCard {
-            AppSectionHeader(title = "구입/당첨 요약")
+            AppSectionHeader(title = "로또 구입/당첨 요약")
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatMiniCard(title = "구입", value = formatWon(totalPurchase), modifier = Modifier.weight(1f))
                 StatMiniCard(title = "당첨", value = formatWon(totalWinning), modifier = Modifier.weight(1f))
@@ -910,7 +984,7 @@ private fun LottoStatsSection(
             WinningTypeTable(winningTypeStats = winningTypeStats)
         }
         AppSectionCard {
-            AppSectionHeader(title = "분석점수 성과")
+            AppSectionHeader(title = "패턴 적합 점수 성과")
             ScorePerformanceSummary(scorePerformances)
         }
         AppSectionCard {
@@ -969,6 +1043,15 @@ private fun ControlComparisonSummary(comparisons: List<LottoControlComparison>) 
                     color = LottoTextMutedColor,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                val confidenceLow = comparison.differenceConfidenceLow
+                val confidenceHigh = comparison.differenceConfidenceHigh
+                if (confidenceLow != null && confidenceHigh != null) {
+                    Text(
+                        text = "평균 차이 95% 범위 ${"%+.2f".format(confidenceLow)} ~ ${"%+.2f".format(confidenceHigh)}",
+                        color = LottoTextMutedColor,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
                 if (comparison.pairedRoundCount < 20) {
                     Text(text = "20회차 미만은 표본이 적어 참고용입니다.", color = LottoTextMutedColor, style = MaterialTheme.typography.labelSmall)
                 }
@@ -985,6 +1068,11 @@ private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            text = "추천 당시 저장된 적합 점수와 실제 일치 개수의 관계를 참고용으로 표시합니다.",
+            color = LottoTextMutedColor,
+            style = MaterialTheme.typography.bodySmall,
+        )
         performances.forEach { performance ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -1021,7 +1109,7 @@ private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
 }
 
 private fun correlationResultText(correlation: LottoScoreCorrelation): String {
-    val coefficient = correlation.coefficient ?: return "표본/변동 부족 ${correlation.sampleCount}건"
+    val coefficient = correlation.coefficient ?: return "표본/변동 부족 ${correlation.sampleCount}회차"
     val strength = when {
         kotlin.math.abs(coefficient) < 0.10 -> "거의 없음"
         kotlin.math.abs(coefficient) < 0.30 -> "약함"
@@ -1033,7 +1121,7 @@ private fun correlationResultText(correlation: LottoScoreCorrelation): String {
         coefficient < 0.0 -> "음(-)"
         else -> "0"
     }
-    return "$direction $strength · r=${"%.2f".format(coefficient)} · ${correlation.sampleCount}건"
+    return "$direction $strength · r=${"%.2f".format(coefficient)} · ${correlation.sampleCount}회차"
 }
 
 @Composable
@@ -1057,7 +1145,7 @@ private fun WinningStyleRateSummary(winningTypeStats: List<LottoWinningTypeStat>
                     Text(text = "분석점수·스타일 평가 대상 아님", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
                 } else {
                     Text(
-                        text = "저장 분석점수 ${stat.averageAnalysisScore?.let { "%.1f".format(it) } ?: "-"} · " +
+                            text = "저장 적합점수 ${stat.averageAnalysisScore?.let { "%.1f".format(it) } ?: "-"} · " +
                             "스타일 적합 ${stylePassRate(stat)}% · 평균 ${stat.averageStyleScore}점",
                         color = LottoTextMutedColor,
                         style = MaterialTheme.typography.bodySmall,
@@ -1117,7 +1205,7 @@ private fun SavedTicketAnalysisText(ticket: LottoTicketEntity) {
         else -> ticket.generationMode
     }
     Text(
-        text = "분석 ${"%.1f".format(totalScore)} · 데이터 ${ticket.dataScore?.let { "%.1f".format(it) } ?: "-"} · " +
+        text = "적합 ${"%.1f".format(totalScore)} · 데이터 ${ticket.dataScore?.let { "%.1f".format(it) } ?: "-"} · " +
             "패턴 ${ticket.patternScore?.let { "%.1f".format(it) } ?: "-"} · 구조 ${ticket.distributionScore?.let { "%.1f".format(it) } ?: "-"}",
         color = LottoTextMutedColor,
         style = MaterialTheme.typography.bodySmall,
@@ -1127,6 +1215,8 @@ private fun SavedTicketAnalysisText(ticket: LottoTicketEntity) {
             modeLabel?.let { "$it 모드" },
             ticket.recommendationRank?.let { "추천 ${it}위" },
             ticket.generationVersion,
+            ticket.historyThroughRound?.let { "${it}회까지 분석" },
+            ticket.generationConfigHash?.take(8)?.let { "설정 $it" },
         ).joinToString(" · "),
         color = LottoTextMutedColor,
         style = MaterialTheme.typography.labelSmall,
@@ -1267,7 +1357,7 @@ private fun Long.toLocalDateString(): String {
 }
 
 private fun extractRoundNo(ticket: LottoTicketEntity): Int? {
-    return ticket.note
+    return ticket.roundNo ?: ticket.note
         ?.takeIf { it.startsWith("ROUND:") }
         ?.removePrefix("ROUND:")
         ?.substringBefore("|SET:")

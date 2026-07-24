@@ -107,6 +107,7 @@ internal class KisDomesticStockClient {
     private companion object {
         const val BASE_URL = "https://openapi.koreainvestment.com:9443"
         const val TOKEN_PATH = "/oauth2/tokenP"
+        const val WEBSOCKET_APPROVAL_PATH = "/oauth2/Approval"
         const val BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
         const val BALANCE_TR_ID = "TTTC8434R"
         const val CURRENT_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
@@ -167,6 +168,24 @@ internal class KisDomesticStockClient {
                 ?.let { LocalDateTime.now().plusSeconds(it) }
             ?: throw IOException("KIS 접근토큰 응답에 만료시간이 없습니다.")
         return KisAccessToken(accessToken, expiresAt)
+    }
+
+    fun issueWebSocketApprovalKey(config: KisApiConfig): String {
+        val response = requestJson(
+            url = "$BASE_URL$WEBSOCKET_APPROVAL_PATH",
+            method = "POST",
+            headers = mapOf(
+                "Content-Type" to "application/json",
+                "Accept" to "text/plain",
+                "charset" to "UTF-8",
+            ),
+            body = JSONObject()
+                .put("grant_type", "client_credentials")
+                .put("appkey", config.appKey)
+                .put("secretkey", config.appSecret),
+        ).body
+        return response.optString("approval_key").takeIf(String::isNotBlank)
+            ?: throw IOException("KIS 실시간 접속키 응답에 접속키가 없습니다.")
     }
 
     fun getBalance(

@@ -6,7 +6,7 @@ import java.time.LocalDateTime
 
 @Entity(
     tableName = "lotto_generation_config",
-    primaryKeys = ["generation_version"],
+    primaryKeys = ["generation_version", "config_hash"],
 )
 data class LottoGenerationConfigEntity(
     @ColumnInfo(name = "generation_version")

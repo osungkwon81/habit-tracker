@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.stock.KisOrderSide
 import com.habittracker.data.stock.StockOrderSource
@@ -32,6 +33,7 @@ import com.habittracker.ui.components.AppTextField
 fun StockJournalScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var unknownToResolve by remember { mutableStateOf<StockOrderEntity?>(null) }
+    var showClearAutomationEventsDialog by remember { mutableStateOf(false) }
     var isManualTradeExpanded by remember { mutableStateOf(false) }
     val allocationsBySellOrder = remember(uiState.sellAllocations) {
         uiState.sellAllocations.groupBy { it.sellOrderId }
@@ -87,6 +89,29 @@ fun StockJournalScreen(viewModel: StockViewModel) {
             },
             dismissButton = {
                 AppSecondaryButton(text = "취소", onClick = { unknownToResolve = null })
+            },
+        )
+    }
+
+    if (showClearAutomationEventsDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAutomationEventsDialog = false },
+            title = { Text("주식 알림·오류 기록 삭제") },
+            text = { Text("저장된 주식 알림·오류 기록을 모두 삭제할까요? 삭제한 기록은 되돌릴 수 없습니다.") },
+            confirmButton = {
+                AppPrimaryButton(
+                    text = "전체 삭제",
+                    onClick = {
+                        viewModel.clearStockAutomationEvents()
+                        showClearAutomationEventsDialog = false
+                    },
+                )
+            },
+            dismissButton = {
+                AppSecondaryButton(
+                    text = "취소",
+                    onClick = { showClearAutomationEventsDialog = false },
+                )
             },
         )
     }
@@ -195,6 +220,47 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                         "실현손익은 사용자가 연결한 매수 lot과 실제 매도 체결가로 계산한 세금·수수료 미반영 금액입니다.",
                     )
                 }
+            }
+        }
+        item {
+            StockSectionTitle("주식 알림·오류 기록")
+        }
+        item {
+            AppSecondaryButton(
+                text = "기록 전체 삭제",
+                onClick = { showClearAutomationEventsDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = uiState.automationEvents.isNotEmpty(),
+            )
+        }
+        if (uiState.automationEvents.isEmpty()) {
+            item { AppSectionCard { AppSupportText("저장된 주식 알림·오류 기록이 없습니다.") } }
+        }
+        items(uiState.automationEvents.size) { index ->
+            val event = uiState.automationEvents[index]
+            if (index == uiState.automationEvents.lastIndex && uiState.canLoadMoreAutomationEvents) {
+                LaunchedEffect(event.id, uiState.automationEvents.size) {
+                    viewModel.loadMoreStockAutomationEvents()
+                }
+            }
+            AppSectionCard {
+                Text(
+                    "${event.level} · ${event.eventType}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (event.level == "ERROR") {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                Text(
+                    event.createdAt.toString().replace('T', ' ').take(19),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.End,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(event.message, style = MaterialTheme.typography.bodyMedium)
             }
         }
         item { StockSectionTitle("주문 기록") }
@@ -319,27 +385,6 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
-        }
-        item { StockSectionTitle("자동화 이벤트") }
-        if (uiState.automationEvents.isEmpty()) {
-            item { AppSectionCard { AppSupportText("자동화 이벤트가 없습니다.") } }
-        }
-        items(uiState.automationEvents.size.coerceAtMost(50)) { index ->
-            val event = uiState.automationEvents[index]
-            AppSectionCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(event.eventType, style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        event.createdAt.toString().replace('T', ' ').take(19),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(event.message, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

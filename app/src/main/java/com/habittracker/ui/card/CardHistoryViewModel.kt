@@ -22,7 +22,7 @@ class CardHistoryViewModel(
     private val statusMessage = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<CardHistoryUiState> = combine(
-        repository.observeCardHistories(limit = 500),
+        repository.observeCardHistories(),
         selectedMonth,
         paymentDay,
         statusMessage,

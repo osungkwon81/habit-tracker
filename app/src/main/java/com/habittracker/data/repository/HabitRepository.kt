@@ -64,6 +64,9 @@ import com.habittracker.data.stock.StockJournalAnalysis
 import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderStatus
 import com.habittracker.data.stock.StockRebalanceLine
+import com.habittracker.data.stock.StockRealtimeMonitoringSnapshot
+import com.habittracker.data.stock.StockRealtimePosition
+import com.habittracker.data.stock.StockRealtimeTickResult
 import com.habittracker.data.stock.StockRuleAction
 import com.habittracker.data.stock.STOCK_CRASH_GUARD_BLOCK_PREFIX
 import com.habittracker.data.stock.isCrashGuardOrderBlock
@@ -90,6 +93,7 @@ import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.sqrt
 
 class HabitRepository(
     context: Context,
@@ -102,6 +106,8 @@ class HabitRepository(
         const val lottoSetNoteSeparator = "|SET:"
         const val randomControlSource = "무작위 대조군"
         const val randomControlSetId = "CONTROL"
+        const val lottoDrawSourceSeed = "SEED"
+        const val lottoDrawSourceManual = "MANUAL"
         const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
         const val cardPrefsName = "card-prefs"
@@ -118,10 +124,11 @@ class HabitRepository(
         const val cardSeedVersionKey = "card-seed-version"
         const val currentCardSeedVersion = 2
         const val lottoStatVersionKey = "lotto-winning-stat-version"
-        const val currentLottoStatVersion = 5
+        const val currentLottoStatVersion = 6
         const val stockSafetyConfigId = 1
         const val stockLimitOrderCode = "00"
         const val stockMarketOrderCode = "01"
+        val generatedLottoSources = setOf("균형형", "분산형")
     }
 
     val managedTaskValueTypes: List<ValueType> = listOf(ValueType.NUMBER, ValueType.EXERCISE)
@@ -152,8 +159,8 @@ class HabitRepository(
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
         habitDao.observeLottoDraws(roundNo, limit)
 
-    fun observeCardHistories(limit: Int): Flow<List<CardHistoryEntity>> =
-        habitDao.observeCardHistories(limit)
+    fun observeCardHistories(): Flow<List<CardHistoryEntity>> =
+        habitDao.observeCardHistories()
 
     fun observeSavedLottoTickets(limit: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTickets(limit)
@@ -167,10 +174,11 @@ class HabitRepository(
     ) { tickets, draws ->
         val drawMap = draws.associateBy(LottoDrawEntity::roundNo)
         val samples = tickets.mapNotNull { ticket ->
-            val roundNo = ticket.note?.let(::extractLottoRoundNo) ?: return@mapNotNull null
+            val roundNo = ticket.roundNo ?: ticket.note?.let(::extractLottoRoundNo) ?: return@mapNotNull null
             val draw = drawMap[roundNo] ?: return@mapNotNull null
             val totalScore = ticket.analysisScore ?: return@mapNotNull null
             LottoPerformanceSample(
+                roundNo = roundNo,
                 sourceLabel = normalizeWinningSource(ticket.sourceLabel),
                 generationVersion = ticket.generationVersion,
                 totalScore = totalScore,
@@ -186,7 +194,7 @@ class HabitRepository(
     }
 
     fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
-        habitDao.observeSavedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+        habitDao.observeSavedLottoTicketsByRound(roundNo)
 
     fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>> =
         habitDao.observeLottoPurchases(limit)
@@ -331,13 +339,31 @@ class HabitRepository(
     fun observeStockAutomationEvents(limit: Int = 100): Flow<List<StockAutomationEventEntity>> =
         habitDao.observeStockAutomationEvents(limit)
 
+    suspend fun saveStockErrorEvent(
+        eventType: String,
+        title: String,
+        message: String,
+        productCode: String? = null,
+    ) {
+        saveStockAutomationEvent(
+            level = "ERROR",
+            eventType = eventType,
+            productCode = productCode,
+            message = "$title\n$message",
+        )
+    }
+
+    suspend fun clearStockAutomationEvents() {
+        persistChange { habitDao.deleteAllStockAutomationEvents() }
+    }
+
     suspend fun getStockSafetyConfig(): StockSafetyConfigEntity = withContext(Dispatchers.IO) {
         habitDao.getStockSafetyConfig() ?: StockSafetyConfigEntity(id = stockSafetyConfigId)
     }
 
     suspend fun saveStockSafetyConfig(config: StockSafetyConfigEntity) {
         if (config.monitoringEnabled) {
-            require(config.monitorIntervalMinutes?.let { it > 0 } == true) { "모니터링 주기를 1분 이상 입력해 주세요." }
+            require(config.monitorIntervalMinutes?.let { it > 0 } == true) { "잔고·안전설정 동기화 주기를 1분 이상 입력해 주세요." }
         }
         if (config.crashGuardEnabled) {
             require(config.crashBenchmarkCode in setOf("0001", "1001", "2001")) { "급락 감시 기준 지수를 선택해 주세요." }
@@ -1052,7 +1078,7 @@ class HabitRepository(
             .mapNotNull { order -> StockOrderSource.values().firstOrNull { it.name == order.source } }
             .groupingBy { it }
             .eachCount()
-        StockJournalAnalysis(
+        return StockJournalAnalysis(
             filledBuyCount = buys.size,
             filledSellCount = sells.size,
             realizedTradeCount = analyzedSells.size,
@@ -1065,6 +1091,152 @@ class HabitRepository(
             },
             sourceCounts = sourceCounts,
         )
+    }
+
+    suspend fun issueKisRealtimeApprovalKey(): String = withContext(Dispatchers.IO) {
+        val entity = habitDao.getKisApiConfig(KisEnvironment.REAL.apiValue)
+            ?: throw IllegalStateException("KIS 설정을 먼저 저장해 주세요.")
+        kisDomesticStockClient.issueWebSocketApprovalKey(entity.toKisApiConfig(kisConfigCipher))
+    }
+
+    suspend fun prepareStockRealtimeMonitoring(
+        market: KisStockMarket,
+    ): StockRealtimeMonitoringSnapshot = withContext(Dispatchers.IO) {
+        stockAutomationMutex.withLock {
+            val notices = mutableListOf<StockAutomationNotice>()
+            var safety = getStockSafetyConfig()
+            if (!safety.monitoringEnabled) {
+                return@withLock StockRealtimeMonitoringSnapshot(
+                    positions = emptyList(),
+                    notices = emptyList(),
+                    globalOrderBlocked = false,
+                    blockReason = null,
+                )
+            }
+            if (
+                habitDao.getUnfinishedStockOrders().any {
+                    it.status == StockOrderStatus.SUBMITTED.name ||
+                        it.status == StockOrderStatus.PARTIALLY_FILLED.name
+                }
+            ) {
+                syncStockOrderExecutions()
+            }
+            val (config, accessToken) = getKisConfigAndAccessToken()
+            val wasBlocked = safety.globalOrderBlocked
+            safety = refreshCrashGuard(safety, config, accessToken)
+            if (safety.globalOrderBlocked) {
+                if (!wasBlocked) {
+                    notices += StockAutomationNotice(
+                        title = "급락 안전장치 발동",
+                        message = "${safety.blockReason.orEmpty()} 전체 주문을 차단했습니다.",
+                    )
+                }
+                return@withLock StockRealtimeMonitoringSnapshot(
+                    positions = emptyList(),
+                    notices = notices,
+                    globalOrderBlocked = true,
+                    blockReason = safety.blockReason,
+                )
+            }
+
+            val rules = habitDao.getEnabledStockExitRules()
+            if (rules.isEmpty()) {
+                return@withLock StockRealtimeMonitoringSnapshot(
+                    positions = emptyList(),
+                    notices = notices,
+                    globalOrderBlocked = false,
+                    blockReason = null,
+                )
+            }
+            val ruleProductCodes = rules.map(StockExitRuleEntity::productCode).toSet()
+            val positions = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+            }.mapNotNull { balance ->
+                if (balance.productCode !in ruleProductCodes) return@mapNotNull null
+                val holdingQuantity = balance.quantity.toLongOrNull()?.takeIf { it > 0L } ?: return@mapNotNull null
+                val averagePrice = balance.averagePrice.toDoubleOrNull()?.takeIf { it > 0.0 } ?: return@mapNotNull null
+                StockRealtimePosition(
+                    productCode = balance.productCode,
+                    productName = balance.productName,
+                    holdingQuantity = holdingQuantity,
+                    averagePrice = averagePrice,
+                    initialPrice = balance.currentPrice.toLongOrNull()?.takeIf { it > 0L },
+                )
+            }
+            StockRealtimeMonitoringSnapshot(
+                positions = positions,
+                notices = notices,
+                globalOrderBlocked = false,
+                blockReason = null,
+            )
+        }
+    }
+
+    suspend fun runStockAutomationRealtimeTick(
+        position: StockRealtimePosition,
+        currentPrice: Long,
+        market: KisStockMarket,
+        ignoredRuleIds: Set<Long>,
+        referenceHighPrices: Map<Long, Long>,
+    ): StockRealtimeTickResult = withContext(Dispatchers.IO) {
+        stockAutomationMutex.withLock {
+            val safety = getStockSafetyConfig()
+            if (!safety.monitoringEnabled || safety.globalOrderBlocked || currentPrice <= 0L) {
+                return@withLock StockRealtimeTickResult(emptyList())
+            }
+            val rules = habitDao.getEnabledStockExitRules(position.productCode)
+            if (rules.isEmpty()) return@withLock StockRealtimeTickResult(emptyList())
+            val balance = KisBalanceStock(
+                productCode = position.productCode,
+                productName = position.productName,
+                quantity = position.holdingQuantity.toString(),
+                averagePrice = position.averagePrice.toString(),
+                currentPrice = currentPrice.toString(),
+            )
+            val result = evaluateStockExitRules(
+                safety = safety,
+                market = market,
+                balance = balance,
+                holdingQuantity = position.holdingQuantity,
+                averagePrice = position.averagePrice,
+                currentPrice = currentPrice,
+                rules = rules,
+                ignoredRuleIds = ignoredRuleIds,
+                referenceHighPrices = referenceHighPrices,
+                persistReferenceHighPrices = false,
+            )
+            StockRealtimeTickResult(
+                notices = result.notices,
+                triggeredRuleIds = result.triggeredRuleIds,
+                referenceHighPrices = result.referenceHighPrices,
+            )
+        }
+    }
+
+    suspend fun persistStockRealtimeHighPrices(referenceHighPrices: Map<Long, Long>) {
+        if (referenceHighPrices.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            stockAutomationMutex.withLock {
+                val updates = habitDao.getEnabledStockExitRules().mapNotNull { rule ->
+                    if (
+                        rule.ruleType != StockExitRuleType.TRAILING_STOP.name ||
+                        rule.triggerPrice != null
+                    ) {
+                        return@mapNotNull null
+                    }
+                    val high = referenceHighPrices[rule.id] ?: return@mapNotNull null
+                    if (high <= (rule.referenceHighPrice ?: 0L)) return@mapNotNull null
+                    rule.copy(referenceHighPrice = high, updatedAt = LocalDateTime.now())
+                }
+                if (updates.isNotEmpty()) {
+                    persistChange {
+                        database.withTransaction {
+                            updates.forEach { rule -> habitDao.updateStockExitRule(rule) }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     suspend fun runStockAutomationCycle(): StockAutomationCycleResult = withContext(Dispatchers.IO) {
@@ -1143,126 +1315,18 @@ class HabitRepository(
                             message = "${balance.productName} 현재가 확인에 실패했습니다. ${error.message.orEmpty()}",
                         )
                         continue
-                    }
-                monitoredProductCount += 1
-                val returnPercent = (currentPrice.toDouble() - averagePrice) / averagePrice * 100.0
-                var autoOrderSubmitted = false
-                for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
-                    var rule = storedRule
-                    val ruleType = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType } ?: continue
-                    if (ruleType == StockExitRuleType.TRAILING_STOP && rule.triggerPrice == null) {
-                        val newHigh = max(rule.referenceHighPrice ?: currentPrice, currentPrice)
-                        if (newHigh != rule.referenceHighPrice) {
-                            rule = rule.copy(referenceHighPrice = newHigh, updatedAt = LocalDateTime.now())
-                            persistChange { habitDao.updateStockExitRule(rule) }
-                        }
-                    }
-                    val triggered = when (ruleType) {
-                        StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { currentPrice <= it }
-                            ?: (returnPercent <= -rule.triggerValue)
-                        StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { currentPrice >= it }
-                            ?: (returnPercent >= rule.triggerValue)
-                        StockExitRuleType.TRAILING_STOP -> {
-                            rule.triggerPrice?.let { currentPrice <= it } ?: run {
-                                val high = rule.referenceHighPrice ?: currentPrice
-                                currentPrice.toDouble() <= high.toDouble() * (1.0 - rule.triggerValue / 100.0)
-                            }
-                        }
-                        StockExitRuleType.TIME_EXIT -> {
-                            val oldestBuyDate = habitDao.getOldestOpenStockBuyDate(productCode)
-                            oldestBuyDate != null && ChronoUnit.DAYS.between(oldestBuyDate, LocalDate.now()) >= rule.triggerValue.toLong()
-                        }
-                    }
-                    if (!triggered) continue
-
-                    val triggerMessage = when (ruleType) {
-                        StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
-                            ?: "발동 조건: 손절 -${formatStockRuleValue(rule.triggerValue)}% 이하"
-                        StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이상" }
-                            ?: "발동 조건: 익절 +${formatStockRuleValue(rule.triggerValue)}% 이상"
-                        StockExitRuleType.TRAILING_STOP -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
-                            ?: "발동 조건: 고점 ${formatStockPrice(rule.referenceHighPrice ?: currentPrice)} 대비 -${formatStockRuleValue(rule.triggerValue)}%"
-                        StockExitRuleType.TIME_EXIT -> "발동 조건: 보유 ${rule.triggerValue.toLong()}일 도달"
-                    }
-                    val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode } ?: StockRuleAction.NOTIFY_ONLY
-                    var shouldDisableRule = action == StockRuleAction.NOTIFY_ONLY
-                    val noticeLines = mutableListOf(
-                        "${balance.productName} ($productCode) · ${market.stockNotificationLabel()}",
-                        "현재가 ${formatStockPrice(currentPrice)} · 평균가 ${formatStockPrice(averagePrice.toLong())} · 수익률 ${formatStockReturn(returnPercent)}",
-                        "보유 ${holdingQuantity}주",
-                        triggerMessage,
-                    )
-                    if (action == StockRuleAction.NOTIFY_ONLY) {
-                        noticeLines += "처리: 알림만 · 주문 없음"
-                    } else {
-                        val sellQuantity = floor(holdingQuantity * rule.sellQuantityPercent / 100.0)
-                            .toLong()
-                            .coerceAtLeast(1L)
-                            .coerceAtMost(holdingQuantity)
-                        val orderTypeLabel = if (rule.orderDivisionCode == stockMarketOrderCode) "시장가" else "현재가 지정가"
-                        if (!safety.automaticOrderEnabled) {
-                            noticeLines += "처리: 자동매도 꺼짐 · ${orderTypeLabel} ${sellQuantity}주 주문 없음"
-                        } else if (sellQuantity <= 0L) {
-                            noticeLines += "처리: 계산된 매도 수량 0주 · 주문 없음"
-                        } else {
-                            val source = when (ruleType) {
-                                StockExitRuleType.STOP_LOSS -> StockOrderSource.STOP_LOSS
-                                StockExitRuleType.TAKE_PROFIT -> StockOrderSource.TAKE_PROFIT
-                                StockExitRuleType.TRAILING_STOP -> StockOrderSource.TRAILING_STOP
-                                StockExitRuleType.TIME_EXIT -> StockOrderSource.TIME_EXIT
-                            }
-                            runCatching {
-                                placeKisCashOrder(
-                                    draft = KisCashOrderDraft(
-                                        side = KisOrderSide.SELL,
-                                        productCode = productCode,
-                                        orderDivisionCode = rule.orderDivisionCode,
-                                        orderQuantity = sellQuantity.toString(),
-                                        orderUnitPrice = if (rule.orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
-                                        exchangeIdDivisionCode = market.orderExchangeCode,
-                                        sellType = "01",
-                                        conditionPrice = "",
-                                    ),
-                                    productName = balance.productName,
-                                    source = source,
-                                    requireAutomaticEnabled = true,
-                                    verifiedCurrentPrice = currentPrice,
-                                    skipCrashGuardRefresh = true,
-                                )
-                            }.onSuccess { order ->
-                                noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 접수 · 주문번호 ${order.orderNumber}"
-                                autoOrderSubmitted = true
-                                shouldDisableRule = true
-                            }.onFailure { error ->
-                                noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 실패 · ${error.message.orEmpty()}"
-                            }
-                        }
-                    }
-                    val noticeMessage = noticeLines.joinToString("\n")
-                    notices += StockAutomationNotice(
-                        title = "[${balance.productName}] ${ruleType.label} 조건 충족",
-                        message = noticeMessage,
-                        productCode = productCode,
-                    )
-                    saveStockAutomationEvent(
-                        level = if (noticeMessage.contains("실패")) "ERROR" else "WARN",
-                        eventType = "EXIT_RULE_TRIGGERED",
-                        productCode = productCode,
-                        message = noticeMessage,
-                    )
-                    if (shouldDisableRule) {
-                        persistChange {
-                            habitDao.updateStockExitRule(
-                                rule.copy(
-                                    enabled = false,
-                                    lastTriggeredAt = LocalDateTime.now(),
-                                    updatedAt = LocalDateTime.now(),
-                                ),
-                            )
-                        }
-                    }
-                    if (autoOrderSubmitted) break
                 }
+                monitoredProductCount += 1
+                notices += evaluateStockExitRules(
+                    safety = safety,
+                    market = market,
+                    balance = balance,
+                    holdingQuantity = holdingQuantity,
+                    averagePrice = averagePrice,
+                    currentPrice = currentPrice,
+                    rules = rules,
+                    persistReferenceHighPrices = true,
+                ).notices
             }
             StockAutomationCycleResult(
                 checkedAt = LocalDateTime.now(),
@@ -1272,6 +1336,164 @@ class HabitRepository(
             )
         }
     }
+
+    private suspend fun evaluateStockExitRules(
+        safety: StockSafetyConfigEntity,
+        market: KisStockMarket,
+        balance: KisBalanceStock,
+        holdingQuantity: Long,
+        averagePrice: Double,
+        currentPrice: Long,
+        rules: List<StockExitRuleEntity>,
+        ignoredRuleIds: Set<Long> = emptySet(),
+        referenceHighPrices: Map<Long, Long> = emptyMap(),
+        persistReferenceHighPrices: Boolean,
+    ): StockRuleEvaluationResult {
+        val notices = mutableListOf<StockAutomationNotice>()
+        val triggeredRuleIds = mutableSetOf<Long>()
+        val updatedReferenceHighPrices = mutableMapOf<Long, Long>()
+        val returnPercent = (currentPrice.toDouble() - averagePrice) / averagePrice * 100.0
+        var autoOrderSubmitted = false
+
+        for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
+            var rule = storedRule
+            val ruleType = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType } ?: continue
+            if (ruleType == StockExitRuleType.TRAILING_STOP && rule.triggerPrice == null) {
+                val storedHigh = max(
+                    rule.referenceHighPrice ?: currentPrice,
+                    referenceHighPrices[rule.id] ?: currentPrice,
+                )
+                val newHigh = max(storedHigh, currentPrice)
+                updatedReferenceHighPrices[rule.id] = newHigh
+                if (persistReferenceHighPrices && newHigh != rule.referenceHighPrice) {
+                    rule = rule.copy(referenceHighPrice = newHigh, updatedAt = LocalDateTime.now())
+                    persistChange { habitDao.updateStockExitRule(rule) }
+                } else {
+                    rule = rule.copy(referenceHighPrice = newHigh)
+                }
+            }
+            if (rule.id in ignoredRuleIds) continue
+
+            val triggered = when (ruleType) {
+                StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { currentPrice <= it }
+                    ?: (returnPercent <= -rule.triggerValue)
+                StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { currentPrice >= it }
+                    ?: (returnPercent >= rule.triggerValue)
+                StockExitRuleType.TRAILING_STOP -> {
+                    rule.triggerPrice?.let { currentPrice <= it } ?: run {
+                        val high = rule.referenceHighPrice ?: currentPrice
+                        currentPrice.toDouble() <= high.toDouble() * (1.0 - rule.triggerValue / 100.0)
+                    }
+                }
+                StockExitRuleType.TIME_EXIT -> {
+                    val oldestBuyDate = habitDao.getOldestOpenStockBuyDate(balance.productCode)
+                    oldestBuyDate != null && ChronoUnit.DAYS.between(oldestBuyDate, LocalDate.now()) >= rule.triggerValue.toLong()
+                }
+            }
+            if (!triggered) continue
+
+            triggeredRuleIds += rule.id
+            val triggerMessage = when (ruleType) {
+                StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
+                    ?: "발동 조건: 손절 -${formatStockRuleValue(rule.triggerValue)}% 이하"
+                StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이상" }
+                    ?: "발동 조건: 익절 +${formatStockRuleValue(rule.triggerValue)}% 이상"
+                StockExitRuleType.TRAILING_STOP -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
+                    ?: "발동 조건: 고점 ${formatStockPrice(rule.referenceHighPrice ?: currentPrice)} 대비 -${formatStockRuleValue(rule.triggerValue)}%"
+                StockExitRuleType.TIME_EXIT -> "발동 조건: 보유 ${rule.triggerValue.toLong()}일 도달"
+            }
+            val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode }
+                ?: StockRuleAction.NOTIFY_ONLY
+            var shouldDisableRule = action == StockRuleAction.NOTIFY_ONLY
+            val noticeLines = mutableListOf(
+                "${balance.productName} (${balance.productCode}) · ${market.stockNotificationLabel()}",
+                "현재가 ${formatStockPrice(currentPrice)} · 평균가 ${formatStockPrice(averagePrice.toLong())} · 수익률 ${formatStockReturn(returnPercent)}",
+                "보유 ${holdingQuantity}주",
+                triggerMessage,
+            )
+            if (action == StockRuleAction.NOTIFY_ONLY) {
+                noticeLines += "처리: 알림만 · 주문 없음"
+            } else {
+                val sellQuantity = floor(holdingQuantity * rule.sellQuantityPercent / 100.0)
+                    .toLong()
+                    .coerceAtLeast(1L)
+                    .coerceAtMost(holdingQuantity)
+                val orderTypeLabel = if (rule.orderDivisionCode == stockMarketOrderCode) "시장가" else "현재가 지정가"
+                if (!safety.automaticOrderEnabled) {
+                    noticeLines += "처리: 자동매도 꺼짐 · ${orderTypeLabel} ${sellQuantity}주 주문 없음"
+                } else if (sellQuantity <= 0L) {
+                    noticeLines += "처리: 계산된 매도 수량 0주 · 주문 없음"
+                } else {
+                    val source = when (ruleType) {
+                        StockExitRuleType.STOP_LOSS -> StockOrderSource.STOP_LOSS
+                        StockExitRuleType.TAKE_PROFIT -> StockOrderSource.TAKE_PROFIT
+                        StockExitRuleType.TRAILING_STOP -> StockOrderSource.TRAILING_STOP
+                        StockExitRuleType.TIME_EXIT -> StockOrderSource.TIME_EXIT
+                    }
+                    runCatching {
+                        placeKisCashOrder(
+                            draft = KisCashOrderDraft(
+                                side = KisOrderSide.SELL,
+                                productCode = balance.productCode,
+                                orderDivisionCode = rule.orderDivisionCode,
+                                orderQuantity = sellQuantity.toString(),
+                                orderUnitPrice = if (rule.orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
+                                exchangeIdDivisionCode = market.orderExchangeCode,
+                                sellType = "01",
+                                conditionPrice = "",
+                            ),
+                            productName = balance.productName,
+                            source = source,
+                            requireAutomaticEnabled = true,
+                            verifiedCurrentPrice = currentPrice,
+                            skipCrashGuardRefresh = true,
+                        )
+                    }.onSuccess { order ->
+                        noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 접수 · 주문번호 ${order.orderNumber}"
+                        autoOrderSubmitted = true
+                        shouldDisableRule = true
+                    }.onFailure { error ->
+                        noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 실패 · ${error.message.orEmpty()}"
+                    }
+                }
+            }
+            val noticeMessage = noticeLines.joinToString("\n")
+            notices += StockAutomationNotice(
+                title = "[${balance.productName}] ${ruleType.label} 조건 충족",
+                message = noticeMessage,
+                productCode = balance.productCode,
+            )
+            saveStockAutomationEvent(
+                level = if (noticeMessage.contains("실패")) "ERROR" else "WARN",
+                eventType = "EXIT_RULE_TRIGGERED",
+                productCode = balance.productCode,
+                message = noticeMessage,
+            )
+            if (shouldDisableRule) {
+                persistChange {
+                    habitDao.updateStockExitRule(
+                        rule.copy(
+                            enabled = false,
+                            lastTriggeredAt = LocalDateTime.now(),
+                            updatedAt = LocalDateTime.now(),
+                        ),
+                    )
+                }
+            }
+            if (autoOrderSubmitted) break
+        }
+        return StockRuleEvaluationResult(
+            notices = notices,
+            triggeredRuleIds = triggeredRuleIds,
+            referenceHighPrices = updatedReferenceHighPrices,
+        )
+    }
+
+    private data class StockRuleEvaluationResult(
+        val notices: List<StockAutomationNotice>,
+        val triggeredRuleIds: Set<Long>,
+        val referenceHighPrices: Map<Long, Long>,
+    )
 
     private fun resolveActiveStockMarket(time: LocalTime): KisStockMarket? = when {
         time >= regularMarketOpenTime && time < regularMarketCloseTime -> KisStockMarket.UNIFIED
@@ -1554,25 +1776,72 @@ class HabitRepository(
     suspend fun getLatestLottoRoundNo(): Int? =
         habitDao.getLatestLottoRoundNo()
 
-    suspend fun getAllLottoHistory(): List<List<Int>> =
-        habitDao.getAllLottoDrawsDesc().map(LottoDrawEntity::numbers)
-
-    suspend fun seedLottoDrawsIfEmpty() {
-        if (habitDao.getLottoDrawCount() > 0) return
-        persistChange {
-            habitDao.insertLottoDraws(
-                LottoSeedData.draws.map { seed ->
-                    LottoDrawEntity.from(roundNo = seed.roundNo, numbers = seed.numbers.sorted())
-                },
-            )
+    suspend fun getAllLottoHistory(): List<List<Int>> {
+        val draws = habitDao.getAllLottoDrawsDesc()
+        val gapIndex = draws.zipWithNext().indexOfFirst { (newer, older) ->
+            newer.roundNo - older.roundNo != 1
         }
+        if (gapIndex < 0) return draws.map(LottoDrawEntity::numbers)
+
+        val newer = draws[gapIndex]
+        val older = draws[gapIndex + 1]
+        val oldestBundledRoundNo = LottoSeedData.draws.minOfOrNull { draw -> draw.roundNo }
+        require(oldestBundledRoundNo != null && newer.roundNo <= oldestBundledRoundNo) {
+            "${older.roundNo + 1}회차부터 ${newer.roundNo - 1}회차까지 추첨 데이터가 누락되었습니다. 누락 회차를 먼저 저장해 주세요."
+        }
+        return draws.take(gapIndex + 1).map(LottoDrawEntity::numbers)
     }
 
-    suspend fun ensureLottoWinningStatsInitialized() {
-        val statVersion = lottoPrefs.getInt(lottoStatVersionKey, 0)
-        if (statVersion >= currentLottoStatVersion) return
+    suspend fun syncBundledLottoDraws(): Boolean {
+        val seedRoundNos = LottoSeedData.draws.map { it.roundNo }
+        val existingDraws = habitDao.getLottoDrawsByRoundNos(seedRoundNos)
+            .associateBy(LottoDrawEntity::roundNo)
+        val missingDraws = LottoSeedData.draws
+            .filterNot { seed -> seed.roundNo in existingDraws }
+            .map { seed ->
+                LottoDrawEntity.from(
+                    roundNo = seed.roundNo,
+                    numbers = seed.numbers,
+                    bonusNumber = seed.bonusNumber,
+                    dataSource = lottoDrawSourceSeed,
+                )
+            }
+        val supplementedDraws = LottoSeedData.draws.mapNotNull { seed ->
+            val existing = existingDraws[seed.roundNo] ?: return@mapNotNull null
+            val seedBonusNumber = seed.bonusNumber ?: return@mapNotNull null
+            if (
+                existing.dataSource == lottoDrawSourceManual ||
+                existing.bonusNumber != null ||
+                existing.numbers() != seed.numbers.sorted()
+            ) {
+                return@mapNotNull null
+            }
+            existing.copy(
+                bonusNumber = seedBonusNumber,
+                dataSource = lottoDrawSourceSeed,
+            )
+        }
+        if (missingDraws.isEmpty() && supplementedDraws.isEmpty()) return false
         persistChange {
-            recalculateAllLottoWinningStats()
+            database.withTransaction {
+                if (missingDraws.isNotEmpty()) {
+                    habitDao.insertLottoDraws(missingDraws)
+                }
+                supplementedDraws.forEach { draw ->
+                    habitDao.upsertLottoDraw(draw)
+                }
+            }
+        }
+        return true
+    }
+
+    suspend fun ensureLottoWinningStatsInitialized(force: Boolean = false) {
+        val statVersion = lottoPrefs.getInt(lottoStatVersionKey, 0)
+        if (!force && statVersion >= currentLottoStatVersion) return
+        persistChange {
+            database.withTransaction {
+                recalculateAllLottoWinningStats()
+            }
         }
         lottoPrefs.edit().putInt(lottoStatVersionKey, currentLottoStatVersion).apply()
     }
@@ -1580,6 +1849,7 @@ class HabitRepository(
     suspend fun saveLottoDraw(roundNo: Int?, numbers: List<Int>, bonusNumber: Int?): Int {
         require(roundNo != null && roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(numbers.size == 6) { "번호 6개를 모두 입력해 주세요." }
+        require(bonusNumber != null) { "보너스 번호를 입력해 주세요." }
         val safeRoundNo = roundNo
 
         val sanitizedNumbers = numbers.map { number ->
@@ -1589,20 +1859,48 @@ class HabitRepository(
 
         require(sanitizedNumbers.distinct().size == 6) { "번호는 중복 없이 입력해 주세요." }
 
-        val sanitizedBonusNumber = bonusNumber?.also { number ->
+        val sanitizedBonusNumber = bonusNumber.also { number ->
             require(number in 1..45) { "보너스 번호는 1부터 45 사이여야 합니다." }
             require(number !in sanitizedNumbers) { "보너스 번호는 당첨 번호와 중복될 수 없습니다." }
         }
-        val draw = LottoDrawEntity.from(
+        val newDraw = LottoDrawEntity.from(
             roundNo = safeRoundNo,
             numbers = sanitizedNumbers,
             bonusNumber = sanitizedBonusNumber,
+            dataSource = lottoDrawSourceManual,
         )
 
         return persistChange {
             database.withTransaction {
-                habitDao.upsertLottoDraw(draw)
-                updateLottoWinningStatsForRound(roundNo = safeRoundNo, draw = draw)
+                val existingDraw = habitDao.getLottoDrawByRoundNo(safeRoundNo)
+                val latestRoundNo = habitDao.getLatestLottoRoundNo()
+                if (existingDraw == null && latestRoundNo != null) {
+                    require(safeRoundNo <= latestRoundNo + 1) {
+                        "${latestRoundNo + 1}회차부터 순서대로 저장해 주세요."
+                    }
+                }
+
+                val drawToSave = if (existingDraw == null) {
+                    newDraw
+                } else {
+                    require(existingDraw.numbers() == newDraw.numbers()) {
+                        "${safeRoundNo}회차 추첨 번호가 이미 저장되어 있어 덮어쓸 수 없습니다."
+                    }
+                    require(existingDraw.bonusNumber == null || existingDraw.bonusNumber == sanitizedBonusNumber) {
+                        "${safeRoundNo}회차 보너스 번호가 이미 저장되어 있어 덮어쓸 수 없습니다."
+                    }
+                    existingDraw.copy(
+                        bonusNumber = sanitizedBonusNumber,
+                        dataSource = if (existingDraw.dataSource == lottoDrawSourceSeed) {
+                            existingDraw.dataSource
+                        } else {
+                            lottoDrawSourceManual
+                        },
+                    )
+                }
+
+                habitDao.upsertLottoDraw(drawToSave)
+                updateLottoWinningStatsForRound(roundNo = safeRoundNo, draw = drawToSave)
             }
             safeRoundNo
         }
@@ -1615,26 +1913,38 @@ class HabitRepository(
             number
         }.sorted()
         require(sanitizedNumbers.distinct().size == 6) { "번호는 중복 없이 저장해 주세요." }
+        val sanitizedNote = note?.trim()?.takeIf(String::isNotEmpty)
         persistChange {
             habitDao.insertLottoTicket(
                 LottoTicketEntity.from(
                     sourceLabel = sourceLabel,
                     numbers = sanitizedNumbers,
-                    note = note?.trim()?.takeIf(String::isNotEmpty),
+                    note = sanitizedNote,
+                    roundNo = sanitizedNote?.let(::extractLottoRoundNo),
                 ),
             )
         }
     }
 
-    suspend fun saveLottoPurchase(purchaseDate: LocalDate, lottoType: String, amount: Int, memo: String?) {
+    suspend fun saveLottoPurchase(
+        purchaseDate: LocalDate,
+        lottoType: String,
+        roundNo: Int?,
+        amount: Int,
+        memo: String?,
+    ) {
         val safeType = lottoType.trim().ifEmpty { "로또" }
         require(safeType in listOf("로또", "연금")) { "로또 형태는 로또 또는 연금 중 선택해 주세요." }
+        if (safeType == "로또") {
+            require(roundNo != null && roundNo > 0) { "구입한 로또 회차를 입력해 주세요." }
+        }
         require(amount > 0) { "구입 금액을 입력해 주세요." }
         persistChange {
             habitDao.insertLottoPurchase(
                 LottoPurchaseEntity(
                     purchaseDate = purchaseDate,
                     lottoType = safeType,
+                    roundNo = roundNo.takeIf { safeType == "로또" },
                     amount = amount,
                     memo = memo?.trim()?.takeIf(String::isNotEmpty),
                 ),
@@ -1655,12 +1965,16 @@ class HabitRepository(
     suspend fun saveLottoWinning(roundNo: Int, amount: Long, sourceLabel: String, memo: String?) {
         require(roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(amount > 0L) { "당첨 금액을 입력해 주세요." }
+        val safeSourceLabel = sourceLabel.trim().ifBlank { "기타" }
+        require(safeSourceLabel == "기타" || safeSourceLabel in generatedLottoSources) {
+            "지원하지 않는 당첨 번호 출처입니다."
+        }
         persistChange {
             habitDao.insertLottoWinning(
                 LottoWinningEntity(
                     roundNo = roundNo,
                     amount = amount,
-                    sourceLabel = sourceLabel.trim().ifBlank { "기타" },
+                    sourceLabel = safeSourceLabel,
                     memo = memo?.trim()?.takeIf(String::isNotEmpty),
                 ),
             )
@@ -1725,9 +2039,9 @@ class HabitRepository(
 
     suspend fun getSavedLottoBatchCount(roundNo: Int, sourceLabel: String): Int {
         require(roundNo > 0) { "회차 번호가 올바르지 않습니다." }
-        return habitDao.getLottoTicketsBySourceAndNotePrefix(
+        return habitDao.getLottoTicketsBySourceAndRound(
             sourceLabel = sourceLabel,
-            notePrefix = buildLottoRoundNote(roundNo),
+            roundNo = roundNo,
         ).mapNotNull(LottoTicketEntity::note).distinct().size
     }
 
@@ -1737,7 +2051,10 @@ class HabitRepository(
                 val ticket = habitDao.getLottoTicketById(ticketId)
                 habitDao.deleteLottoTicketById(ticketId)
                 if (ticket?.isPurchased == true || ticket?.isEvaluationTarget == true) {
-                    refreshLottoWinningStatsForNote(ticket.note)
+                    refreshLottoWinningStats(
+                        roundNo = ticket.roundNo,
+                        note = ticket.note,
+                    )
                 }
             }
         }
@@ -1751,7 +2068,10 @@ class HabitRepository(
                 val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note)
                 habitDao.deleteLottoTicketsBySourceAndNoteExact(sourceLabel, note)
                 if (tickets.any { ticket -> ticket.isPurchased || ticket.isEvaluationTarget }) {
-                    refreshLottoWinningStatsForNote(note)
+                    refreshLottoWinningStats(
+                        roundNo = tickets.firstNotNullOfOrNull(LottoTicketEntity::roundNo),
+                        note = note,
+                    )
                 }
             }
         }
@@ -1762,16 +2082,29 @@ class HabitRepository(
         require(note.isNotBlank()) { "구매 처리할 세트를 찾을 수 없습니다." }
         persistChange {
             database.withTransaction {
-                val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(sourceLabel, note)
+                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note)
+                require(tickets.isNotEmpty()) { "구매 처리할 세트를 찾을 수 없습니다." }
+                require(tickets.none(LottoTicketEntity::isPurchased)) { "이미 구매 처리된 세트입니다." }
+                val roundNo = tickets.firstNotNullOfOrNull(LottoTicketEntity::roundNo)
+                    ?: extractLottoRoundNo(note)
+                    ?: throw IllegalArgumentException("구매 처리할 회차를 찾을 수 없습니다.")
+                require(tickets.all { ticket -> (ticket.roundNo ?: roundNo) == roundNo }) {
+                    "서로 다른 회차의 번호가 한 세트에 포함되어 있습니다."
+                }
+                val latestRoundNo = habitDao.getLatestLottoRoundNo()
+                require(latestRoundNo != null && roundNo == latestRoundNo + 1) {
+                    "구매 평가는 다음 회차인 ${(latestRoundNo ?: 0) + 1}회차 번호만 확정할 수 있습니다."
+                }
+                require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
+                    "이미 추첨 결과가 저장된 회차는 성과 평가용 구매로 처리할 수 없습니다."
+                }
+                val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(
+                    sourceLabel = sourceLabel,
+                    note = note,
+                    confirmedAt = LocalDateTime.now(),
+                )
                 require(updatedCount > 0) { "구매 처리할 세트를 찾을 수 없습니다." }
-                val roundNo = extractLottoRoundNo(note)
-                if (roundNo != null) {
-                    ensureRandomControlSet(roundNo)
-                }
-                val draw = roundNo?.let { habitDao.getLottoDrawByRoundNo(it) }
-                if (roundNo != null && draw != null) {
-                    updateLottoWinningStatsForRound(roundNo = roundNo, draw = draw)
-                }
+                ensureRandomControlSet(roundNo)
             }
         }
     }
@@ -1780,7 +2113,7 @@ class HabitRepository(
         require(roundNo > 0) { "삭제할 회차를 확인해 주세요." }
         persistChange {
             database.withTransaction {
-                habitDao.deleteLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+                habitDao.deleteLottoTicketsByRound(roundNo)
                 habitDao.deleteLottoWinningStatRoundsByRound(roundNo)
                 replaceLottoWinningStatTotals(habitDao.getAllLottoWinningStatRounds())
             }
@@ -1789,15 +2122,25 @@ class HabitRepository(
 
     suspend fun saveLottoBatch(roundNo: Int, sourceLabel: String, tickets: List<LottoGeneratedTicket>): Int {
         require(roundNo > 0) { "저장할 회차를 확인해 주세요." }
-        require(tickets.isNotEmpty()) { "저장할 생성 번호가 없습니다." }
+        require(sourceLabel in generatedLottoSources) { "지원하지 않는 번호 생성 방식입니다." }
+        require(tickets.size >= 5) { "저장할 생성 번호 5게임이 필요합니다." }
 
         val limitedTickets = tickets.take(5)
-        val roundNotePrefix = buildLottoRoundNote(roundNo)
 
         return persistChange {
             database.withTransaction {
-                saveCurrentLottoGenerationConfig()
-                val existingTickets = habitDao.getLottoTicketsBySourceAndNotePrefix(sourceLabel = sourceLabel, notePrefix = roundNotePrefix)
+                val latestRoundNo = habitDao.getLatestLottoRoundNo()
+                require(latestRoundNo != null && roundNo == latestRoundNo + 1) {
+                    "생성 번호는 다음 회차인 ${(latestRoundNo ?: 0) + 1}회차에만 저장할 수 있습니다."
+                }
+                require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
+                    "이미 추첨 결과가 저장된 회차에는 생성 번호를 저장할 수 없습니다."
+                }
+                val generationConfigHash = saveCurrentLottoGenerationConfig()
+                val existingTickets = habitDao.getLottoTicketsBySourceAndRound(
+                    sourceLabel = sourceLabel,
+                    roundNo = roundNo,
+                )
                 val groupedNotes = existingTickets.mapNotNull(LottoTicketEntity::note).distinct()
                 require(groupedNotes.size < maxSavedLottoSetCount) {
                     "${roundNo}회차 ${sourceLabel} 번호는 이미 ${maxSavedLottoSetCount}세트 저장되어 있습니다. 1세트를 삭제한 뒤 다시 저장해 주세요."
@@ -1810,7 +2153,12 @@ class HabitRepository(
                             sourceLabel = sourceLabel,
                             numbers = ticket.numbers,
                             note = setNote,
+                            roundNo = roundNo,
+                            setNo = nextSetIndex,
                             generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+                            generationConfigHash = generationConfigHash,
+                            historyThroughRound = latestRoundNo,
+                            generationSeed = ticket.generationSeed,
                             analysisScore = ticket.score?.totalScore,
                             dataScore = ticket.score?.dataScore,
                             patternScore = ticket.score?.patternScore,
@@ -2300,36 +2648,35 @@ class HabitRepository(
             ?.substringBefore(lottoSetNoteSeparator)
             ?.toIntOrNull()
 
-    private suspend fun saveCurrentLottoGenerationConfig() {
+    private suspend fun saveCurrentLottoGenerationConfig(): String {
         val generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION
         val configJson = LottoNumberGenerator.configurationSnapshot()
         val configHash = MessageDigest.getInstance("SHA-256")
             .digest(configJson.toByteArray())
             .joinToString(separator = "") { byte -> "%02x".format(byte) }
-        val existingConfig = habitDao.getLottoGenerationConfig(generationVersion)
+        val existingConfig = habitDao.getLottoGenerationConfig(
+            generationVersion = generationVersion,
+            configHash = configHash,
+        )
         val currentConfig = LottoGenerationConfigEntity(
             generationVersion = generationVersion,
             configJson = configJson,
             configHash = configHash,
         )
-        if (existingConfig == null || existingConfig.configHash.isBlank()) {
+        if (existingConfig == null) {
             habitDao.upsertLottoGenerationConfig(currentConfig)
-            return
         }
-        require(existingConfig.configHash == configHash) {
-            "동일한 생성기 버전에 다른 설정이 저장되어 있습니다. 생성기 버전을 확인해 주세요."
-        }
+        return configHash
     }
 
     private suspend fun ensureRandomControlSet(roundNo: Int) {
-        val roundNotePrefix = buildLottoRoundNote(roundNo)
-        val existingControls = habitDao.getLottoTicketsBySourceAndNotePrefix(
+        val existingControls = habitDao.getLottoTicketsBySourceAndRound(
             sourceLabel = randomControlSource,
-            notePrefix = roundNotePrefix,
+            roundNo = roundNo,
         )
         if (existingControls.any { ticket -> ticket.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION }) return
 
-        saveCurrentLottoGenerationConfig()
+        val generationConfigHash = saveCurrentLottoGenerationConfig()
         val setNote = buildRandomControlNote(roundNo)
         LottoNumberGenerator.generateRandomControl().forEachIndexed { index, ticket ->
             habitDao.insertLottoTicket(
@@ -2337,8 +2684,12 @@ class HabitRepository(
                     sourceLabel = randomControlSource,
                     numbers = ticket.numbers,
                     note = setNote,
+                    roundNo = roundNo,
                     isEvaluationTarget = true,
                     generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+                    generationConfigHash = generationConfigHash,
+                    historyThroughRound = roundNo - 1,
+                    generationSeed = ticket.generationSeed,
                     generationMode = ticket.generationMode,
                     recommendationRank = index + 1,
                 ),
@@ -2346,14 +2697,14 @@ class HabitRepository(
         }
     }
 
-    private suspend fun refreshLottoWinningStatsForNote(note: String?) {
-        val roundNo = note?.let(::extractLottoRoundNo) ?: return
-        val draw = habitDao.getLottoDrawByRoundNo(roundNo) ?: return
-        updateLottoWinningStatsForRound(roundNo, draw)
+    private suspend fun refreshLottoWinningStats(roundNo: Int?, note: String?) {
+        val resolvedRoundNo = roundNo ?: note?.let(::extractLottoRoundNo) ?: return
+        val draw = habitDao.getLottoDrawByRoundNo(resolvedRoundNo) ?: return
+        updateLottoWinningStatsForRound(resolvedRoundNo, draw)
     }
 
     private suspend fun updateLottoWinningStatsForRound(roundNo: Int, draw: LottoDrawEntity) {
-        val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+        val roundTickets = habitDao.getPurchasedLottoTicketsByRound(roundNo)
         val roundStats = buildLottoRoundStats(roundNo, draw, roundTickets)
 
         habitDao.deleteLottoWinningStatRoundsByRound(roundNo)
@@ -2367,7 +2718,7 @@ class HabitRepository(
     private suspend fun recalculateAllLottoWinningStats() {
         val draws = habitDao.getAllLottoDrawsDesc()
         val roundStats = draws.flatMap { draw ->
-            val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(draw.roundNo))
+            val roundTickets = habitDao.getPurchasedLottoTicketsByRound(draw.roundNo)
             buildLottoRoundStats(draw.roundNo, draw, roundTickets)
         }
 
@@ -2469,13 +2820,25 @@ class HabitRepository(
                 if (pairedMatches.isEmpty()) return@comparison null
 
                 val differences = pairedMatches.map { (strategy, control) -> strategy - control }
+                val averageDifference = differences.average()
+                val confidenceMargin = if (differences.size >= 2) {
+                    val sampleVariance = differences.sumOf { difference ->
+                        val deviation = difference - averageDifference
+                        deviation * deviation
+                    } / (differences.size - 1)
+                    1.96 * sqrt(sampleVariance / differences.size)
+                } else {
+                    null
+                }
                 LottoControlComparison(
                     sourceLabel = sourceAndVersion.first,
                     generationVersion = sourceAndVersion.second,
                     pairedRoundCount = pairedMatches.size,
                     strategyAverageMatchCount = pairedMatches.map { pair -> pair.first }.average(),
                     controlAverageMatchCount = pairedMatches.map { pair -> pair.second }.average(),
-                    averageMatchDifference = differences.average(),
+                    averageMatchDifference = averageDifference,
+                    differenceConfidenceLow = confidenceMargin?.let { averageDifference - it },
+                    differenceConfidenceHigh = confidenceMargin?.let { averageDifference + it },
                     betterRoundCount = differences.count { difference -> difference > 0.000_001 },
                     tiedRoundCount = differences.count { difference -> kotlin.math.abs(difference) <= 0.000_001 },
                     worseRoundCount = differences.count { difference -> difference < -0.000_001 },

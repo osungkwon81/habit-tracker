@@ -39,6 +39,7 @@ private const val dispersedSource = "분산형"
 private const val sourceChatGpt = "균형형"
 private const val sourceGemini = "분산형"
 private const val savedDrawHistoryLimit = 120
+private const val lottoHistoryPageSize = 20
 
 enum class LottoStatsRange(val label: String) {
     WEEKLY("주간"),
@@ -72,6 +73,8 @@ class LottoViewModel(
     private val lastGeneratedSource = MutableStateFlow<String?>(null)
     private val selectedStatsRange = MutableStateFlow(LottoStatsRange.WEEKLY)
     private val savedRoundQueryInput = MutableStateFlow("")
+    private val purchaseHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
+    private val winningHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
 
     private val observedDraws = selectedTab.flatMapLatest { tab ->
         if (tab != drawTab) {
@@ -112,12 +115,14 @@ class LottoViewModel(
     private val controlComparisons = selectedTab.flatMapLatest { tab ->
         if (tab == statsTab) repository.observeLottoControlComparisons() else flowOf(emptyList())
     }
-    private val purchases = selectedTab.flatMapLatest { tab ->
-        if (tab == purchaseTab) repository.observeLottoPurchases(limit = 100) else flowOf(emptyList())
-    }
-    private val winnings = selectedTab.flatMapLatest { tab ->
-        if (tab == winningTab || tab == statsTab) repository.observeLottoWinnings(limit = 100) else flowOf(emptyList())
-    }
+    private val purchases = combine(selectedTab, purchaseHistoryLimit) { tab, limit -> tab to limit }
+        .flatMapLatest { (tab, limit) ->
+            if (tab == purchaseTab) repository.observeLottoPurchases(limit) else flowOf(emptyList())
+        }
+    private val winnings = combine(selectedTab, winningHistoryLimit) { tab, limit -> tab to limit }
+        .flatMapLatest { (tab, limit) ->
+            if (tab == winningTab) repository.observeLottoWinnings(limit) else flowOf(emptyList())
+        }
     private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
         if (tab == statsTab) repository.observeTotalLottoPurchaseAmount() else flowOf(0L)
     }
@@ -222,6 +227,8 @@ class LottoViewModel(
             allSavedTickets = allTickets,
             purchases = purchases,
             winnings = winnings,
+            canLoadMorePurchases = purchases.size >= purchaseHistoryLimit.value,
+            canLoadMoreWinnings = winnings.size >= winningHistoryLimit.value,
             totalPurchaseAmount = totalPurchaseAmount,
             totalWinningAmount = totalWinningAmount,
             selectedStatsRange = statsRange,
@@ -243,9 +250,13 @@ class LottoViewModel(
 
     init {
         viewModelScope.launch {
-            repository.seedLottoDrawsIfEmpty()
-            repository.ensureLottoWinningStatsInitialized()
-            refreshLatestRound()
+            runCatching {
+                val bundledDrawsChanged = repository.syncBundledLottoDraws()
+                repository.ensureLottoWinningStatsInitialized(force = bundledDrawsChanged)
+                refreshLatestRound()
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "로또 데이터를 준비하지 못했습니다."
+            }
         }
         isHistoryLoading.value = true
     }
@@ -277,6 +288,16 @@ class LottoViewModel(
 
     fun selectStatsRange(range: LottoStatsRange) {
         selectedStatsRange.value = range
+    }
+
+    fun loadMorePurchases() {
+        if (!uiState.value.canLoadMorePurchases) return
+        purchaseHistoryLimit.value += lottoHistoryPageSize
+    }
+
+    fun loadMoreWinnings() {
+        if (!uiState.value.canLoadMoreWinnings) return
+        winningHistoryLimit.value += lottoHistoryPageSize
     }
 
     fun clearStatusMessage() {
@@ -312,11 +333,6 @@ class LottoViewModel(
 
     fun updateBonusNumberInput(value: String) {
         bonusNumberInput.value = value.filter(Char::isDigit).take(2)
-    }
-
-    fun applyGeneratedNumbers(numbers: List<Int>) {
-        numberInputs.value = numbers.map(Int::toString)
-        statusMessage.value = "생성한 번호를 당첨 번호 입력 칸으로 복사했습니다."
     }
 
     fun saveGeneratedBatch(sourceLabel: String, tickets: List<LottoGeneratedTicket>) {
@@ -372,44 +388,52 @@ class LottoViewModel(
     }
 
     fun generateChatGpt() {
+        if (isGenerating.value) return
+        isGenerating.value = true
+        lastGeneratedSource.value = sourceChatGpt
         viewModelScope.launch {
-            val history = repository.getAllLottoHistory()
             val mode = generationMode.value
-            isGenerating.value = true
-            lastGeneratedSource.value = sourceChatGpt
-            delay(16)
-            runCatching {
-                withContext(Dispatchers.Default) {
-                    LottoNumberGenerator.generateBalanced(history, mode = mode)
+            try {
+                delay(16)
+                runCatching {
+                    val history = repository.getAllLottoHistory()
+                    withContext(Dispatchers.Default) {
+                        LottoNumberGenerator.generateBalanced(history, mode = mode)
+                    }
+                }.onSuccess { tickets ->
+                    generatedChatGpt.value = tickets
+                    statusMessage.value = "균형형 번호를 ${mode.label} 모드로 생성했습니다."
+                }.onFailure { error ->
+                    statusMessage.value = error.message ?: "균형형 번호 생성에 실패했습니다."
                 }
-            }.onSuccess { tickets ->
-                generatedChatGpt.value = tickets
-                statusMessage.value = "균형형 번호를 ${mode.label} 모드로 생성했습니다."
-            }.onFailure { error ->
-                statusMessage.value = error.message ?: "균형형 번호 생성에 실패했습니다."
+            } finally {
+                isGenerating.value = false
             }
-            isGenerating.value = false
         }
     }
 
     fun generateGemini() {
+        if (isGenerating.value) return
+        isGenerating.value = true
+        lastGeneratedSource.value = sourceGemini
         viewModelScope.launch {
-            val history = repository.getAllLottoHistory()
             val mode = generationMode.value
-            isGenerating.value = true
-            lastGeneratedSource.value = sourceGemini
-            delay(16)
-            runCatching {
-                withContext(Dispatchers.Default) {
-                    LottoNumberGenerator.generateDiversified(history, mode = mode)
+            try {
+                delay(16)
+                runCatching {
+                    val history = repository.getAllLottoHistory()
+                    withContext(Dispatchers.Default) {
+                        LottoNumberGenerator.generateDiversified(history, mode = mode)
+                    }
+                }.onSuccess { tickets ->
+                    generatedGemini.value = tickets
+                    statusMessage.value = "분산형 번호를 ${mode.label} 모드로 생성했습니다."
+                }.onFailure { error ->
+                    statusMessage.value = error.message ?: "분산형 번호 생성에 실패했습니다."
                 }
-            }.onSuccess { tickets ->
-                generatedGemini.value = tickets
-                statusMessage.value = "분산형 번호를 ${mode.label} 모드로 생성했습니다."
-            }.onFailure { error ->
-                statusMessage.value = error.message ?: "분산형 번호 생성에 실패했습니다."
+            } finally {
+                isGenerating.value = false
             }
-            isGenerating.value = false
         }
     }
 
@@ -491,6 +515,7 @@ class LottoViewModel(
     fun savePurchase(
         purchaseDate: String,
         lottoType: String,
+        roundNo: String,
         amount: String,
         memo: String,
         onSuccess: (() -> Unit)? = null,
@@ -500,6 +525,7 @@ class LottoViewModel(
                 repository.saveLottoPurchase(
                     purchaseDate = java.time.LocalDate.parse(purchaseDate),
                     lottoType = lottoType,
+                    roundNo = roundNo.toIntOrNull(),
                     amount = amount.filter(Char::isDigit).toIntOrNull() ?: 0,
                     memo = memo,
                 )
@@ -523,6 +549,7 @@ class LottoViewModel(
     fun saveWinning(
         roundNo: String,
         amount: String,
+        sourceLabel: String,
         memo: String,
         onSuccess: (() -> Unit)? = null,
     ) {
@@ -531,6 +558,7 @@ class LottoViewModel(
                 repository.saveLottoWinning(
                     roundNo = roundNo.toIntOrNull() ?: 0,
                     amount = amount.filter(Char::isDigit).toLongOrNull() ?: 0L,
+                    sourceLabel = sourceLabel,
                     memo = memo,
                 )
             }.onSuccess {
@@ -588,6 +616,8 @@ data class LottoUiState(
     val allSavedTickets: List<LottoTicketEntity> = emptyList(),
     val purchases: List<LottoPurchaseEntity> = emptyList(),
     val winnings: List<LottoWinningEntity> = emptyList(),
+    val canLoadMorePurchases: Boolean = false,
+    val canLoadMoreWinnings: Boolean = false,
     val totalPurchaseAmount: Long = 0L,
     val totalWinningAmount: Long = 0L,
     val selectedStatsRange: LottoStatsRange = LottoStatsRange.WEEKLY,

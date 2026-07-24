@@ -3,6 +3,7 @@ package com.habittracker.data.lotto
 import kotlin.math.sqrt
 
 data class LottoPerformanceSample(
+    val roundNo: Int,
     val sourceLabel: String,
     val generationVersion: String,
     val totalScore: Double,
@@ -44,13 +45,15 @@ data class LottoControlComparison(
     val strategyAverageMatchCount: Double,
     val controlAverageMatchCount: Double,
     val averageMatchDifference: Double,
+    val differenceConfidenceLow: Double?,
+    val differenceConfidenceHigh: Double?,
     val betterRoundCount: Int,
     val tiedRoundCount: Int,
     val worseRoundCount: Int,
 )
 
 enum class LottoScoreComponent(val label: String) {
-    TOTAL("분석"),
+    TOTAL("종합 적합"),
     DATA("데이터"),
     PATTERN("패턴"),
     DISTRIBUTION("구조"),
@@ -60,6 +63,8 @@ enum class LottoScoreComponent(val label: String) {
 
 object LottoPerformanceAnalyzer {
     private const val minimumCorrelationSamples = 20
+    private val ticketComparableComponents = LottoScoreComponent.entries
+        .filterNot { component -> component == LottoScoreComponent.VALIDATION }
 
     fun analyze(samples: List<LottoPerformanceSample>): List<LottoScorePerformance> = samples
         .groupBy { sample -> sample.sourceLabel to sample.generationVersion }
@@ -71,7 +76,7 @@ object LottoPerformanceAnalyzer {
                 sampleCount = groupSamples.size,
                 averageMatchCount = groupSamples.map(LottoPerformanceSample::matchCount).average(),
                 scoreBands = buildScoreBands(groupSamples),
-                correlations = LottoScoreComponent.entries.map { component ->
+                correlations = ticketComparableComponents.map { component ->
                     buildCorrelation(groupSamples, component)
                 },
             )
@@ -95,9 +100,13 @@ object LottoPerformanceAnalyzer {
         samples: List<LottoPerformanceSample>,
         component: LottoScoreComponent,
     ): LottoScoreCorrelation {
-        val values = samples.mapNotNull { sample ->
-            componentScore(sample, component)?.let { score -> score to sample.matchCount.toDouble() }
-        }
+        val values = samples
+            .groupBy(LottoPerformanceSample::roundNo)
+            .mapNotNull { (_, roundSamples) ->
+                val componentScores = roundSamples.mapNotNull { sample -> componentScore(sample, component) }
+                if (componentScores.isEmpty()) return@mapNotNull null
+                componentScores.average() to roundSamples.map(LottoPerformanceSample::matchCount).average()
+            }
         return LottoScoreCorrelation(
             component = component,
             sampleCount = values.size,

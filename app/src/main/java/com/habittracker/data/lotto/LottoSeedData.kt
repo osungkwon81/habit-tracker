@@ -3,6 +3,7 @@ package com.habittracker.data.lotto
 data class LottoSeedDraw(
     val roundNo: Int,
     val numbers: List<Int>,
+    val bonusNumber: Int? = null,
 )
 
 object LottoSeedData {

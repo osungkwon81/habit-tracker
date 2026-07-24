@@ -46,10 +46,9 @@ interface HabitDao {
         """
         SELECT * FROM card_history
         ORDER BY use_date DESC, id DESC
-        LIMIT :limit
         """,
     )
-    fun observeCardHistories(limit: Int): Flow<List<CardHistoryEntity>>
+    fun observeCardHistories(): Flow<List<CardHistoryEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCardHistory(history: CardHistoryEntity): Long
@@ -109,11 +108,11 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
-        WHERE note LIKE :notePrefix || '%'
+        WHERE round_no = :roundNo
         ORDER BY created_at DESC, id DESC
         """,
     )
-    fun observeSavedLottoTicketsByNotePrefix(notePrefix: String): Flow<List<LottoTicketEntity>>
+    fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>>
 
     @Query(
         """
@@ -178,10 +177,10 @@ interface HabitDao {
     @Query("DELETE FROM lotto_winning WHERE id = :winningId")
     suspend fun deleteLottoWinningById(winningId: Long)
 
-    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase")
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase WHERE lotto_type = '로또'")
     fun observeTotalLottoPurchaseAmount(): Flow<Long>
 
-    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_winning")
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_winning WHERE lotto_type = '로또'")
     fun observeTotalLottoWinningAmount(): Flow<Long>
 
     @Query(
@@ -193,12 +192,14 @@ interface HabitDao {
             ) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         winnings AS (
             SELECT date('2002-12-07', printf('+%d days', (round_no - 1) * 7)) AS period,
                    SUM(amount) AS amount
             FROM lotto_winning
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         periods AS (
@@ -224,12 +225,14 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 7) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         winnings AS (
             SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 7) AS period,
                    SUM(amount) AS amount
             FROM lotto_winning
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         periods AS (
@@ -255,12 +258,14 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 4) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         winnings AS (
             SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 4) AS period,
                    SUM(amount) AS amount
             FROM lotto_winning
+            WHERE lotto_type = '로또'
             GROUP BY period
         ),
         periods AS (
@@ -289,8 +294,8 @@ interface HabitDao {
     @Query("SELECT MAX(round_no) FROM lotto_draw")
     suspend fun getLatestLottoRoundNo(): Int?
 
-    @Query("SELECT COUNT(*) FROM lotto_draw")
-    suspend fun getLottoDrawCount(): Int
+    @Query("SELECT * FROM lotto_draw WHERE round_no IN (:roundNos)")
+    suspend fun getLottoDrawsByRoundNos(roundNos: List<Int>): List<LottoDrawEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLottoDraws(draws: List<LottoDrawEntity>)
@@ -298,43 +303,44 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLottoDraw(draw: LottoDrawEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertLottoTicket(ticket: LottoTicketEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertLottoGenerationConfig(config: LottoGenerationConfigEntity): Long
 
-    @Query("SELECT * FROM lotto_generation_config WHERE generation_version = :generationVersion LIMIT 1")
-    suspend fun getLottoGenerationConfig(generationVersion: String): LottoGenerationConfigEntity?
+    @Query(
+        """
+        SELECT * FROM lotto_generation_config
+        WHERE generation_version = :generationVersion
+          AND config_hash = :configHash
+        LIMIT 1
+        """,
+    )
+    suspend fun getLottoGenerationConfig(
+        generationVersion: String,
+        configHash: String,
+    ): LottoGenerationConfigEntity?
 
     @Query(
         """
         SELECT * FROM lotto_ticket
         WHERE source_label = :sourceLabel
-          AND note LIKE :notePrefix || '%'
+          AND round_no = :roundNo
         ORDER BY created_at DESC, id DESC
         """,
     )
-    suspend fun getLottoTicketsBySourceAndNotePrefix(sourceLabel: String, notePrefix: String): List<LottoTicketEntity>
+    suspend fun getLottoTicketsBySourceAndRound(sourceLabel: String, roundNo: Int): List<LottoTicketEntity>
 
     @Query(
         """
         SELECT * FROM lotto_ticket
-        WHERE note LIKE :notePrefix || '%'
+        WHERE round_no = :roundNo
           AND (is_purchased = 1 OR is_evaluation_target = 1)
         ORDER BY created_at DESC, id DESC
         """,
     )
-    suspend fun getPurchasedLottoTicketsByNotePrefix(notePrefix: String): List<LottoTicketEntity>
-
-    @Query(
-        """
-        DELETE FROM lotto_ticket
-        WHERE source_label = :sourceLabel
-          AND note = :note
-        """,
-    )
-    suspend fun deleteLottoTicketsBySourceAndNote(sourceLabel: String, note: String)
+    suspend fun getPurchasedLottoTicketsByRound(roundNo: Int): List<LottoTicketEntity>
 
     @Query("DELETE FROM lotto_ticket WHERE id = :ticketId")
     suspend fun deleteLottoTicketById(ticketId: Long)
@@ -345,26 +351,6 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
-        WHERE source_label = :sourceLabel
-          AND note = :note
-        """,
-    )
-    suspend fun getLottoTicketsBySourceAndNote(sourceLabel: String, note: String): List<LottoTicketEntity>
-
-    @Query(
-        """
-        DELETE FROM lotto_ticket
-        WHERE source_label = :sourceLabel
-          AND note = :note
-        """,
-    )
-    suspend fun deleteLottoTicketsBySourceAndNoteExact(sourceLabel: String, note: String)
-
-    @Query(
-        """
-        UPDATE lotto_ticket
-        SET is_purchased = 1,
-            source_label = :sourceLabel
         WHERE note = :note
           AND (
               source_label = :sourceLabel
@@ -381,15 +367,64 @@ interface HabitDao {
           )
         """,
     )
-    suspend fun markLottoTicketsPurchasedBySourceAndNote(sourceLabel: String, note: String): Int
+    suspend fun getLottoTicketsBySourceAndNote(sourceLabel: String, note: String): List<LottoTicketEntity>
 
     @Query(
         """
         DELETE FROM lotto_ticket
-        WHERE note LIKE :notePrefix || '%'
+        WHERE note = :note
+          AND (
+              source_label = :sourceLabel
+              OR (:sourceLabel = '균형형' AND (
+                  source_label LIKE '%균형형%'
+                  OR lower(source_label) LIKE '%chatgpt%'
+                  OR lower(source_label) LIKE '%gpt%'
+              ))
+              OR (:sourceLabel = '분산형' AND (
+                  source_label LIKE '%분산형%'
+                  OR lower(source_label) LIKE '%gemini%'
+                  OR source_label LIKE '%제미나이%'
+              ))
+          )
         """,
     )
-    suspend fun deleteLottoTicketsByNotePrefix(notePrefix: String)
+    suspend fun deleteLottoTicketsBySourceAndNoteExact(sourceLabel: String, note: String)
+
+    @Query(
+        """
+        UPDATE lotto_ticket
+        SET is_purchased = 1,
+            source_label = :sourceLabel,
+            purchase_confirmed_at = :confirmedAt
+        WHERE note = :note
+          AND (
+              source_label = :sourceLabel
+              OR (:sourceLabel = '균형형' AND (
+                  source_label LIKE '%균형형%'
+                  OR lower(source_label) LIKE '%chatgpt%'
+                  OR lower(source_label) LIKE '%gpt%'
+              ))
+              OR (:sourceLabel = '분산형' AND (
+                  source_label LIKE '%분산형%'
+                  OR lower(source_label) LIKE '%gemini%'
+                  OR source_label LIKE '%제미나이%'
+              ))
+          )
+        """,
+    )
+    suspend fun markLottoTicketsPurchasedBySourceAndNote(
+        sourceLabel: String,
+        note: String,
+        confirmedAt: LocalDateTime,
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM lotto_ticket
+        WHERE round_no = :roundNo
+        """,
+    )
+    suspend fun deleteLottoTicketsByRound(roundNo: Int)
 
     @Query(
         """
@@ -556,6 +591,15 @@ interface HabitDao {
     @Query("SELECT * FROM stock_exit_rule WHERE enabled = 1 ORDER BY product_code ASC, created_at ASC")
     suspend fun getEnabledStockExitRules(): List<StockExitRuleEntity>
 
+    @Query(
+        """
+        SELECT * FROM stock_exit_rule
+        WHERE enabled = 1 AND product_code = :productCode
+        ORDER BY created_at ASC
+        """,
+    )
+    suspend fun getEnabledStockExitRules(productCode: String): List<StockExitRuleEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertStockExitRule(rule: StockExitRuleEntity): Long
 
@@ -591,6 +635,9 @@ interface HabitDao {
 
     @Insert
     suspend fun insertStockAutomationEvent(event: StockAutomationEventEntity): Long
+
+    @Query("DELETE FROM stock_automation_event")
+    suspend fun deleteAllStockAutomationEvents(): Int
 
     @Query(
         """

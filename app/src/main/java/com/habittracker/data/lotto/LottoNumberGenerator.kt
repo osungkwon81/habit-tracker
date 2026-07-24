@@ -10,6 +10,7 @@ data class LottoGeneratedTicket(
     val comment: String? = null,
     val score: LottoAnalysisScore? = null,
     val generationMode: String? = null,
+    val generationSeed: Long? = null,
 )
 
 data class LottoAnalysisScore(
@@ -32,7 +33,7 @@ enum class LottoGenerationMode(
 }
 
 object LottoNumberGenerator {
-    // 생성 로직을 바꿀 때마다 이 값을 올려야 버전별 당첨 통계를 분리할 수 있다.
+    // 사용자에게 노출하는 생성기 버전이다. 세부 설정 차이는 저장된 config hash로 구분한다.
     const val CURRENT_GENERATION_VERSION = "2026-07-13-v2"
 
     private const val maxNumber = 45
@@ -50,16 +51,27 @@ object LottoNumberGenerator {
         history: List<List<Int>>,
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
+        seed: Long = random.nextLong(),
     ): List<LottoGeneratedTicket> {
         if (history.isEmpty()) return emptyList()
+        val randomSource = Random(seed)
         val normalizedHistory = history.map { it.sorted() }
-        val trendProfile = buildTrendProfile(normalizedHistory)
+        val trendProfile = buildTrendProfile(
+            history = normalizedHistory,
+            backtestStrategy = CoverageStrategy.BALANCED,
+        )
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = { generatePredictedCombination(trendProfile, CoverageStrategy.BALANCED) },
+            generator = {
+                generatePredictedCombination(
+                    trendProfile = trendProfile,
+                    strategy = CoverageStrategy.BALANCED,
+                    randomSource = randomSource,
+                )
+            },
             validator = { numbers -> isBalancedCandidate(numbers, trendProfile) },
             scorer = { numbers ->
                 scoreCandidate(
@@ -71,13 +83,14 @@ object LottoNumberGenerator {
             },
             commentBuilder = { numbers, score ->
                 val overlap = numbers.count(lastDraw::contains)
-                "${mode.label} 모드 · 분석 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
+                "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 균형 ${formatScore(score.distributionScore)} · " +
                     "공동당첨회피 ${formatScore(score.avoidanceScore)} · 과거검증 ${validationLabel(trendProfile.backtestProfile)} · " +
                     "직전겹침 ${overlap}개"
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
+            generationSeed = seed,
         )
     }
 
@@ -85,17 +98,28 @@ object LottoNumberGenerator {
         history: List<List<Int>>,
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
+        seed: Long = random.nextLong(),
     ): List<LottoGeneratedTicket> {
         if (history.isEmpty()) return emptyList()
 
+        val randomSource = Random(seed)
         val normalizedHistory = history.map { it.sorted() }
-        val trendProfile = buildTrendProfile(normalizedHistory)
+        val trendProfile = buildTrendProfile(
+            history = normalizedHistory,
+            backtestStrategy = CoverageStrategy.DIVERSIFIED,
+        )
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = { generatePredictedCombination(trendProfile, CoverageStrategy.DIVERSIFIED) },
+            generator = {
+                generatePredictedCombination(
+                    trendProfile = trendProfile,
+                    strategy = CoverageStrategy.DIVERSIFIED,
+                    randomSource = randomSource,
+                )
+            },
             validator = ::isDiversifiedCandidate,
             scorer = { numbers ->
                 scoreCandidate(
@@ -107,13 +131,14 @@ object LottoNumberGenerator {
             },
             commentBuilder = { numbers, score ->
                 val carryCount = numbers.count(lastDraw::contains)
-                "${mode.label} 모드 · 분석 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
+                "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 분산 ${formatScore(score.distributionScore)} · " +
                     "공동당첨회피 ${formatScore(score.avoidanceScore)} · 과거검증 ${validationLabel(trendProfile.backtestProfile)} · " +
                     "이월 ${carryCount}개"
             },
             mode = mode,
             strategy = CoverageStrategy.DIVERSIFIED,
+            generationSeed = seed,
         )
     }
 
@@ -131,16 +156,21 @@ object LottoNumberGenerator {
     ): List<LottoGeneratedTicket> =
         generateDiversified(history = history, gameCount = gameCount, mode = mode)
 
-    fun generateRandomControl(gameCount: Int = defaultGameCount): List<LottoGeneratedTicket> {
+    fun generateRandomControl(
+        gameCount: Int = defaultGameCount,
+        seed: Long = random.nextLong(),
+    ): List<LottoGeneratedTicket> {
+        val randomSource = Random(seed)
         val tickets = linkedSetOf<List<Int>>()
         while (tickets.size < gameCount) {
-            tickets += generateRandomCombination()
+            tickets += generateRandomCombination(randomSource)
         }
         return tickets.map { numbers ->
             LottoGeneratedTicket(
                 numbers = numbers,
                 comment = "완전 무작위 대조군",
                 generationMode = "CONTROL",
+                generationSeed = seed,
             )
         }
     }
@@ -212,6 +242,8 @@ object LottoNumberGenerator {
             "data": {"number": 0.55, "pair": 0.30, "gap": 0.15},
             "pattern": {"history": 0.65, "transition": 0.35},
             "backtest": {"data": 0.60, "pattern": 0.40},
+            "backtestStrategyMatched": true,
+            "backtestEligibleCandidateBaseline": true,
             "avoidanceCenter": 50.0,
             "avoidanceScale": 5.0
           },
@@ -265,13 +297,19 @@ object LottoNumberGenerator {
           },
           "randomControl": {
             "gameCount": $defaultGameCount,
+            "seedPersisted": true,
+            "randomImplementation": "kotlin.random.Random",
             "uniformWithoutReplacementWithinTicket": true,
             "uniqueTicketsWithinRound": true
           }
         }
         """.trimIndent()
 
-    private fun buildTrendProfile(history: List<List<Int>>, includeBacktest: Boolean = true): TrendProfile {
+    private fun buildTrendProfile(
+        history: List<List<Int>>,
+        includeBacktest: Boolean = true,
+        backtestStrategy: CoverageStrategy,
+    ): TrendProfile {
         val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
         val longPairFrequency = buildPairFrequencyMap(history)
@@ -288,7 +326,11 @@ object LottoNumberGenerator {
             gapEvidence = buildGapEvidence(history, lastSeenGap),
             transitionProfile = buildTransitionProfile(history),
             historyAnalysis = historyAnalysis,
-            backtestProfile = if (includeBacktest) buildBacktestProfile(history) else BacktestProfile(),
+            backtestProfile = if (includeBacktest) {
+                buildBacktestProfile(history, backtestStrategy)
+            } else {
+                BacktestProfile()
+            },
         )
     }
 
@@ -303,17 +345,19 @@ object LottoNumberGenerator {
     private fun generatePredictedCombination(
         trendProfile: TrendProfile,
         strategy: CoverageStrategy,
+        randomSource: Random,
     ): List<Int> {
         val selected = mutableSetOf<Int>()
 
         while (selected.size < pickCount) {
             val candidates = (1..maxNumber).filter { number -> number !in selected }
-            if (candidates.isEmpty()) return generateRandomCombination()
+            if (candidates.isEmpty()) return generateRandomCombination(randomSource)
             selected += pickWeightedNumber(
                 candidates = candidates,
                 selected = selected,
                 trendProfile = trendProfile,
                 strategy = strategy,
+                randomSource = randomSource,
             )
         }
 
@@ -325,6 +369,7 @@ object LottoNumberGenerator {
         selected: Set<Int>,
         trendProfile: TrendProfile,
         strategy: CoverageStrategy,
+        randomSource: Random,
     ): Int {
         val weights = candidates.map { number ->
             predictedNumberWeight(
@@ -335,9 +380,9 @@ object LottoNumberGenerator {
             ).coerceAtLeast(0.05)
         }
         val totalWeight = weights.sum()
-        if (totalWeight <= 0.0) return candidates[random.nextInt(candidates.size)]
+        if (totalWeight <= 0.0) return candidates[randomSource.nextInt(candidates.size)]
 
-        var threshold = random.nextDouble() * totalWeight
+        var threshold = randomSource.nextDouble() * totalWeight
         for (index in candidates.indices) {
             threshold -= weights[index]
             if (threshold <= 0.0) return candidates[index]
@@ -435,6 +480,7 @@ object LottoNumberGenerator {
         commentBuilder: (List<Int>, CandidateScore) -> String,
         mode: LottoGenerationMode,
         strategy: CoverageStrategy,
+        generationSeed: Long,
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
         val maxAttempts = mode.candidatePoolSize * 20
@@ -459,6 +505,7 @@ object LottoNumberGenerator {
                 comment = commentBuilder(candidate.numbers, candidate.score),
                 score = candidate.score.toAnalysisScore(),
                 generationMode = mode.name,
+                generationSeed = generationSeed,
             )
         }
     }
@@ -703,7 +750,10 @@ object LottoNumberGenerator {
         )
     }
 
-    private fun buildBacktestProfile(history: List<List<Int>>): BacktestProfile {
+    private fun buildBacktestProfile(
+        history: List<List<Int>>,
+        strategy: CoverageStrategy,
+    ): BacktestProfile {
         val percentiles = mutableListOf<Double>()
         val maxSamples = minOf(backtestSampleCount, history.size - minimumBacktestTrainingDraws)
         if (maxSamples <= 0) return BacktestProfile()
@@ -711,25 +761,49 @@ object LottoNumberGenerator {
         for (targetIndex in 0 until maxSamples) {
             val trainingHistory = history.drop(targetIndex + 1)
             if (trainingHistory.size < minimumBacktestTrainingDraws) continue
-            val trainingProfile = buildTrendProfile(trainingHistory, includeBacktest = false)
+            val trainingProfile = buildTrendProfile(
+                history = trainingHistory,
+                includeBacktest = false,
+                backtestStrategy = strategy,
+            )
             val lastTrainingDraw = trainingHistory.first()
+            val actualNumbers = history[targetIndex]
+            val actualEligible = when (strategy) {
+                CoverageStrategy.BALANCED -> isBalancedCandidate(actualNumbers, trainingProfile)
+                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(actualNumbers)
+            } && !isHistoricalDuplicate(actualNumbers, trainingHistory)
+            if (!actualEligible) {
+                percentiles += 0.0
+                continue
+            }
             val actualCandidateScore = scoreCandidate(
-                numbers = history[targetIndex],
+                numbers = actualNumbers,
                 trendProfile = trainingProfile,
                 lastDraw = lastTrainingDraw,
-                strategy = CoverageStrategy.BALANCED,
+                strategy = strategy,
             )
             val actualScore = actualCandidateScore.dataScore * 0.60 + actualCandidateScore.patternScore * 0.40
             val baselineRandom = Random(seed = targetIndex * 10_007 + history[targetIndex].sum() * 97)
-            val randomScores = List(backtestRandomCandidateCount) {
+            val randomScores = mutableListOf<Double>()
+            var attempt = 0
+            val maximumAttempts = backtestRandomCandidateCount * 200
+            while (randomScores.size < backtestRandomCandidateCount && attempt < maximumAttempts) {
+                attempt++
+                val randomNumbers = generateRandomCombination(baselineRandom)
+                val randomEligible = when (strategy) {
+                    CoverageStrategy.BALANCED -> isBalancedCandidate(randomNumbers, trainingProfile)
+                    CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(randomNumbers)
+                } && !isHistoricalDuplicate(randomNumbers, trainingHistory)
+                if (!randomEligible) continue
                 val randomCandidateScore = scoreCandidate(
-                    numbers = generateRandomCombination(baselineRandom),
+                    numbers = randomNumbers,
                     trendProfile = trainingProfile,
                     lastDraw = lastTrainingDraw,
-                    strategy = CoverageStrategy.BALANCED,
+                    strategy = strategy,
                 )
-                randomCandidateScore.dataScore * 0.60 + randomCandidateScore.patternScore * 0.40
+                randomScores += randomCandidateScore.dataScore * 0.60 + randomCandidateScore.patternScore * 0.40
             }
+            if (randomScores.isEmpty()) continue
             percentiles += randomScores.count { it <= actualScore }.toDouble() / randomScores.size * 100.0
         }
 

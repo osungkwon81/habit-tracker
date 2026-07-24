@@ -127,3 +127,24 @@ data class StockAutomationCycleResult(
     val monitoredProductCount: Int = 0,
     val activeRuleCount: Int = 0,
 )
+
+data class StockRealtimePosition(
+    val productCode: String,
+    val productName: String,
+    val holdingQuantity: Long,
+    val averagePrice: Double,
+    val initialPrice: Long?,
+)
+
+data class StockRealtimeMonitoringSnapshot(
+    val positions: List<StockRealtimePosition>,
+    val notices: List<StockAutomationNotice>,
+    val globalOrderBlocked: Boolean,
+    val blockReason: String?,
+)
+
+data class StockRealtimeTickResult(
+    val notices: List<StockAutomationNotice>,
+    val triggeredRuleIds: Set<Long> = emptySet(),
+    val referenceHighPrices: Map<Long, Long> = emptyMap(),
+)

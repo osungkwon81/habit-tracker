@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -125,7 +126,12 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
         if (uiState.searchResults.isEmpty()) {
             item { AppEmptyCard("저장된 일기가 없습니다.") }
         } else {
-            items(uiState.searchResults, key = { it.diaryDate }) { result ->
+            itemsIndexed(uiState.searchResults, key = { _, result -> result.diaryDate }) { index, result ->
+                if (index == uiState.searchResults.lastIndex && uiState.canLoadMore) {
+                    LaunchedEffect(result.diaryDate, uiState.searchQuery, uiState.searchResults.size) {
+                        viewModel.loadMoreDiaries()
+                    }
+                }
                 AppSectionCard(modifier = Modifier.clickable { viewModel.openSearchResult(result.diaryDate) }) {
                     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(text = result.title.ifBlank { "무제" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

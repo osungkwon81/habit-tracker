@@ -623,6 +623,144 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_25_26 = object : Migration(25, 26) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_draw`
+                ADD COLUMN `data_source` TEXT NOT NULL DEFAULT 'LEGACY'
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `round_no` INTEGER
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `set_no` INTEGER
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `purchase_confirmed_at` TEXT
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `generation_config_hash` TEXT
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `history_through_round` INTEGER
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `generation_seed` INTEGER
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_purchase`
+                ADD COLUMN `round_no` INTEGER
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_winning`
+                ADD COLUMN `lotto_type` TEXT NOT NULL DEFAULT '로또'
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                UPDATE `lotto_ticket`
+                SET `round_no` = CAST(
+                    substr(`note`, 7, instr(`note`, '|SET:') - 7)
+                    AS INTEGER
+                )
+                WHERE `note` LIKE 'ROUND:%|SET:%'
+                  AND instr(`note`, '|SET:') > 7
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                UPDATE `lotto_ticket`
+                SET `set_no` = CAST(
+                    substr(`note`, instr(`note`, '|SET:') + 5)
+                    AS INTEGER
+                )
+                WHERE `note` LIKE 'ROUND:%|SET:%'
+                  AND substr(`note`, instr(`note`, '|SET:') + 5) <> ''
+                  AND substr(`note`, instr(`note`, '|SET:') + 5) NOT GLOB '*[^0-9]*'
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                UPDATE `lotto_ticket`
+                SET `purchase_confirmed_at` = `created_at`
+                WHERE `is_purchased` = 1
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_lotto_ticket_round_no_source_label`
+                ON `lotto_ticket` (`round_no`, `source_label`)
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS `index_lotto_ticket_round_no_source_label_set_no_recommendation_rank`
+                ON `lotto_ticket` (`round_no`, `source_label`, `set_no`, `recommendation_rank`)
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_lotto_purchase_round_no`
+                ON `lotto_purchase` (`round_no`)
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE `lotto_generation_config_v26` (
+                    `generation_version` TEXT NOT NULL,
+                    `config_json` TEXT NOT NULL,
+                    `config_hash` TEXT NOT NULL,
+                    `created_at` TEXT NOT NULL,
+                    PRIMARY KEY(`generation_version`, `config_hash`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                INSERT INTO `lotto_generation_config_v26` (
+                    `generation_version`,
+                    `config_json`,
+                    `config_hash`,
+                    `created_at`
+                )
+                SELECT
+                    `generation_version`,
+                    `config_json`,
+                    `config_hash`,
+                    `created_at`
+                FROM `lotto_generation_config`
+                """.trimIndent(),
+            )
+            database.execSQL("DROP TABLE `lotto_generation_config`")
+            database.execSQL(
+                "ALTER TABLE `lotto_generation_config_v26` RENAME TO `lotto_generation_config`",
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -644,6 +782,7 @@ object HabitTrackerMigrations {
         MIGRATION_22_23,
         MIGRATION_23_24,
         MIGRATION_24_25,
+        MIGRATION_25_26,
     )
 }
 

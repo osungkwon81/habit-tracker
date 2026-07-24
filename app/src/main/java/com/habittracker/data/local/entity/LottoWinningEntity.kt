@@ -15,6 +15,8 @@ data class LottoWinningEntity(
     val id: Long = 0L,
     @ColumnInfo(name = "round_no")
     val roundNo: Int,
+    @ColumnInfo(name = "lotto_type", defaultValue = "'로또'")
+    val lottoType: String = "로또",
     @ColumnInfo(name = "amount")
     val amount: Long,
     @ColumnInfo(name = "source_label")

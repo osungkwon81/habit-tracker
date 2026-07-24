@@ -142,7 +142,7 @@ fun StockSettingsScreen(viewModel: StockViewModel) {
                 AppTextField(
                     value = uiState.monitorIntervalMinutes,
                     onValueChange = viewModel::updateMonitoringInterval,
-                    label = "모니터링 주기 (분)",
+                    label = "잔고·안전설정 동기화 주기 (분)",
                     singleLine = true,
                 )
                 AppTextField(
@@ -163,6 +163,7 @@ fun StockSettingsScreen(viewModel: StockViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                 )
                 AppSupportText("시장가 주문도 주문 직전 현재가를 기준으로 한도를 검사합니다. 체결금액은 가격 변동에 따라 달라질 수 있습니다.")
+                AppSupportText("손절·익절 가격은 실시간으로 감시하며, 입력한 주기는 잔고·활성 규칙·급락 안전장치를 다시 확인하는 간격입니다.")
             }
         }
     }

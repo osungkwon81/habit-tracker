@@ -5,18 +5,23 @@ import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val memoPageSize = 10
+private const val memoSearchDebounceMillis = 300L
 private const val listMode = "list"
 private const val editorMode = "editor"
 
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class MemoViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
@@ -30,8 +35,9 @@ class MemoViewModel(
     private val searchQuery = MutableStateFlow("")
     private val visibleLimit = MutableStateFlow(memoPageSize)
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private val memoNotesFlow = combine(searchQuery, visibleLimit) { query, limit -> query to limit }
+        .debounce(memoSearchDebounceMillis)
+        .distinctUntilChanged()
         .flatMapLatest { (query, limit) ->
             if (query.isBlank()) {
                 repository.observeMemoNotes(limit)

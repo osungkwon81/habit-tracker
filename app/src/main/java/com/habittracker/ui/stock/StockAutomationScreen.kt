@@ -116,7 +116,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 AppStatusText(
                     if (uiState.safetyConfig.monitoringEnabled) "모니터링 사용 중" else "모니터링 중지됨",
                 )
-                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30과 NXT 애프터마켓 15:40~20:00에 설정된 주기로 규칙과 급락 안전장치를 확인합니다.")
+                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30과 NXT 애프터마켓 15:40~20:00에 활성 규칙 종목의 실시간 체결가를 감시합니다.")
                 AppSupportText("조건 충족 알림에는 종목·시장 구분·현재가·평균가·수익률·보유수량·발동 조건·주문 결과가 표시됩니다.")
                 if (notificationPermissionDenied) {
                     Text(
