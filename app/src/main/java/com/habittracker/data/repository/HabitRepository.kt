@@ -13,6 +13,7 @@ import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.CardHistoryEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoGenerationConfigEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
@@ -37,6 +38,7 @@ import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import com.habittracker.data.lotto.LottoControlComparison
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.lotto.LottoPerformanceAnalyzer
 import com.habittracker.data.lotto.LottoPerformanceSample
@@ -68,6 +70,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -95,6 +98,8 @@ class HabitRepository(
     private companion object {
         const val lottoRoundNotePrefix = "ROUND:"
         const val lottoSetNoteSeparator = "|SET:"
+        const val randomControlSource = "무작위 대조군"
+        const val randomControlSetId = "CONTROL"
         const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
         const val cardPrefsName = "card-prefs"
@@ -192,6 +197,9 @@ class HabitRepository(
 
     fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>> =
         habitDao.observeLottoWinningStats()
+
+    fun observeLottoControlComparisons(): Flow<List<LottoControlComparison>> =
+        habitDao.observeAllLottoWinningStatRounds().map(::buildLottoControlComparisons)
 
     fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
         habitDao.observeLottoWeeklyStats(limit)
@@ -437,6 +445,8 @@ class HabitRepository(
         source: StockOrderSource = StockOrderSource.MANUAL,
         requireAutomaticEnabled: Boolean = false,
         isEmergencyLiquidation: Boolean = false,
+        verifiedCurrentPrice: Long? = null,
+        skipCrashGuardRefresh: Boolean = false,
     ): StockOrderEntity = withContext(Dispatchers.IO) {
         stockOrderMutex.withLock {
             require(!isEmergencyLiquidation || draft.side == KisOrderSide.SELL) {
@@ -471,16 +481,18 @@ class HabitRepository(
             }
 
             val (config, accessToken) = getKisConfigAndAccessToken()
-            if (!isEmergencyLiquidation) {
+            if (!isEmergencyLiquidation && !skipCrashGuardRefresh) {
                 safety = refreshCrashGuard(safety, config, accessToken)
             }
             require(!isStockOrderBlocked(safety, isEmergencyLiquidation)) {
                 "급락 안전장치로 전체 주문이 차단되었습니다. ${safety.blockReason.orEmpty()}"
             }
 
-            val currentPrice = kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode, quoteMarket)
-                .currentPrice.toLongOrNull()
+            val currentPrice = verifiedCurrentPrice
+                ?: kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode, quoteMarket)
+                    .currentPrice.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
+            require(currentPrice > 0L) { "현재가를 확인하지 못했습니다. (종목=${draft.productCode})" }
             val estimatedUnitPrice = if (draft.orderDivisionCode == stockLimitOrderCode) requestedPrice else currentPrice
             val estimatedAmount = Math.multiplyExact(quantity, estimatedUnitPrice)
             if (!isEmergencyLiquidation) {
@@ -634,15 +646,17 @@ class HabitRepository(
             val unfinished = habitDao.getUnfinishedStockOrders().filterNot { it.orderNumber.startsWith("UNKNOWN-") }
             if (unfinished.isEmpty()) return@withLock 0
             val (config, accessToken) = getKisConfigAndAccessToken()
-            var updatedCount = 0
-            unfinished.forEach { order ->
-                val execution = kisDomesticStockClient.getOrderExecutions(
+            val executionsByDate = unfinished.map(StockOrderEntity::orderDate).distinct().associateWith { orderDate ->
+                kisDomesticStockClient.getOrderExecutions(
                     config = config,
                     accessToken = accessToken,
-                    startDate = order.orderDate,
-                    endDate = order.orderDate,
-                    orderNumber = order.orderNumber,
-                ).firstOrNull { it.orderNumber == order.orderNumber && it.orderDate == order.orderDate }
+                    startDate = orderDate,
+                    endDate = orderDate,
+                ).associateBy { execution -> execution.orderNumber }
+            }
+            var updatedCount = 0
+            unfinished.forEach { order ->
+                val execution = executionsByDate[order.orderDate]?.get(order.orderNumber)
                     ?: return@forEach
                 applyStockExecution(
                     order = order,
@@ -673,13 +687,11 @@ class HabitRepository(
         }
     }
 
-    suspend fun getStockBuyLotRows(): List<StockBuyLotRow> = withContext(Dispatchers.IO) {
+    suspend fun getStockBuyLotRows(balanceStocks: List<KisBalanceStock>): List<StockBuyLotRow> = withContext(Dispatchers.IO) {
         val orders = habitDao.getStockOrders().filter { it.side == KisOrderSide.BUY.name && it.filledQuantity > 0L }
         if (orders.isEmpty()) return@withContext emptyList()
-        val (config, accessToken) = getKisConfigAndAccessToken()
-        val currentPrices = orders.map(StockOrderEntity::productCode).distinct().associateWith { productCode ->
-            runCatching { kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode).currentPrice.toLong() }
-                .getOrNull()
+        val currentPrices = balanceStocks.associate { balance ->
+            balance.productCode to balance.currentPrice.toLongOrNull()
         }
         orders.map { order ->
             val buyPrice = order.filledAveragePrice ?: order.referencePrice
@@ -697,16 +709,16 @@ class HabitRepository(
         val (config, accessToken) = getKisConfigAndAccessToken()
         val balances = kisDomesticStockClient.getBalance(config, accessToken)
         val managedCodes = targets.map(StockTargetAllocationEntity::productCode).toSet()
-        val codes = managedCodes.toList()
-        val prices = codes.associateWith { code ->
-            kisDomesticStockClient.getCurrentPrice(config, accessToken, code).currentPrice.toLongOrNull()
+        val balanceMap = balances.associateBy(KisBalanceStock::productCode)
+        val prices = managedCodes.associateWith { code ->
+            balanceMap[code]?.currentPrice?.toLongOrNull()?.takeIf { it > 0L }
+                ?: kisDomesticStockClient.getCurrentPrice(config, accessToken, code).currentPrice.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=$code)")
         }
         val totalValue = balances.filter { it.productCode in managedCodes }.sumOf { balance ->
             (balance.quantity.toLongOrNull() ?: 0L) * prices.getValue(balance.productCode)
         }
         require(totalValue > 0L) { "목표로 등록한 종목의 보유 평가액이 없어 리밸런싱을 계산할 수 없습니다." }
-        val balanceMap = balances.associateBy(KisBalanceStock::productCode)
         targets.map { target ->
             val price = prices.getValue(target.productCode)
             val currentQuantity = balanceMap[target.productCode]?.quantity?.toLongOrNull() ?: 0L
@@ -824,17 +836,18 @@ class HabitRepository(
                 val holdingQuantity = balance.quantity.toLongOrNull() ?: continue
                 if (holdingQuantity <= 0L) continue
                 val averagePrice = balance.averagePrice.toDoubleOrNull()?.takeIf { it > 0.0 } ?: continue
-                val currentPrice = try {
-                    kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode, market).currentPrice.toLong()
-                } catch (error: Exception) {
-                    saveStockAutomationEvent(
-                        level = "ERROR",
-                        eventType = "PRICE_CHECK_FAILED",
-                        productCode = productCode,
-                        message = "${balance.productName} 현재가 확인에 실패했습니다. ${error.message.orEmpty()}",
-                    )
-                    continue
-                }
+                val currentPrice = balance.currentPrice.toLongOrNull()?.takeIf { it > 0L }
+                    ?: try {
+                        kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode, market).currentPrice.toLong()
+                    } catch (error: Exception) {
+                        saveStockAutomationEvent(
+                            level = "ERROR",
+                            eventType = "PRICE_CHECK_FAILED",
+                            productCode = productCode,
+                            message = "${balance.productName} 현재가 확인에 실패했습니다. ${error.message.orEmpty()}",
+                        )
+                        continue
+                    }
                 monitoredProductCount += 1
                 val returnPercent = (currentPrice.toDouble() - averagePrice) / averagePrice * 100.0
                 var autoOrderSubmitted = false
@@ -909,6 +922,8 @@ class HabitRepository(
                                     productName = balance.productName,
                                     source = source,
                                     requireAutomaticEnabled = true,
+                                    verifiedCurrentPrice = currentPrice,
+                                    skipCrashGuardRefresh = true,
                                 )
                             }.onSuccess { order ->
                                 noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 접수 · 주문번호 ${order.orderNumber}"
@@ -1336,7 +1351,13 @@ class HabitRepository(
 
     suspend fun deleteLottoTicket(ticketId: Long) {
         persistChange {
-            habitDao.deleteLottoTicketById(ticketId)
+            database.withTransaction {
+                val ticket = habitDao.getLottoTicketById(ticketId)
+                habitDao.deleteLottoTicketById(ticketId)
+                if (ticket?.isPurchased == true || ticket?.isEvaluationTarget == true) {
+                    refreshLottoWinningStatsForNote(ticket.note)
+                }
+            }
         }
     }
 
@@ -1344,7 +1365,13 @@ class HabitRepository(
         require(sourceLabel.isNotBlank()) { "삭제할 세트 출처를 찾을 수 없습니다." }
         require(note.isNotBlank()) { "삭제할 세트를 찾을 수 없습니다." }
         persistChange {
-            habitDao.deleteLottoTicketsBySourceAndNoteExact(sourceLabel, note)
+            database.withTransaction {
+                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note)
+                habitDao.deleteLottoTicketsBySourceAndNoteExact(sourceLabel, note)
+                if (tickets.any { ticket -> ticket.isPurchased || ticket.isEvaluationTarget }) {
+                    refreshLottoWinningStatsForNote(note)
+                }
+            }
         }
     }
 
@@ -1356,6 +1383,9 @@ class HabitRepository(
                 val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(sourceLabel, note)
                 require(updatedCount > 0) { "구매 처리할 세트를 찾을 수 없습니다." }
                 val roundNo = extractLottoRoundNo(note)
+                if (roundNo != null) {
+                    ensureRandomControlSet(roundNo)
+                }
                 val draw = roundNo?.let { habitDao.getLottoDrawByRoundNo(it) }
                 if (roundNo != null && draw != null) {
                     updateLottoWinningStatsForRound(roundNo = roundNo, draw = draw)
@@ -1367,7 +1397,11 @@ class HabitRepository(
     suspend fun deleteLottoRound(roundNo: Int) {
         require(roundNo > 0) { "삭제할 회차를 확인해 주세요." }
         persistChange {
-            habitDao.deleteLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+            database.withTransaction {
+                habitDao.deleteLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
+                habitDao.deleteLottoWinningStatRoundsByRound(roundNo)
+                replaceLottoWinningStatTotals(habitDao.getAllLottoWinningStatRounds())
+            }
         }
     }
 
@@ -1380,6 +1414,7 @@ class HabitRepository(
 
         return persistChange {
             database.withTransaction {
+                saveCurrentLottoGenerationConfig()
                 val existingTickets = habitDao.getLottoTicketsBySourceAndNotePrefix(sourceLabel = sourceLabel, notePrefix = roundNotePrefix)
                 val groupedNotes = existingTickets.mapNotNull(LottoTicketEntity::note).distinct()
                 require(groupedNotes.size < maxSavedLottoSetCount) {
@@ -1873,12 +1908,67 @@ class HabitRepository(
     private fun buildLottoSetNote(roundNo: Int, setIndex: Int): String =
         "${buildLottoRoundNote(roundNo)}$lottoSetNoteSeparator$setIndex"
 
+    private fun buildRandomControlNote(roundNo: Int): String =
+        "${buildLottoRoundNote(roundNo)}$lottoSetNoteSeparator$randomControlSetId:${LottoNumberGenerator.CURRENT_GENERATION_VERSION}"
+
     private fun extractLottoRoundNo(note: String): Int? =
         note
             .takeIf { it.startsWith(lottoRoundNotePrefix) }
             ?.removePrefix(lottoRoundNotePrefix)
             ?.substringBefore(lottoSetNoteSeparator)
             ?.toIntOrNull()
+
+    private suspend fun saveCurrentLottoGenerationConfig() {
+        val generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION
+        val configJson = LottoNumberGenerator.configurationSnapshot()
+        val configHash = MessageDigest.getInstance("SHA-256")
+            .digest(configJson.toByteArray())
+            .joinToString(separator = "") { byte -> "%02x".format(byte) }
+        val existingConfig = habitDao.getLottoGenerationConfig(generationVersion)
+        val currentConfig = LottoGenerationConfigEntity(
+            generationVersion = generationVersion,
+            configJson = configJson,
+            configHash = configHash,
+        )
+        if (existingConfig == null || existingConfig.configHash.isBlank()) {
+            habitDao.upsertLottoGenerationConfig(currentConfig)
+            return
+        }
+        require(existingConfig.configHash == configHash) {
+            "동일한 생성기 버전에 다른 설정이 저장되어 있습니다. 생성기 버전을 확인해 주세요."
+        }
+    }
+
+    private suspend fun ensureRandomControlSet(roundNo: Int) {
+        val roundNotePrefix = buildLottoRoundNote(roundNo)
+        val existingControls = habitDao.getLottoTicketsBySourceAndNotePrefix(
+            sourceLabel = randomControlSource,
+            notePrefix = roundNotePrefix,
+        )
+        if (existingControls.any { ticket -> ticket.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION }) return
+
+        saveCurrentLottoGenerationConfig()
+        val setNote = buildRandomControlNote(roundNo)
+        LottoNumberGenerator.generateRandomControl().forEachIndexed { index, ticket ->
+            habitDao.insertLottoTicket(
+                LottoTicketEntity.from(
+                    sourceLabel = randomControlSource,
+                    numbers = ticket.numbers,
+                    note = setNote,
+                    isEvaluationTarget = true,
+                    generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+                    generationMode = ticket.generationMode,
+                    recommendationRank = index + 1,
+                ),
+            )
+        }
+    }
+
+    private suspend fun refreshLottoWinningStatsForNote(note: String?) {
+        val roundNo = note?.let(::extractLottoRoundNo) ?: return
+        val draw = habitDao.getLottoDrawByRoundNo(roundNo) ?: return
+        updateLottoWinningStatsForRound(roundNo, draw)
+    }
 
     private suspend fun updateLottoWinningStatsForRound(roundNo: Int, draw: LottoDrawEntity) {
         val roundTickets = habitDao.getPurchasedLottoTicketsByNotePrefix(buildLottoRoundNote(roundNo))
@@ -1972,6 +2062,48 @@ class HabitRepository(
         if (totals.isNotEmpty()) {
             habitDao.upsertLottoWinningStats(totals)
         }
+    }
+
+    private fun buildLottoControlComparisons(
+        roundStats: List<LottoWinningStatRoundEntity>,
+    ): List<LottoControlComparison> {
+        val controls = roundStats
+            .filter { stat -> stat.sourceLabel == randomControlSource && stat.evaluatedTicketCount > 0 }
+            .associateBy { stat -> stat.roundNo to stat.generationVersion }
+
+        return roundStats
+            .filter { stat ->
+                stat.sourceLabel in listOf("균형형", "분산형") &&
+                    stat.evaluatedTicketCount > 0
+            }
+            .groupBy { stat -> stat.sourceLabel to stat.generationVersion }
+            .mapNotNull comparison@ { (sourceAndVersion, sourceStats) ->
+                val pairedMatches = sourceStats.mapNotNull sample@ { stat ->
+                    val control = controls[stat.roundNo to stat.generationVersion] ?: return@sample null
+                    val strategyAverage = stat.matchCountTotal.toDouble() / stat.evaluatedTicketCount
+                    val controlAverage = control.matchCountTotal.toDouble() / control.evaluatedTicketCount
+                    strategyAverage to controlAverage
+                }
+                if (pairedMatches.isEmpty()) return@comparison null
+
+                val differences = pairedMatches.map { (strategy, control) -> strategy - control }
+                LottoControlComparison(
+                    sourceLabel = sourceAndVersion.first,
+                    generationVersion = sourceAndVersion.second,
+                    pairedRoundCount = pairedMatches.size,
+                    strategyAverageMatchCount = pairedMatches.map { pair -> pair.first }.average(),
+                    controlAverageMatchCount = pairedMatches.map { pair -> pair.second }.average(),
+                    averageMatchDifference = differences.average(),
+                    betterRoundCount = differences.count { difference -> difference > 0.000_001 },
+                    tiedRoundCount = differences.count { difference -> kotlin.math.abs(difference) <= 0.000_001 },
+                    worseRoundCount = differences.count { difference -> difference < -0.000_001 },
+                )
+            }
+            .sortedWith(
+                compareBy<LottoControlComparison> { comparison ->
+                    if (comparison.sourceLabel == "균형형") 0 else 1
+                }.thenByDescending(LottoControlComparison::generationVersion),
+            )
     }
 
     private fun normalizeWinningSource(sourceLabel: String): String = when {

@@ -286,10 +286,17 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching {
                 repository.syncStockOrderExecutions()
-                repository.getStockBuyLotRows()
-            }.onSuccess { rows ->
-                _uiState.update { it.copy(buyLotRows = rows, isLoadingPortfolio = false) }
-                loadOwnedStocks(force = true)
+                val balanceStocks = repository.getKisBalanceStocks()
+                balanceStocks to repository.getStockBuyLotRows(balanceStocks)
+            }.onSuccess { (balanceStocks, rows) ->
+                _uiState.update {
+                    it.copy(
+                        ownedStocks = balanceStocks,
+                        buyLotRows = rows,
+                        isLoadingPortfolio = false,
+                        hasLoadedOwnedStocks = true,
+                    )
+                }
             }.onFailure { error ->
                 _uiState.update {
                     it.copy(isLoadingPortfolio = false, statusMessage = "매수 내역 갱신에 실패했습니다. ${error.message.orEmpty()}")

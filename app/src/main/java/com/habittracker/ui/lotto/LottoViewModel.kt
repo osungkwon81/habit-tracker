@@ -11,6 +11,7 @@ import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
+import com.habittracker.data.lotto.LottoControlComparison
 import com.habittracker.data.lotto.LottoScorePerformance
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.Dispatchers
@@ -108,6 +109,9 @@ class LottoViewModel(
     private val scorePerformances = selectedTab.flatMapLatest { tab ->
         if (tab == statsTab) repository.observeLottoScorePerformances() else flowOf(emptyList())
     }
+    private val controlComparisons = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeLottoControlComparisons() else flowOf(emptyList())
+    }
     private val purchases = selectedTab.flatMapLatest { tab ->
         if (tab == purchaseTab) repository.observeLottoPurchases(limit = 100) else flowOf(emptyList())
     }
@@ -160,6 +164,7 @@ class LottoViewModel(
         lastGeneratedSource,
         winningTypeStats,
         scorePerformances,
+        controlComparisons,
     ) { values ->
         val tab = values[0] as String
         val draws = values[1] as List<LottoDrawEntity>
@@ -190,6 +195,7 @@ class LottoViewModel(
         val recentSource = values[26] as String?
         val winningStats = values[27] as List<LottoWinningStatEntity>
         val performanceStats = values[28] as List<LottoScorePerformance>
+        val controlStats = values[29] as List<LottoControlComparison>
 
         val activeStats = when (statsRange) {
             LottoStatsRange.WEEKLY -> weeklyStats
@@ -227,6 +233,7 @@ class LottoViewModel(
             lastGeneratedSource = recentSource,
             winningTypeStats = winningStats.map(::toWinningTypeStat),
             scorePerformances = performanceStats,
+            controlComparisons = controlStats,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -592,6 +599,7 @@ data class LottoUiState(
     val lastGeneratedSource: String? = null,
     val winningTypeStats: List<LottoWinningTypeStat> = emptyList(),
     val scorePerformances: List<LottoScorePerformance> = emptyList(),
+    val controlComparisons: List<LottoControlComparison> = emptyList(),
 )
 
 data class LottoWinningTypeStat(

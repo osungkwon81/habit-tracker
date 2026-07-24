@@ -37,6 +37,18 @@ data class LottoScoreCorrelation(
     val coefficient: Double?,
 )
 
+data class LottoControlComparison(
+    val sourceLabel: String,
+    val generationVersion: String,
+    val pairedRoundCount: Int,
+    val strategyAverageMatchCount: Double,
+    val controlAverageMatchCount: Double,
+    val averageMatchDifference: Double,
+    val betterRoundCount: Int,
+    val tiedRoundCount: Int,
+    val worseRoundCount: Int,
+)
+
 enum class LottoScoreComponent(val label: String) {
     TOTAL("분석"),
     DATA("데이터"),

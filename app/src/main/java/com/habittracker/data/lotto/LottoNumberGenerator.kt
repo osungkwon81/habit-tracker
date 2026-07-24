@@ -131,6 +131,146 @@ object LottoNumberGenerator {
     ): List<LottoGeneratedTicket> =
         generateDiversified(history = history, gameCount = gameCount, mode = mode)
 
+    fun generateRandomControl(gameCount: Int = defaultGameCount): List<LottoGeneratedTicket> {
+        val tickets = linkedSetOf<List<Int>>()
+        while (tickets.size < gameCount) {
+            tickets += generateRandomCombination()
+        }
+        return tickets.map { numbers ->
+            LottoGeneratedTicket(
+                numbers = numbers,
+                comment = "완전 무작위 대조군",
+                generationMode = "CONTROL",
+            )
+        }
+    }
+
+    fun configurationSnapshot(): String =
+        """
+        {
+          "snapshotSchema": 1,
+          "generationVersion": "$CURRENT_GENERATION_VERSION",
+          "numberRange": [1, $maxNumber],
+          "pickCount": $pickCount,
+          "defaultGameCount": $defaultGameCount,
+          "candidateMaxAttemptMultiplier": 20,
+          "history": {
+            "recentWindow": 30,
+            "analysisWindow": 180,
+            "minimumBacktestTrainingDraws": $minimumBacktestTrainingDraws,
+            "minimumBacktestSamples": $minimumBacktestSamples,
+            "backtestRandomCandidateCount": $backtestRandomCandidateCount,
+            "backtestSampleCount": $backtestSampleCount,
+            "historyAnalysisMaximumScore": $historyAnalysisMaximumScore,
+            "evidenceWindows": [
+              {"size": 10, "weight": 0.40, "priorDraws": 18.0},
+              {"size": 30, "weight": 0.30, "priorDraws": 28.0},
+              {"size": 90, "weight": 0.20, "priorDraws": 45.0},
+              {"size": "ALL", "weight": 0.10, "priorDraws": 80.0}
+            ]
+          },
+          "modes": {
+            "FAST": {"candidatePoolSize": ${LottoGenerationMode.FAST.candidatePoolSize}, "finalistPoolSize": ${LottoGenerationMode.FAST.finalistPoolSize}},
+            "BASIC": {"candidatePoolSize": ${LottoGenerationMode.BASIC.candidatePoolSize}, "finalistPoolSize": ${LottoGenerationMode.BASIC.finalistPoolSize}},
+            "PRECISE": {"candidatePoolSize": ${LottoGenerationMode.PRECISE.candidatePoolSize}, "finalistPoolSize": ${LottoGenerationMode.PRECISE.finalistPoolSize}}
+          },
+          "baseFilter": {
+            "sum": [80, 210],
+            "oddCount": [1, 5],
+            "lowNumberMax": 22,
+            "lowCount": [1, 5],
+            "highNumberMin": 32,
+            "highCountMax": 4,
+            "middleRange": [16, 30],
+            "middleCount": [1, 4],
+            "spread": [18, 42],
+            "variance": [45.0, 230.0],
+            "minimumDecadeBuckets": 3,
+            "maximumSameTailCount": 3,
+            "maximumConsecutiveRun": 3,
+            "minimumAcValue": 4
+          },
+          "weightedSelection": {
+            "minimumWeight": 0.05,
+            "numberFit": {"base": 0.72, "evidenceDivisor": 180.0, "range": [0.72, 1.28]},
+            "gapFit": {"base": 0.86, "evidenceDivisor": 360.0, "range": [0.86, 1.14]},
+            "pairFit": {"base": 0.78, "evidenceDivisor": 230.0, "range": [0.78, 1.22]},
+            "diversifiedHighNumberMinimum": 32,
+            "diversifiedHighNumberMultiplier": 1.18
+          },
+          "evidence": {
+            "numberRateCenter": 50.0,
+            "numberRateScale": 120.0,
+            "pairSmoothing": 2.0,
+            "pairLogScale": 28.0,
+            "gapPriorDraws": 20.0,
+            "gapScale": 35.0,
+            "transitionPrior": 24.0,
+            "transitionLogScale": 18.0
+          },
+          "scoreComposition": {
+            "data": {"number": 0.55, "pair": 0.30, "gap": 0.15},
+            "pattern": {"history": 0.65, "transition": 0.35},
+            "backtest": {"data": 0.60, "pattern": 0.40},
+            "avoidanceCenter": 50.0,
+            "avoidanceScale": 5.0
+          },
+          "finalSelection": {
+            "overlapPenalties": {"two": 1.5, "three": 5.0, "fourOrMore": 10.0},
+            "multipleUsePenaltyMultiplier": 2.4
+          },
+          "balanced": {
+            "recentSumTolerance": 42.0,
+            "recentOddTolerance": 2.0,
+            "recentLowTolerance": 2.0,
+            "maximumPerDecadeBucket": 2,
+            "variance": [65.0, 190.0],
+            "selectionOverlapWeight": 1.0,
+            "repeatedNumberPenalty": 0.7,
+            "repeatedPairPenalty": 1.3,
+            "newCoverageWeight": 1.0,
+            "bucketBonusWeight": 0.45,
+            "selectionAvoidanceWeight": 0.0,
+            "dataWeight": 0.45,
+            "patternWeight": 0.35,
+            "distributionWeight": 0.20
+          },
+          "diversified": {
+            "minimumHighCount": 2,
+            "minimumSpread": 27,
+            "minimumDecadeBuckets": 4,
+            "maximumSameTailCount": 2,
+            "minimumAcValue": 6,
+            "selectionOverlapWeight": 1.45,
+            "repeatedNumberPenalty": 1.15,
+            "repeatedPairPenalty": 2.25,
+            "newCoverageWeight": 1.55,
+            "bucketBonusWeight": 0.7,
+            "selectionAvoidanceWeight": 0.08,
+            "dataWeight": 0.40,
+            "patternWeight": 0.20,
+            "distributionWeight": 0.40
+          },
+          "publicPickAvoidance": {
+            "highNumberMinimum": 32,
+            "birthdayMaximum": 31,
+            "birthdayPenaltyByHighCount": {"zero": 6.0, "one": 2.5},
+            "birthdayHeavyPenalty": {"six": 4.0, "five": 1.8},
+            "simplePatternPenalty": 3.0,
+            "sameTailPenalty": 1.2,
+            "roundNumberPenalty": 0.8,
+            "highNumberBonus": 1.1,
+            "bucketBonus": 0.7,
+            "acValueBonus": 0.35
+          },
+          "randomControl": {
+            "gameCount": $defaultGameCount,
+            "uniformWithoutReplacementWithinTicket": true,
+            "uniqueTicketsWithinRound": true
+          }
+        }
+        """.trimIndent()
+
     private fun buildTrendProfile(history: List<List<Int>>, includeBacktest: Boolean = true): TrendProfile {
         val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
@@ -651,7 +791,7 @@ object LottoNumberGenerator {
             profile.averagePercentile >= 47.0 -> "기준유사"
             else -> "기준미달"
         }
-        return "$level ${formatScore(profile.averagePercentile)}/50 · 우위 ${formatScore(profile.aboveRandomRate)}%"
+        return "$level ${formatScore(profile.averagePercentile)} · 기준 50 · 우위 ${formatScore(profile.aboveRandomRate)}%"
     }
 
     private fun formatScore(score: Double): String = "%.1f".format(score)

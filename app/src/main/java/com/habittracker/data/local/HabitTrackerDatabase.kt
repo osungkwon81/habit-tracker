@@ -11,6 +11,7 @@ import com.habittracker.data.local.entity.DailyRecordItemAttachmentEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
 import com.habittracker.data.local.entity.CardHistoryEntity
 import com.habittracker.data.local.entity.LottoDrawEntity
+import com.habittracker.data.local.entity.LottoGenerationConfigEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
@@ -37,6 +38,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         DailyRecordItemAttachmentEntity::class,
         DailyDiaryEntity::class,
         LottoDrawEntity::class,
+        LottoGenerationConfigEntity::class,
         LottoTicketEntity::class,
         LottoPurchaseEntity::class,
         LottoWinningEntity::class,
@@ -53,7 +55,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         StockSafetyConfigEntity::class,
         StockAutomationEventEntity::class,
     ],
-    version = 20,
+    version = 22,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -62,7 +64,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 20
+        const val DB_VERSION = 22
 
         fun builder(context: Context) =
             Room.databaseBuilder(

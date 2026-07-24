@@ -1,5 +1,6 @@
 package com.habittracker.data.stock
 
+import android.util.Log
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -128,8 +129,16 @@ internal class KisDomesticStockClient {
         const val MARKET_CAP_STOCK_LIMIT = 20
         const val MAX_BALANCE_PAGES = 10
         const val HTTP_TIMEOUT_MILLIS = 10_000
+        const val MIN_REQUEST_INTERVAL_MILLIS = 120L
+        const val RATE_LIMIT_ERROR_CODE = "EGW00201"
+        const val RATE_LIMIT_RETRY_DELAY_MILLIS = 1_100L
+        const val MAX_RATE_LIMIT_RETRIES = 2
+        const val LOG_TAG = "KisStockClient"
         val tokenExpiredAtFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     }
+
+    private val requestRateLock = Any()
+    private var nextRequestAtNanos = 0L
 
     fun issueAccessToken(config: KisApiConfig): KisAccessToken {
         val response = requestJson(
@@ -522,6 +531,37 @@ internal class KisDomesticStockClient {
         headers: Map<String, String>,
         body: JSONObject? = null,
     ): JsonResponse {
+        var retryCount = 0
+        while (true) {
+            awaitRequestSlot()
+            try {
+                return requestJsonOnce(url, method, headers, body)
+            } catch (error: KisApiException) {
+                if (
+                    method != "GET" ||
+                    error.apiCode != RATE_LIMIT_ERROR_CODE ||
+                    retryCount >= MAX_RATE_LIMIT_RETRIES
+                ) {
+                    throw error
+                }
+                retryCount += 1
+                val retryDelayMillis = RATE_LIMIT_RETRY_DELAY_MILLIS * retryCount
+                Log.w(
+                    LOG_TAG,
+                    "KIS API rate limit exceeded. Retrying GET request. " +
+                        "(path=${URL(url).path}, attempt=$retryCount, delayMs=$retryDelayMillis)",
+                )
+                sleepForRateLimit(retryDelayMillis)
+            }
+        }
+    }
+
+    private fun requestJsonOnce(
+        url: String,
+        method: String,
+        headers: Map<String, String>,
+        body: JSONObject?,
+    ): JsonResponse {
         val connection = URL(url).openConnection() as HttpURLConnection
         return try {
             connection.requestMethod = method
@@ -546,7 +586,10 @@ internal class KisDomesticStockClient {
                 val apiMessage = responseBody.optString("msg1")
                     .ifBlank { responseBody.optString("error_description") }
                     .take(200)
-                throw IOException("KIS API 요청에 실패했습니다. (HTTP $statusCode, code=$apiCode, message=$apiMessage)")
+                throw KisApiException(
+                    apiCode = apiCode,
+                    message = "KIS API 요청에 실패했습니다. (HTTP $statusCode, code=$apiCode, message=$apiMessage)",
+                )
             }
             JsonResponse(
                 body = responseBody,
@@ -554,6 +597,25 @@ internal class KisDomesticStockClient {
             )
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun awaitRequestSlot() {
+        synchronized(requestRateLock) {
+            val waitNanos = nextRequestAtNanos - System.nanoTime()
+            if (waitNanos > 0L) {
+                sleepForRateLimit((waitNanos + 999_999L) / 1_000_000L)
+            }
+            nextRequestAtNanos = System.nanoTime() + MIN_REQUEST_INTERVAL_MILLIS * 1_000_000L
+        }
+    }
+
+    private fun sleepForRateLimit(delayMillis: Long) {
+        try {
+            Thread.sleep(delayMillis)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("KIS API 호출 대기가 중단되었습니다.", error)
         }
     }
 
@@ -593,4 +655,9 @@ internal class KisDomesticStockClient {
         val body: JSONObject,
         val trContinuation: String,
     )
+
+    private class KisApiException(
+        val apiCode: String,
+        message: String,
+    ) : IOException(message)
 }

@@ -31,6 +31,8 @@ data class LottoTicketEntity(
     val note: String? = null,
     @ColumnInfo(name = "is_purchased")
     val isPurchased: Boolean = false,
+    @ColumnInfo(name = "is_evaluation_target")
+    val isEvaluationTarget: Boolean = false,
     @ColumnInfo(name = "generation_version")
     val generationVersion: String = "legacy",
     @ColumnInfo(name = "analysis_score")
@@ -59,6 +61,7 @@ data class LottoTicketEntity(
             sourceLabel: String,
             numbers: List<Int>,
             note: String? = null,
+            isEvaluationTarget: Boolean = false,
             generationVersion: String = "manual",
             analysisScore: Double? = null,
             dataScore: Double? = null,
@@ -80,6 +83,7 @@ data class LottoTicketEntity(
                 number5 = sortedNumbers[4],
                 number6 = sortedNumbers[5],
                 note = note,
+                isEvaluationTarget = isEvaluationTarget,
                 generationVersion = generationVersion,
                 analysisScore = analysisScore,
                 dataScore = dataScore,

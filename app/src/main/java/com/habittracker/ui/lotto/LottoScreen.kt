@@ -49,6 +49,7 @@ import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
 import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.model.LottoPeriodStatRow
+import com.habittracker.data.lotto.LottoControlComparison
 import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
@@ -256,6 +257,7 @@ fun LottoScreen(viewModel: LottoViewModel) {
                         stats = uiState.stats,
                         winningTypeStats = uiState.winningTypeStats,
                         scorePerformances = uiState.scorePerformances,
+                        controlComparisons = uiState.controlComparisons,
                         onSelectRange = viewModel::selectStatsRange,
                     )
                 }
@@ -682,6 +684,7 @@ private fun RoundSavedTicketDeck(
                                 val setNote = entry.key.orEmpty()
                                 val setTickets = entry.value.sortedBy(LottoTicketEntity::id)
                                 val isPurchased = setTickets.all(LottoTicketEntity::isPurchased)
+                                val isEvaluationTarget = setTickets.all(LottoTicketEntity::isEvaluationTarget)
                                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -689,20 +692,28 @@ private fun RoundSavedTicketDeck(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Text(
-                                            text = "${extractSetNo(entry.key) ?: 1}세트",
+                                            text = if (isEvaluationTarget) "자동 대조군" else "${extractSetNo(entry.key) ?: 1}세트",
                                             fontWeight = FontWeight.SemiBold,
                                             color = LottoTextStrongColor,
                                         )
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                             AppSecondaryButton(
-                                                text = if (isPurchased) "구매완료" else "구매",
-                                                onClick = { if (setNote.isNotBlank() && !isPurchased) onMarkSetPurchased(source, setNote) },
-                                                enabled = setNote.isNotBlank() && !isPurchased,
+                                                text = when {
+                                                    isEvaluationTarget -> "평가대상"
+                                                    isPurchased -> "구매완료"
+                                                    else -> "구매"
+                                                },
+                                                onClick = {
+                                                    if (setNote.isNotBlank() && !isPurchased && !isEvaluationTarget) {
+                                                        onMarkSetPurchased(source, setNote)
+                                                    }
+                                                },
+                                                enabled = setNote.isNotBlank() && !isPurchased && !isEvaluationTarget,
                                             )
                                             AppSecondaryButton(
                                                 text = "삭제",
                                                 onClick = { if (setNote.isNotBlank()) onDeleteSet(source, setNote) },
-                                                enabled = setNote.isNotBlank() && !isPurchased,
+                                                enabled = setNote.isNotBlank() && !isPurchased && !isEvaluationTarget,
                                             )
                                         }
                                     }
@@ -880,6 +891,7 @@ private fun LottoStatsSection(
     stats: List<LottoPeriodStatRow>,
     winningTypeStats: List<LottoWinningTypeStat>,
     scorePerformances: List<LottoScorePerformance>,
+    controlComparisons: List<LottoControlComparison>,
     onSelectRange: (LottoStatsRange) -> Unit,
 ) {
     val net = totalWinning - totalPurchase
@@ -893,13 +905,17 @@ private fun LottoStatsSection(
             }
         }
         AppSectionCard {
-            AppSectionHeader(title = "균형형/분산형 당첨 통계")
+            AppSectionHeader(title = "생성 방식별 당첨 통계")
             WinningStyleRateSummary(winningTypeStats = winningTypeStats)
             WinningTypeTable(winningTypeStats = winningTypeStats)
         }
         AppSectionCard {
             AppSectionHeader(title = "분석점수 성과")
             ScorePerformanceSummary(scorePerformances)
+        }
+        AppSectionCard {
+            AppSectionHeader(title = "무작위 대조군 비교")
+            ControlComparisonSummary(controlComparisons)
         }
         AppSectionCard {
             AppSectionHeader(title = "${selectedRange.label} 흐름")
@@ -920,6 +936,41 @@ private fun LottoStatsSection(
                     Text(text = formatStatsPeriod(row.period, selectedRange), fontWeight = FontWeight.SemiBold)
                     AmountBar(label = "구입 ${formatWon(row.purchaseAmount)}", ratio = row.purchaseAmount / maxValue, color = Color(0xFFB8C7D9))
                     AmountBar(label = "당첨 ${formatWon(row.winningAmount)}", ratio = row.winningAmount / maxValue, color = ChatGptAccent)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ControlComparisonSummary(comparisons: List<LottoControlComparison>) {
+    if (comparisons.isEmpty()) {
+        Text(text = "동일 회차에서 비교할 추첨 결과가 없습니다.", color = LottoTextMutedColor)
+        return
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        comparisons.forEach { comparison ->
+            val difference = "%+.2f".format(comparison.averageMatchDifference)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "${comparison.sourceLabel} · ${comparison.generationVersion}",
+                    color = LottoTextStrongColor,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "비교 ${comparison.pairedRoundCount}회차 · 추천 ${"%.2f".format(comparison.strategyAverageMatchCount)}개 · " +
+                        "무작위 ${"%.2f".format(comparison.controlAverageMatchCount)}개 · 차이 $difference",
+                    color = LottoTextMutedColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    text = "우위 ${comparison.betterRoundCount} · 동일 ${comparison.tiedRoundCount} · 열위 ${comparison.worseRoundCount}",
+                    color = LottoTextMutedColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (comparison.pairedRoundCount < 20) {
+                    Text(text = "20회차 미만은 표본이 적어 참고용입니다.", color = LottoTextMutedColor, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -988,7 +1039,7 @@ private fun correlationResultText(correlation: LottoScoreCorrelation): String {
 @Composable
 private fun WinningStyleRateSummary(winningTypeStats: List<LottoWinningTypeStat>) {
     if (winningTypeStats.isEmpty()) {
-        Text(text = "구매 처리된 번호가 없습니다.", color = LottoTextMutedColor)
+        Text(text = "평가할 번호가 없습니다.", color = LottoTextMutedColor)
         return
     }
 
@@ -998,16 +1049,20 @@ private fun WinningStyleRateSummary(winningTypeStats: List<LottoWinningTypeStat>
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(text = statDisplayLabel(stat), color = LottoTextStrongColor, fontWeight = FontWeight.SemiBold)
                 Text(
-                    text = "구매 대비 당첨 ${purchaseWinningRate(stat)}% · ${winningCount}/${stat.evaluatedTicketCount}건 · 평균 일치 ${"%.2f".format(stat.averageMatchCount)}개",
+                    text = "평가 대비 당첨 ${purchaseWinningRate(stat)}% · ${winningCount}/${stat.evaluatedTicketCount}건 · 평균 일치 ${"%.2f".format(stat.averageMatchCount)}개",
                     color = LottoTextMutedColor,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                Text(
-                    text = "저장 분석점수 ${stat.averageAnalysisScore?.let { "%.1f".format(it) } ?: "-"} · " +
-                        "스타일 적합 ${stylePassRate(stat)}% · 평균 ${stat.averageStyleScore}점",
-                    color = LottoTextMutedColor,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (stat.sourceLabel == "무작위 대조군") {
+                    Text(text = "분석점수·스타일 평가 대상 아님", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text(
+                        text = "저장 분석점수 ${stat.averageAnalysisScore?.let { "%.1f".format(it) } ?: "-"} · " +
+                            "스타일 적합 ${stylePassRate(stat)}% · 평균 ${stat.averageStyleScore}점",
+                        color = LottoTextMutedColor,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }

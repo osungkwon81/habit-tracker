@@ -525,6 +525,57 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_20_21 = object : Migration(20, 21) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_ticket`
+                ADD COLUMN `is_evaluation_target` INTEGER NOT NULL DEFAULT 0
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `lotto_generation_config` (
+                    `generation_version` TEXT NOT NULL,
+                    `config_json` TEXT NOT NULL,
+                    `created_at` TEXT NOT NULL,
+                    PRIMARY KEY(`generation_version`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_21_22 = object : Migration(21, 22) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE `lotto_generation_config_new` (
+                    `generation_version` TEXT NOT NULL,
+                    `config_json` TEXT NOT NULL,
+                    `config_hash` TEXT NOT NULL,
+                    `created_at` TEXT NOT NULL,
+                    PRIMARY KEY(`generation_version`)
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                INSERT INTO `lotto_generation_config_new` (
+                    `generation_version`,
+                    `config_json`,
+                    `config_hash`,
+                    `created_at`
+                )
+                SELECT `generation_version`, `config_json`, '', `created_at`
+                FROM `lotto_generation_config`
+                """.trimIndent(),
+            )
+            database.execSQL("DROP TABLE `lotto_generation_config`")
+            database.execSQL("ALTER TABLE `lotto_generation_config_new` RENAME TO `lotto_generation_config`")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -541,6 +592,8 @@ object HabitTrackerMigrations {
         MIGRATION_17_18,
         MIGRATION_18_19,
         MIGRATION_19_20,
+        MIGRATION_20_21,
+        MIGRATION_21_22,
     )
 }
 
