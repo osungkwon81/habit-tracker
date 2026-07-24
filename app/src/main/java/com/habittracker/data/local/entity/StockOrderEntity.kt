@@ -41,6 +41,8 @@ data class StockOrderEntity(
     val exchangeCode: String,
     val source: String,
     val status: String,
+    @ColumnInfo(name = "intended_buy_order_id")
+    val intendedBuyOrderId: Long? = null,
     @ColumnInfo(name = "filled_quantity")
     val filledQuantity: Long = 0,
     @ColumnInfo(name = "applied_filled_quantity")

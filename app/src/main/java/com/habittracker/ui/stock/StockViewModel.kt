@@ -6,6 +6,7 @@ import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
+import com.habittracker.data.local.entity.StockSellAllocationEntity
 import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.stock.KisApiConfig
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class StockViewModel(
@@ -43,8 +45,17 @@ class StockViewModel(
     private fun observeTradingData() {
         viewModelScope.launch {
             repository.observeStockOrders().collect { orders ->
-                _uiState.update { it.copy(orders = orders) }
-                refreshJournalAnalysisOnly()
+                _uiState.update {
+                    it.copy(
+                        orders = orders,
+                        journalAnalysis = repository.calculateStockJournalAnalysis(orders),
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeStockSellAllocations().collect { allocations ->
+                _uiState.update { it.copy(sellAllocations = allocations) }
             }
         }
         viewModelScope.launch {
@@ -65,6 +76,11 @@ class StockViewModel(
         viewModelScope.launch {
             repository.observeStockSafetyConfig().collect { config ->
                 if (config != null) applySafetyConfig(config)
+            }
+        }
+        viewModelScope.launch {
+            repository.observeKisAccessTokenExpiredAt(KisEnvironment.REAL).collect { expiresAt ->
+                _uiState.update { it.copy(accessTokenExpiredAt = expiresAt) }
             }
         }
     }
@@ -180,7 +196,9 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching {
                 repository.placeKisCashOrder(
-                    draft = state.toCashOrderDraft(),
+                    draft = state.toCashOrderDraft().copy(
+                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
+                    ),
                     productName = state.productName,
                     source = StockOrderSource.MANUAL,
                 )
@@ -223,12 +241,13 @@ class StockViewModel(
                         orderDivisionCode = "00",
                         orderQuantity = quantity.toString(),
                         orderUnitPrice = currentPrice.toString(),
-                        exchangeIdDivisionCode = "KRX",
+                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
                         sellType = "01",
                         conditionPrice = "",
                     ),
                     productName = order.productName,
                     source = StockOrderSource.MANUAL,
+                    intendedBuyOrderId = order.id,
                 )
             }.onSuccess { sellOrder ->
                 _uiState.update {
@@ -310,7 +329,7 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching { repository.syncStockOrderExecutions() }
                 .onSuccess { count ->
-                    _uiState.update { it.copy(isSyncingOrders = false, statusMessage = "주문 체결 상태 ${count}건을 확인했습니다.") }
+                    _uiState.update { it.copy(isSyncingOrders = false, statusMessage = "체결 기록 ${count}건을 동기화했습니다.") }
                 }
                 .onFailure { error ->
                     _uiState.update {
@@ -319,6 +338,97 @@ class StockViewModel(
                 }
         }
     }
+
+    fun selectManualTradeProduct(code: String, name: String) =
+        _uiState.update { it.copy(manualTradeProductCode = code, manualTradeProductName = name) }
+    fun selectManualTradeSide(side: KisOrderSide) = _uiState.update { it.copy(manualTradeSide = side) }
+    fun updateManualTradeDate(value: String) =
+        _uiState.update { it.copy(manualTradeDate = value.filter { char -> char.isDigit() || char == '-' }.take(10)) }
+    fun updateManualTradeQuantity(value: String) =
+        _uiState.update { it.copy(manualTradeQuantity = value.filter(Char::isDigit)) }
+    fun updateManualTradePrice(value: String) =
+        _uiState.update { it.copy(manualTradePrice = value.filter(Char::isDigit)) }
+
+    fun startEditingManualTrade(order: StockOrderEntity) {
+        val side = KisOrderSide.values().firstOrNull { it.name == order.side } ?: KisOrderSide.SELL
+        _uiState.update {
+            it.copy(
+                manualTradeEditingOrderId = order.id,
+                manualTradeProductCode = order.productCode,
+                manualTradeProductName = order.productName,
+                manualTradeSide = side,
+                manualTradeDate = order.orderDate.toString(),
+                manualTradeQuantity = order.filledQuantity.toString(),
+                manualTradePrice = (order.filledAveragePrice ?: order.referencePrice).toString(),
+                statusMessage = "상단 수동 체결 기록에서 내용을 수정해 주세요.",
+            )
+        }
+    }
+
+    fun cancelManualTradeEditing() {
+        _uiState.update {
+            it.copy(
+                manualTradeEditingOrderId = null,
+                manualTradeQuantity = "",
+                manualTradePrice = "",
+                statusMessage = "수동 체결 수정을 취소했습니다.",
+            )
+        }
+    }
+
+    fun saveManualTrade() {
+        val state = _uiState.value
+        launchAction("수동 체결 기록 저장에 실패했습니다.") {
+            val orderDate = runCatching { LocalDate.parse(state.manualTradeDate) }
+                .getOrElse { throw IllegalArgumentException("체결일을 YYYY-MM-DD 형식으로 입력해 주세요.") }
+            val quantity = state.manualTradeQuantity.toLongOrNull()
+                ?: throw IllegalArgumentException("체결 수량을 입력해 주세요.")
+            val unitPrice = state.manualTradePrice.toLongOrNull()
+                ?: throw IllegalArgumentException("실제 체결가를 입력해 주세요.")
+            state.manualTradeEditingOrderId?.let { orderId ->
+                repository.updateManualStockExecution(
+                    orderId = orderId,
+                    productCode = state.manualTradeProductCode,
+                    productName = state.manualTradeProductName,
+                    side = state.manualTradeSide,
+                    orderDate = orderDate,
+                    quantity = quantity,
+                    unitPrice = unitPrice,
+                )
+            } ?: repository.saveManualStockExecution(
+                productCode = state.manualTradeProductCode,
+                productName = state.manualTradeProductName,
+                side = state.manualTradeSide,
+                orderDate = orderDate,
+                quantity = quantity,
+                unitPrice = unitPrice,
+            )
+            _uiState.update {
+                it.copy(
+                    manualTradeEditingOrderId = null,
+                    manualTradeQuantity = "",
+                    manualTradePrice = "",
+                    statusMessage = if (state.manualTradeEditingOrderId == null) {
+                        "수동 ${state.manualTradeSide.label} 기록을 저장했습니다."
+                    } else {
+                        "수동 ${state.manualTradeSide.label} 기록을 수정했습니다."
+                    },
+                )
+            }
+        }
+    }
+
+    fun allocateSellToBuyLot(sellOrderId: Long, buyOrderId: Long, quantity: Long) =
+        launchAction("매수 건 연결에 실패했습니다.") {
+            repository.allocateStockSellToBuyLot(sellOrderId, buyOrderId, quantity)
+            _uiState.update { it.copy(statusMessage = "매도 기록에 매수 건을 연결했습니다.") }
+        }
+
+    fun deleteSellAllocation(allocation: StockSellAllocationEntity) =
+        launchAction("매수 건 연결 취소에 실패했습니다.") {
+            repository.deleteStockSellAllocation(allocation)
+            _uiState.update { it.copy(statusMessage = "매수 건 연결을 취소했습니다.") }
+        }
 
     fun updateMonitoringInterval(value: String) =
         _uiState.update { it.copy(monitorIntervalMinutes = value.filter(Char::isDigit)) }
@@ -393,10 +503,19 @@ class StockViewModel(
 
     fun selectRuleProduct(code: String, name: String) =
         _uiState.update { it.copy(ruleProductCode = code, ruleProductName = name) }
-    fun selectRuleType(type: StockExitRuleType) = _uiState.update { it.copy(ruleType = type) }
+    fun selectRuleType(type: StockExitRuleType) =
+        _uiState.update { it.copy(ruleType = type, ruleTriggerValue = "", ruleTriggerPrice = "") }
     fun selectRuleAction(action: StockRuleAction) = _uiState.update { it.copy(ruleAction = action) }
     fun updateRuleTriggerValue(value: String) =
-        _uiState.update { it.copy(ruleTriggerValue = value.filter { char -> char.isDigit() || char == '.' }) }
+        _uiState.update {
+            val filtered = value.filter { char -> char.isDigit() || char == '.' }
+            it.copy(ruleTriggerValue = filtered, ruleTriggerPrice = if (filtered.isNotBlank()) "" else it.ruleTriggerPrice)
+        }
+    fun updateRuleTriggerPrice(value: String) =
+        _uiState.update {
+            val filtered = value.filter(Char::isDigit)
+            it.copy(ruleTriggerPrice = filtered, ruleTriggerValue = if (filtered.isNotBlank()) "" else it.ruleTriggerValue)
+        }
     fun updateRuleSellPercent(value: String) =
         _uiState.update { it.copy(ruleSellPercent = value.filter { char -> char.isDigit() || char == '.' }) }
     fun selectRuleOrderDivision(code: String) = _uiState.update { it.copy(ruleOrderDivisionCode = code) }
@@ -409,8 +528,8 @@ class StockViewModel(
                 productCode = state.ruleProductCode,
                 productName = state.ruleProductName,
                 ruleType = state.ruleType,
-                triggerValue = state.ruleTriggerValue.toDoubleOrNull()
-                    ?: throw IllegalArgumentException("발동 기준을 입력해 주세요."),
+                triggerValue = state.ruleTriggerValue.toDoubleOrNull(),
+                triggerPrice = state.ruleTriggerPrice.toLongOrNull(),
                 sellQuantityPercent = if (state.ruleAction == StockRuleAction.AUTO_SELL) {
                     state.ruleSellPercent.toDoubleOrNull()
                         ?: throw IllegalArgumentException("매도 비율을 입력해 주세요.")
@@ -423,6 +542,7 @@ class StockViewModel(
             _uiState.update {
                 it.copy(
                     ruleTriggerValue = "",
+                    ruleTriggerPrice = "",
                     ruleSellPercent = "",
                     statusMessage = "${state.ruleProductName} ${state.ruleType.label} 규칙이 저장되었습니다.",
                 )
@@ -481,16 +601,14 @@ class StockViewModel(
     fun refreshJournal() {
         _uiState.update { it.copy(isLoadingJournal = true) }
         viewModelScope.launch {
-            runCatching {
-                repository.syncStockOrderExecutions()
-                repository.getStockJournalAnalysis()
-            }.onSuccess { analysis ->
-                _uiState.update { it.copy(journalAnalysis = analysis, isLoadingJournal = false) }
-            }.onFailure { error ->
-                _uiState.update {
-                    it.copy(isLoadingJournal = false, statusMessage = "매매일지 분석에 실패했습니다. ${error.message.orEmpty()}")
+            runCatching { repository.syncStockOrderExecutions() }
+                .onSuccess {
+                    _uiState.update { it.copy(isLoadingJournal = false) }
+                }.onFailure { error ->
+                    _uiState.update {
+                        it.copy(isLoadingJournal = false, statusMessage = "매매일지 분석에 실패했습니다. ${error.message.orEmpty()}")
+                    }
                 }
-            }
         }
     }
 
@@ -535,13 +653,6 @@ class StockViewModel(
         }
     }
 
-    private fun refreshJournalAnalysisOnly() {
-        viewModelScope.launch {
-            runCatching { repository.getStockJournalAnalysis() }
-                .onSuccess { analysis -> _uiState.update { it.copy(journalAnalysis = analysis) } }
-        }
-    }
-
     private fun launchAction(failurePrefix: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             runCatching { block() }
@@ -577,6 +688,7 @@ data class StockUiState(
     val conditionPrice: String = "",
     val isSubmittingOrder: Boolean = false,
     val orders: List<StockOrderEntity> = emptyList(),
+    val sellAllocations: List<StockSellAllocationEntity> = emptyList(),
     val buyLotRows: List<StockBuyLotRow> = emptyList(),
     val isLoadingPortfolio: Boolean = false,
     val isSyncingOrders: Boolean = false,
@@ -593,6 +705,7 @@ data class StockUiState(
     val ruleProductName: String = "",
     val ruleType: StockExitRuleType = StockExitRuleType.STOP_LOSS,
     val ruleTriggerValue: String = "",
+    val ruleTriggerPrice: String = "",
     val ruleSellPercent: String = "",
     val ruleAction: StockRuleAction = StockRuleAction.NOTIFY_ONLY,
     val ruleOrderDivisionCode: String = "00",
@@ -604,6 +717,13 @@ data class StockUiState(
     val rebalancePlan: List<StockRebalanceLine> = emptyList(),
     val isCalculatingRebalance: Boolean = false,
     val journalAnalysis: StockJournalAnalysis? = null,
+    val manualTradeEditingOrderId: Long? = null,
+    val manualTradeProductCode: String = "",
+    val manualTradeProductName: String = "",
+    val manualTradeSide: KisOrderSide = KisOrderSide.SELL,
+    val manualTradeDate: String = LocalDate.now().toString(),
+    val manualTradeQuantity: String = "",
+    val manualTradePrice: String = "",
     val automationEvents: List<StockAutomationEventEntity> = emptyList(),
     val isLoadingJournal: Boolean = false,
     val statusMessage: String? = null,

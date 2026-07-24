@@ -271,6 +271,7 @@ class StockAutomationService : Service() {
             .setOngoing(ongoing)
             .setCategory(if (ongoing) Notification.CATEGORY_SERVICE else Notification.CATEGORY_ALARM)
             .setOnlyAlertOnce(ongoing)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
             .build()
     }
 
@@ -280,14 +281,18 @@ class StockAutomationService : Service() {
                 foregroundChannelId,
                 "주식 자동화 상태",
                 NotificationManager.IMPORTANCE_LOW,
-            ),
+            ).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
         )
         notificationManager().createNotificationChannel(
             NotificationChannel(
                 alertChannelId,
                 "주식 손절·익절 알림",
                 NotificationManager.IMPORTANCE_HIGH,
-            ),
+            ).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
         )
     }
 

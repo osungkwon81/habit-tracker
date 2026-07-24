@@ -198,7 +198,7 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                if (uiState.orders.isEmpty()) AppSupportText("앱에서 접수한 주문이 없습니다.")
+                if (uiState.orders.isEmpty()) AppSupportText("저장된 주문·체결 기록이 없습니다.")
             }
         }
     }

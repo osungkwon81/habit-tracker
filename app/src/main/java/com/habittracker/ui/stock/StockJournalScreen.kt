@@ -21,19 +21,49 @@ import com.habittracker.data.stock.StockOrderStatus
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
+import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSpacing
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
+import com.habittracker.ui.components.AppTextField
 
 @Composable
 fun StockJournalScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     var unknownToResolve by remember { mutableStateOf<StockOrderEntity?>(null) }
+    var isManualTradeExpanded by remember { mutableStateOf(false) }
+    val allocationsBySellOrder = remember(uiState.sellAllocations) {
+        uiState.sellAllocations.groupBy { it.sellOrderId }
+    }
+    val allocatedOrderIds = remember(uiState.sellAllocations) {
+        buildSet {
+            uiState.sellAllocations.forEach { allocation ->
+                add(allocation.sellOrderId)
+                add(allocation.buyOrderId)
+            }
+        }
+    }
+    val openBuyLotsByProduct = remember(uiState.orders) {
+        uiState.orders
+            .asSequence()
+            .filter { it.side == KisOrderSide.BUY.name && it.remainingQuantity > 0L }
+            .sortedWith(compareBy(StockOrderEntity::orderDate, StockOrderEntity::orderTime))
+            .groupBy(StockOrderEntity::productCode)
+    }
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
     LaunchedEffect(uiState.isConfigSaved) {
-        if (uiState.isConfigSaved) viewModel.refreshJournal()
+        if (uiState.isConfigSaved) {
+            viewModel.loadOwnedStocks()
+            viewModel.refreshJournal()
+        }
+    }
+
+    LaunchedEffect(uiState.manualTradeEditingOrderId) {
+        if (uiState.manualTradeEditingOrderId != null) {
+            isManualTradeExpanded = true
+        }
     }
 
     unknownToResolve?.let { order ->
@@ -67,7 +97,7 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                 icon = "✎",
                 eyebrow = "STOCK · JOURNAL",
                 title = "매매일지",
-                description = "앱에서 접수한 주문, 체결 결과, 자동화 사유와 추정 실현손익을 분석합니다.",
+                description = "오늘부터 KIS 체결을 자동으로 저장하고 매도 건을 실제 매수 lot과 연결합니다.",
             )
         }
         item {
@@ -78,6 +108,74 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                 enabled = uiState.isConfigSaved && !uiState.isLoadingJournal,
             )
         }
+        item {
+            AppSectionCard {
+                StockSectionTitle(
+                    if (uiState.manualTradeEditingOrderId == null) "수동 체결 기록" else "수동 체결 기록 수정",
+                )
+                AppSecondaryButton(
+                    text = if (isManualTradeExpanded) "입력 닫기" else "입력 펼치기",
+                    onClick = { isManualTradeExpanded = !isManualTradeExpanded },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (isManualTradeExpanded) {
+                    StockProductDropdown(
+                        label = "종목",
+                        selectedCode = uiState.manualTradeProductCode,
+                        options = uiState.manualTradeProductOptions(),
+                        enabled = !uiState.isLoadingOwnedStocks,
+                        onSelect = { viewModel.selectManualTradeProduct(it.code, it.name) },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                    ) {
+                        KisOrderSide.values().forEach { side ->
+                            AppSelectableChip(
+                                label = side.label,
+                                selected = uiState.manualTradeSide == side,
+                                onClick = { viewModel.selectManualTradeSide(side) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    AppTextField(
+                        value = uiState.manualTradeDate,
+                        onValueChange = viewModel::updateManualTradeDate,
+                        label = "실제 체결일 (YYYY-MM-DD)",
+                        singleLine = true,
+                    )
+                    AppTextField(
+                        value = uiState.manualTradeQuantity,
+                        onValueChange = viewModel::updateManualTradeQuantity,
+                        label = "실제 체결 수량",
+                        singleLine = true,
+                    )
+                    AppTextField(
+                        value = uiState.manualTradePrice,
+                        onValueChange = viewModel::updateManualTradePrice,
+                        label = "실제 체결 단가 (원)",
+                        singleLine = true,
+                    )
+                    AppPrimaryButton(
+                        text = if (uiState.manualTradeEditingOrderId == null) "수동 체결 저장" else "수정 저장",
+                        onClick = viewModel::saveManualTrade,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = uiState.manualTradeProductCode.isNotBlank() &&
+                            uiState.manualTradeQuantity.toLongOrNull()?.let { it > 0L } == true &&
+                            uiState.manualTradePrice.toLongOrNull()?.let { it > 0L } == true,
+                    )
+                    if (uiState.manualTradeEditingOrderId != null) {
+                        AppSecondaryButton(
+                            text = "수정 취소",
+                            onClick = viewModel::cancelManualTradeEditing,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    AppSupportText("손익은 입력하지 않습니다. 매도 기록에서 매수 건을 연결하면 앱이 자동 계산합니다.")
+                }
+            }
+        }
         uiState.journalAnalysis?.let { analysis ->
             item {
                 AppSectionCard {
@@ -86,24 +184,45 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                     JournalMetric("체결 매도", "${analysis.filledSellCount}건")
                     JournalMetric("수익 매도", "${analysis.profitableTradeCount}/${analysis.realizedTradeCount}건")
                     JournalMetric("승률", analysis.winRatePercent?.toPercent() ?: "-")
-                    JournalMetric("추정 실현손익", analysis.estimatedRealizedProfit.toWon())
+                    JournalMetric("실현손익(수수료 전)", analysis.estimatedRealizedProfit.toWon())
                     if (analysis.sourceCounts.isNotEmpty()) {
-                        Text("주문 사유", style = MaterialTheme.typography.titleSmall)
+                        Text("주문 출처", style = MaterialTheme.typography.titleSmall)
                         analysis.sourceCounts.forEach { (source, count) ->
                             Text("${source.label} ${count}건", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
-                    AppSupportText("실현손익은 앱에서 체결 동기화한 매수 lot을 FIFO로 배분한 세금·수수료 미반영 추정치입니다.")
+                    AppSupportText(
+                        "실현손익은 사용자가 연결한 매수 lot과 실제 매도 체결가로 계산한 세금·수수료 미반영 금액입니다.",
+                    )
                 }
             }
         }
         item { StockSectionTitle("주문 기록") }
         if (uiState.orders.isEmpty()) {
-            item { AppSectionCard { AppSupportText("앱에서 접수한 주문 기록이 없습니다.") } }
+            item { AppSectionCard { AppSupportText("저장된 주문 기록이 없습니다.") } }
+        }
+        item {
+            AppSupportText("KIS 외부 주문은 KIS 앱·HTS 등 이 앱 밖의 체결이며, 세부 주문 채널은 구분하지 않습니다.")
         }
         items(uiState.orders.size) { index ->
             val order = uiState.orders[index]
             val source = StockOrderSource.values().firstOrNull { it.name == order.source }
+            val allocations = allocationsBySellOrder[order.id].orEmpty()
+            val hasAllocation = order.id in allocatedOrderIds
+            val canEditManualOrder = order.source == StockOrderSource.MANUAL_ENTRY.name &&
+                !hasAllocation &&
+                if (order.side == KisOrderSide.BUY.name) {
+                    order.remainingQuantity == order.filledQuantity
+                } else {
+                    order.appliedFilledQuantity == 0L
+                }
+            val unallocatedQuantity = (order.filledQuantity - order.appliedFilledQuantity).coerceAtLeast(0L)
+            var allocationQuantity by remember(order.id, unallocatedQuantity) {
+                mutableStateOf(unallocatedQuantity.toString())
+            }
+            val availableBuyLots = openBuyLotsByProduct[order.productCode]
+                .orEmpty()
+                .filter { buyOrder -> !buyOrder.orderDate.isAfter(order.orderDate) }
             AppSectionCard {
                 Text("${order.productName} (${order.productCode})", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -119,13 +238,78 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                     "주문 ${order.requestedUnitPrice.toWon()} · 체결 ${order.filledAveragePrice.toWon()}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (order.side == KisOrderSide.BUY.name && order.filledQuantity > 0L) {
+                    AppStatusText("매수 lot 남은 수량 ${order.remainingQuantity}주")
+                }
                 AppStatusText(order.status.toKoreanOrderStatus())
+                if (order.source == StockOrderSource.MANUAL_ENTRY.name) {
+                    AppSecondaryButton(
+                        text = "수동 기록 수정",
+                        onClick = { viewModel.startEditingManualTrade(order) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = canEditManualOrder,
+                    )
+                    if (!canEditManualOrder) {
+                        AppSupportText("매수 건 연결을 먼저 취소하면 이 기록을 수정할 수 있습니다.")
+                    }
+                }
                 order.estimatedRealizedProfit?.let { profit ->
                     Text(
-                        "추정 실현손익 ${profit.toWon()}",
+                        "연결 손익 ${profit.toWon()}",
                         color = if (profit >= 0L) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.titleSmall,
                     )
+                }
+                if (order.side == KisOrderSide.SELL.name && order.filledQuantity > 0L) {
+                    allocations.forEach { allocation ->
+                        Text(
+                            "${allocation.quantity}주 · 매수 ${allocation.buyUnitPrice.toWon()} → " +
+                                "매도 ${allocation.sellUnitPrice.toWon()} · 손익 ${allocation.realizedProfit.toWon()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (allocation.realizedProfit >= 0L) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
+                        )
+                        AppSecondaryButton(
+                            text = "매수 건 연결 취소",
+                            onClick = { viewModel.deleteSellAllocation(allocation) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (unallocatedQuantity > 0L) {
+                        AppStatusText("매수 건 미연결 ${unallocatedQuantity}주")
+                        AppTextField(
+                            value = allocationQuantity,
+                            onValueChange = { allocationQuantity = it.filter(Char::isDigit) },
+                            label = "연결할 수량",
+                            singleLine = true,
+                        )
+                        availableBuyLots.forEach { buyLot ->
+                            val buyPrice = buyLot.filledAveragePrice ?: buyLot.referencePrice
+                            AppSecondaryButton(
+                                text = "${buyLot.orderDate} · ${buyPrice.toWon()} · " +
+                                    "남은 ${buyLot.remainingQuantity}주에서 선택",
+                                onClick = {
+                                    allocationQuantity.toLongOrNull()?.let { quantity ->
+                                        viewModel.allocateSellToBuyLot(order.id, buyLot.id, quantity)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = allocationQuantity.toLongOrNull()?.let { quantity ->
+                                    quantity > 0L &&
+                                        quantity <= unallocatedQuantity &&
+                                        quantity <= buyLot.remainingQuantity
+                                } == true,
+                            )
+                        }
+                        if (availableBuyLots.isEmpty()) {
+                            AppSupportText("연결 가능한 매수 기록이 없습니다. 필요한 매수 체결을 수동으로 먼저 입력해 주세요.")
+                        }
+                    } else {
+                        AppStatusText("매수 건 연결 완료")
+                    }
                 }
                 order.message?.takeIf(String::isNotBlank)?.let { AppSupportText(it) }
                 if (order.status == StockOrderStatus.UNKNOWN.name) {
@@ -160,6 +344,15 @@ fun StockJournalScreen(viewModel: StockViewModel) {
         }
     }
 }
+
+private fun StockUiState.manualTradeProductOptions(): List<StockProductOption> =
+    (ownedProductOptions() + orders.map { order ->
+        StockProductOption(
+            code = order.productCode,
+            name = order.productName,
+            description = "",
+        )
+    }).distinctBy(StockProductOption::code)
 
 @Composable
 private fun JournalMetric(label: String, value: String) {

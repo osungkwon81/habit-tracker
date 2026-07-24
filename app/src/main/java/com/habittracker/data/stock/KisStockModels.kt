@@ -462,6 +462,9 @@ internal class KisDomesticStockClient {
                     orderDate = date,
                     orderTime = item.optString("ord_tmd"),
                     orderedQuantity = item.firstLong("ord_qty"),
+                    orderedUnitPrice = item.firstLong("ord_unpr"),
+                    orderDivisionCode = item.optString("ord_dvsn_cd"),
+                    exchangeCode = item.optString("excg_dvsn_cd"),
                     filledQuantity = filledQuantity,
                     filledAveragePrice = filledAveragePrice,
                     remainingQuantity = item.firstLong("rmn_qty"),
@@ -587,6 +590,7 @@ internal class KisDomesticStockClient {
                     .ifBlank { responseBody.optString("error_description") }
                     .take(200)
                 throw KisApiException(
+                    httpStatusCode = statusCode,
                     apiCode = apiCode,
                     message = "KIS API 요청에 실패했습니다. (HTTP $statusCode, code=$apiCode, message=$apiMessage)",
                 )
@@ -656,7 +660,15 @@ internal class KisDomesticStockClient {
         val trContinuation: String,
     )
 
+    fun isAccessTokenError(error: Throwable): Boolean {
+        val apiError = error as? KisApiException ?: return false
+        return apiError.httpStatusCode == HttpURLConnection.HTTP_UNAUTHORIZED ||
+            apiError.apiCode in setOf("EGW00121", "EGW00122", "EGW00123", "EGW00124") ||
+            apiError.message.orEmpty().contains("token", ignoreCase = true)
+    }
+
     private class KisApiException(
+        val httpStatusCode: Int,
         val apiCode: String,
         message: String,
     ) : IOException(message)

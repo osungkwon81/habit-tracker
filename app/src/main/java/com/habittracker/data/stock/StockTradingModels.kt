@@ -22,12 +22,14 @@ enum class StockOrderStatus {
 }
 
 enum class StockOrderSource(val label: String) {
-    MANUAL("직접 주문"),
-    STOP_LOSS("손절"),
-    TAKE_PROFIT("익절"),
-    TRAILING_STOP("트레일링 스톱"),
-    TIME_EXIT("기간 청산"),
-    REBALANCE("리밸런싱"),
+    MANUAL("이 앱 직접 주문"),
+    MANUAL_ENTRY("수동 입력"),
+    EXTERNAL("KIS 외부 주문"),
+    STOP_LOSS("이 앱 자동 매도 · 손절"),
+    TAKE_PROFIT("이 앱 자동 매도 · 익절"),
+    TRAILING_STOP("이 앱 자동 매도 · 고점 추적"),
+    TIME_EXIT("이 앱 자동 매도 · 기간 청산"),
+    REBALANCE("이 앱 리밸런싱"),
 }
 
 enum class StockExitRuleType(val label: String, val unit: String) {
@@ -62,6 +64,9 @@ data class KisOrderExecution(
     val orderDate: LocalDate,
     val orderTime: String,
     val orderedQuantity: Long,
+    val orderedUnitPrice: Long,
+    val orderDivisionCode: String,
+    val exchangeCode: String,
     val filledQuantity: Long,
     val filledAveragePrice: Long?,
     val remainingQuantity: Long,

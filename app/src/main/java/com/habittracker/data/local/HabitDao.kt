@@ -25,6 +25,7 @@ import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
+import com.habittracker.data.local.entity.StockSellAllocationEntity
 import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
@@ -454,6 +455,9 @@ interface HabitDao {
     @Query("SELECT access_token_expired_at FROM kis_api_config WHERE environment = :environment LIMIT 1")
     suspend fun getKisAccessTokenExpiredAt(environment: String): LocalDateTime?
 
+    @Query("SELECT access_token_expired_at FROM kis_api_config WHERE environment = :environment LIMIT 1")
+    fun observeKisAccessTokenExpiredAt(environment: String): Flow<LocalDateTime?>
+
     @Query(
         """
         UPDATE kis_api_config
@@ -484,6 +488,12 @@ interface HabitDao {
 
     @Query("SELECT * FROM stock_order WHERE order_date = :orderDate AND order_number = :orderNumber LIMIT 1")
     suspend fun getStockOrder(orderDate: LocalDate, orderNumber: String): StockOrderEntity?
+
+    @Query("SELECT * FROM stock_order WHERE id = :orderId LIMIT 1")
+    suspend fun getStockOrderById(orderId: Long): StockOrderEntity?
+
+    @Query("SELECT * FROM stock_order WHERE side = 'BUY' AND filled_quantity > 0 ORDER BY order_date DESC, order_time DESC, id DESC")
+    suspend fun getFilledStockBuyOrders(): List<StockOrderEntity>
 
     @Query("SELECT * FROM stock_order WHERE side = 'BUY' AND product_code = :productCode AND remaining_quantity > 0 ORDER BY order_date ASC, order_time ASC, id ASC")
     suspend fun getOpenStockBuyLots(productCode: String): List<StockOrderEntity>
@@ -519,6 +529,26 @@ interface HabitDao {
 
     @Update
     suspend fun updateStockOrder(order: StockOrderEntity)
+
+    @Query("SELECT * FROM stock_sell_allocation ORDER BY created_at ASC, id ASC")
+    fun observeStockSellAllocations(): Flow<List<StockSellAllocationEntity>>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM stock_sell_allocation
+        WHERE sell_order_id = :orderId OR buy_order_id = :orderId
+        """,
+    )
+    suspend fun countStockSellAllocations(orderId: Long): Int
+
+    @Query("SELECT * FROM stock_sell_allocation WHERE id = :allocationId LIMIT 1")
+    suspend fun getStockSellAllocationById(allocationId: Long): StockSellAllocationEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertStockSellAllocation(allocation: StockSellAllocationEntity): Long
+
+    @Query("DELETE FROM stock_sell_allocation WHERE id = :allocationId")
+    suspend fun deleteStockSellAllocationById(allocationId: Long): Int
 
     @Query("SELECT * FROM stock_exit_rule ORDER BY product_name ASC, product_code ASC, created_at ASC")
     fun observeStockExitRules(): Flow<List<StockExitRuleEntity>>

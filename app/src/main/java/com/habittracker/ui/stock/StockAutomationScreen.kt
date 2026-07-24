@@ -62,6 +62,22 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
         if (uiState.isConfigSaved) viewModel.loadOwnedStocks(force = true)
     }
 
+    LaunchedEffect(uiState.isConfigSaved, uiState.safetyConfig.monitoringEnabled) {
+        if (uiState.isConfigSaved && uiState.safetyConfig.monitoringEnabled) {
+            val canPostNotifications =
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+            if (canPostNotifications) {
+                StockAutomationService.start(context)
+            } else {
+                notificationPermissionDenied = true
+            }
+        }
+    }
+
     AppScreen {
         item {
             StockHeroCard(
@@ -175,9 +191,22 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 AppTextField(
                     value = uiState.ruleTriggerValue,
                     onValueChange = viewModel::updateRuleTriggerValue,
-                    label = "발동 기준 (${uiState.ruleType.unit})",
+                    label = if (uiState.ruleType == StockExitRuleType.TIME_EXIT) {
+                        "발동 기준 (일)"
+                    } else {
+                        "발동 기준 (%)"
+                    },
                     singleLine = true,
                 )
+                if (uiState.ruleType != StockExitRuleType.TIME_EXIT) {
+                    AppTextField(
+                        value = uiState.ruleTriggerPrice,
+                        onValueChange = viewModel::updateRuleTriggerPrice,
+                        label = "발동 기준 직접 가격 (원)",
+                        singleLine = true,
+                    )
+                    AppSupportText("% 또는 직접 가격 중 하나만 입력해 주세요.")
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
@@ -223,12 +252,18 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                         )
                     }
                 }
+                val hasValidPercentTrigger =
+                    uiState.ruleTriggerValue.toDoubleOrNull()?.let { it > 0.0 } == true
+                val hasValidPriceTrigger =
+                    uiState.ruleType != StockExitRuleType.TIME_EXIT &&
+                        uiState.ruleTriggerPrice.toLongOrNull()?.let { it > 0L } == true
+                val hasValidTrigger = hasValidPercentTrigger || hasValidPriceTrigger
                 AppPrimaryButton(
                     text = "규칙 저장",
                     onClick = viewModel::saveExitRule,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.ruleProductCode.isNotBlank() &&
-                        uiState.ruleTriggerValue.toDoubleOrNull()?.let { it > 0.0 } == true &&
+                        hasValidTrigger &&
                         (uiState.ruleAction == StockRuleAction.NOTIFY_ONLY ||
                             uiState.ruleSellPercent.toDoubleOrNull()?.let { it > 0.0 } == true),
                 )
@@ -256,15 +291,19 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
             val balance = uiState.ownedStocks.firstOrNull { it.productCode == rule.productCode }
             val currentPrice = balance?.currentPrice?.toDoubleOrNull()?.roundToLong()
             val averagePrice = balance?.averagePrice?.toDoubleOrNull()
-            val triggerPrice = when (type) {
+            val triggerPrice = rule.triggerPrice ?: when (type) {
                 StockExitRuleType.STOP_LOSS ->
-                    averagePrice?.times(1.0 - rule.triggerValue / 100.0)?.let { floor(it).toLong() }
+                    averagePrice
+                        ?.times(1.0 - rule.triggerValue / 100.0)
+                        ?.let { floor(it).toLong().toStockTickDown() }
                 StockExitRuleType.TAKE_PROFIT ->
-                    averagePrice?.times(1.0 + rule.triggerValue / 100.0)?.let { ceil(it).toLong() }
+                    averagePrice
+                        ?.times(1.0 + rule.triggerValue / 100.0)
+                        ?.let { ceil(it).toLong().toStockTickUp() }
                 StockExitRuleType.TRAILING_STOP ->
                     (rule.referenceHighPrice ?: currentPrice)
                         ?.times(1.0 - rule.triggerValue / 100.0)
-                        ?.let { floor(it).toLong() }
+                        ?.let { floor(it).toLong().toStockTickDown() }
                 StockExitRuleType.TIME_EXIT, null -> null
             }
             val holdingQuantity = balance?.quantity?.toLongOrNull()
@@ -293,7 +332,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 Text("${rule.productName} (${rule.productCode})", style = MaterialTheme.typography.titleMedium)
                 Text(
                     buildString {
-                        append("${type?.label ?: rule.ruleType} ${rule.triggerValue}${type?.unit.orEmpty()}")
+                        append(type?.label ?: rule.ruleType)
+                        rule.triggerPrice?.let { append(" ${it.toWon()}") }
+                            ?: append(" ${rule.triggerValue}${type?.unit.orEmpty()}")
                         if (action == StockRuleAction.AUTO_SELL) append(" · ${rule.sellQuantityPercent}% 매도")
                         append(" · ${action?.label ?: rule.actionMode}")
                     },
@@ -307,15 +348,23 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 when (type) {
                     StockExitRuleType.STOP_LOSS,
                     StockExitRuleType.TAKE_PROFIT -> Text(
-                        "발동 예상가 ${triggerPrice.toWon()} · 평균단가 ${balance?.averagePrice?.toWon() ?: "-"}",
+                        "발동가 ${triggerPrice.toWon()} · 평균단가 ${balance?.averagePrice?.toWon() ?: "-"}",
                     )
                     StockExitRuleType.TRAILING_STOP -> Text(
-                        "발동 예상가 ${triggerPrice.toWon()} · 기준 고점 ${(rule.referenceHighPrice ?: currentPrice).toWon()}",
+                        if (rule.triggerPrice != null) {
+                            "발동가 ${triggerPrice.toWon()}"
+                        } else {
+                            "발동 예상가 ${triggerPrice.toWon()} · 기준 고점 ${(rule.referenceHighPrice ?: currentPrice).toWon()}"
+                        },
                     )
                     StockExitRuleType.TIME_EXIT -> AppSupportText("금액 기준 없이 ${rule.triggerValue.toLong()}일 보유 시 발동합니다.")
                     null -> Unit
                 }
-                if (type == StockExitRuleType.TRAILING_STOP && rule.referenceHighPrice == null) {
+                if (
+                    type == StockExitRuleType.TRAILING_STOP &&
+                    rule.triggerPrice == null &&
+                    rule.referenceHighPrice == null
+                ) {
                     AppSupportText("추적된 고점이 없어 현재가를 초기 기준으로 계산했습니다.")
                 }
                 if (action == StockRuleAction.AUTO_SELL) {
@@ -357,11 +406,32 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
 
 private fun StockExitRuleType.featureSummary(): String = when (this) {
     StockExitRuleType.STOP_LOSS ->
-        "매수 평균가 대비 수익률이 입력한 손실률 이하로 내려가면 발동합니다. 예: 5 입력 → -5% 이하."
+        "매수 평균가 대비 손실률 또는 직접 입력한 가격 이하로 내려가면 발동합니다."
     StockExitRuleType.TAKE_PROFIT ->
-        "매수 평균가 대비 수익률이 입력한 수익률 이상으로 올라가면 발동합니다. 예: 5 입력 → +5% 이상."
+        "매수 평균가 대비 수익률 또는 직접 입력한 가격 이상으로 올라가면 발동합니다."
     StockExitRuleType.TRAILING_STOP ->
-        "감시 중 기록한 최고가를 따라가다가 고점 대비 입력한 비율만큼 하락하면 발동합니다. 예: 고점 10만 원·3 입력 → 9만 7천 원 이하."
+        "고점 대비 입력한 비율만큼 하락하거나 직접 입력한 가격 이하로 내려가면 발동합니다."
     StockExitRuleType.TIME_EXIT ->
         "남아 있는 매수분 중 가장 오래된 매수일부터 입력한 일수가 지나면 발동합니다."
+}
+
+private fun Long.toStockTickDown(): Long {
+    val tickSize = stockTickSize()
+    return this - this % tickSize
+}
+
+private fun Long.toStockTickUp(): Long {
+    val tickSize = stockTickSize()
+    val remainder = this % tickSize
+    return if (remainder == 0L) this else this + tickSize - remainder
+}
+
+private fun Long.stockTickSize(): Long = when {
+    this < 2_000L -> 1L
+    this < 5_000L -> 5L
+    this < 20_000L -> 10L
+    this < 50_000L -> 50L
+    this < 200_000L -> 100L
+    this < 500_000L -> 500L
+    else -> 1_000L
 }

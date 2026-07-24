@@ -84,12 +84,15 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         } else {
             null
         }
+        val isExpectedLoss = expectedProfit?.let { it < 0L } == true
         AlertDialog(
             onDismissRequest = {
                 pendingSellRow = null
                 sellQuantity = ""
             },
-            title = { Text("실전 매도 주문 확인") },
+            title = {
+                Text(if (isExpectedLoss) "손실 매도 경고" else "실전 매도 주문 확인")
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                     Text("${order.productName} (${order.productCode})")
@@ -101,14 +104,33 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                         singleLine = true,
                     )
                     expectedProfit?.let { profit ->
-                        Text("추정 손익 ${profit.toWon()}", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "추정 손익 ${profit.toWon()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (profit < 0L) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
                     }
-                    AppSupportText("실제 계좌에 주문을 전송하며, 체결 후 매수 내역은 오래된 매수 건부터 차감됩니다.")
+                    if (isExpectedLoss) {
+                        Text(
+                            "현재 가격으로 매도하면 손실이 예상됩니다. 그래도 실제 매도 주문을 전송하시겠습니까?",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    AppSupportText("실제 계좌에 주문을 전송하며, 최종 체결 확인 후 선택한 매수 건에 자동 연결됩니다.")
                 }
             },
             confirmButton = {
                 AppPrimaryButton(
-                    text = if (uiState.isSubmittingOrder) "주문 전송 중" else "실전 매도 주문",
+                    text = when {
+                        uiState.isSubmittingOrder -> "주문 전송 중"
+                        isExpectedLoss -> "손실 확인 후 매도"
+                        else -> "실전 매도 주문"
+                    },
                     onClick = {
                         viewModel.submitBuyLotSell(row, quantity ?: 0L)
                         pendingSellRow = null
@@ -194,7 +216,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         if (uiState.buyLotRows.isEmpty() && !uiState.isLoadingPortfolio) {
             item {
                 AppSectionCard {
-                    AppSupportText("앱에서 주문하고 체결 동기화가 완료된 매수 건이 없습니다. 기존 보유분은 KIS가 제공하는 평균단가로 위에서 표시됩니다.")
+                    AppSupportText("오늘 이후 동기화된 KIS 매수 체결이나 수동 입력 기록이 없습니다. 기존 보유분은 KIS가 제공하는 평균단가로 위에서 표시됩니다.")
                 }
             }
         }

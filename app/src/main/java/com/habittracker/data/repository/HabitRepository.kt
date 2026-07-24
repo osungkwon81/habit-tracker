@@ -26,6 +26,7 @@ import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
+import com.habittracker.data.local.entity.StockSellAllocationEntity
 import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
@@ -50,6 +51,7 @@ import com.habittracker.data.stock.KisCashOrderDraft
 import com.habittracker.data.stock.KisDomesticStockClient
 import com.habittracker.data.stock.KisEnvironment
 import com.habittracker.data.stock.KisMarketCapStock
+import com.habittracker.data.stock.KisOrderExecution
 import com.habittracker.data.stock.KisOrderSide
 import com.habittracker.data.stock.KisStockMarket
 import com.habittracker.data.stock.StockAutomationCycleResult
@@ -106,10 +108,12 @@ class HabitRepository(
         const val lottoPrefsName = "lotto-prefs"
         const val kisMarketCapPrefsName = "kis-market-cap-prefs"
         const val kisMarketCalendarPrefsName = "kis-market-calendar-prefs"
+        const val stockExecutionPrefsName = "stock-execution-prefs"
         const val kisMarketCapCacheDateKey = "cache-date"
         const val kisMarketCapCacheItemsKey = "cache-items"
         const val kisMarketOpenDateKey = "market-open-date"
         const val kisMarketOpenValueKey = "market-open-value"
+        const val lastStockExecutionSyncDateKey = "last-sync-date"
         const val cardPaymentDayKey = "card-payment-day"
         const val cardSeedVersionKey = "card-seed-version"
         const val currentCardSeedVersion = 2
@@ -127,6 +131,7 @@ class HabitRepository(
     private val lottoPrefs = context.getSharedPreferences(lottoPrefsName, Context.MODE_PRIVATE)
     private val kisMarketCapPrefs = context.getSharedPreferences(kisMarketCapPrefsName, Context.MODE_PRIVATE)
     private val kisMarketCalendarPrefs = context.getSharedPreferences(kisMarketCalendarPrefsName, Context.MODE_PRIVATE)
+    private val stockExecutionPrefs = context.getSharedPreferences(stockExecutionPrefsName, Context.MODE_PRIVATE)
     private val kisMarketCapCacheMutex = Mutex()
     private val kisAccessTokenMutex = Mutex()
     private val stockOrderMutex = Mutex()
@@ -269,11 +274,16 @@ class HabitRepository(
         habitDao.getKisAccessTokenExpiredAt(environment.apiValue)
     }
 
+    fun observeKisAccessTokenExpiredAt(environment: KisEnvironment): Flow<LocalDateTime?> =
+        habitDao.observeKisAccessTokenExpiredAt(environment.apiValue)
+
     suspend fun getKisBalanceStocks(): List<KisBalanceStock> = withContext(Dispatchers.IO) {
         val (config, accessToken) = getKisConfigAndAccessToken()
         val marketTime = ZonedDateTime.now(ZoneId.of("Asia/Seoul")).toLocalTime()
         val market = resolveActiveStockMarket(marketTime) ?: KisStockMarket.KRX
-        kisDomesticStockClient.getBalance(config, accessToken, market)
+        withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+        }
     }
 
     suspend fun getKisMarketCapStocks(): List<KisMarketCapStock> = withContext(Dispatchers.IO) {
@@ -282,7 +292,9 @@ class HabitRepository(
             readKisMarketCapCache(today).takeIf { it.isNotEmpty() }
                 ?: run {
                     val (config, accessToken) = getKisConfigAndAccessToken()
-                    kisDomesticStockClient.getMarketCapRanking(config, accessToken).also { stocks ->
+                    withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                        kisDomesticStockClient.getMarketCapRanking(retryConfig, retryToken)
+                    }.also { stocks ->
                         if (stocks.isNotEmpty()) saveKisMarketCapCache(today, stocks)
                     }
                 }
@@ -294,7 +306,9 @@ class HabitRepository(
             return@withContext kisMarketCalendarPrefs.getBoolean(kisMarketOpenValueKey, false)
         }
         val (config, accessToken) = getKisConfigAndAccessToken()
-        kisDomesticStockClient.isMarketOpenDay(config, accessToken, date).also { isOpen ->
+        withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.isMarketOpenDay(retryConfig, retryToken, date)
+        }.also { isOpen ->
             kisMarketCalendarPrefs.edit()
                 .putString(kisMarketOpenDateKey, date.toString())
                 .putBoolean(kisMarketOpenValueKey, isOpen)
@@ -303,6 +317,9 @@ class HabitRepository(
     }
 
     fun observeStockOrders(): Flow<List<StockOrderEntity>> = habitDao.observeStockOrders()
+
+    fun observeStockSellAllocations(): Flow<List<StockSellAllocationEntity>> =
+        habitDao.observeStockSellAllocations()
 
     fun observeStockExitRules(): Flow<List<StockExitRuleEntity>> = habitDao.observeStockExitRules()
 
@@ -361,14 +378,21 @@ class HabitRepository(
         productCode: String,
         productName: String,
         ruleType: StockExitRuleType,
-        triggerValue: Double,
+        triggerValue: Double?,
+        triggerPrice: Long?,
         sellQuantityPercent: Double,
         actionMode: StockRuleAction,
         orderDivisionCode: String,
     ) {
         val sanitizedCode = productCode.trim()
         require(sanitizedCode.length in 6..7) { "종목코드를 선택해 주세요." }
-        require(triggerValue > 0.0) { "발동 기준은 0보다 커야 합니다." }
+        if (ruleType == StockExitRuleType.TIME_EXIT) {
+            require(triggerValue != null && triggerValue > 0.0) { "보유 기간은 0보다 커야 합니다." }
+        } else {
+            require((triggerValue != null) xor (triggerPrice != null)) { "% 또는 직접 가격 중 하나만 입력해 주세요." }
+            require(triggerValue == null || triggerValue > 0.0) { "% 기준은 0보다 커야 합니다." }
+            require(triggerPrice == null || triggerPrice > 0L) { "직접 가격은 0보다 커야 합니다." }
+        }
         if (actionMode == StockRuleAction.AUTO_SELL) {
             require(sellQuantityPercent > 0.0 && sellQuantityPercent <= 100.0) {
                 "매도 비율은 0 초과 100 이하로 입력해 주세요."
@@ -383,7 +407,8 @@ class HabitRepository(
                     productCode = sanitizedCode,
                     productName = productName.trim().ifBlank { sanitizedCode },
                     ruleType = ruleType.name,
-                    triggerValue = triggerValue,
+                    triggerValue = triggerValue ?: 0.0,
+                    triggerPrice = if (ruleType == StockExitRuleType.TIME_EXIT) null else triggerPrice,
                     sellQuantityPercent = if (actionMode == StockRuleAction.AUTO_SELL) sellQuantityPercent else 0.0,
                     actionMode = actionMode.name,
                     orderDivisionCode = orderDivisionCode,
@@ -447,6 +472,7 @@ class HabitRepository(
         isEmergencyLiquidation: Boolean = false,
         verifiedCurrentPrice: Long? = null,
         skipCrashGuardRefresh: Boolean = false,
+        intendedBuyOrderId: Long? = null,
     ): StockOrderEntity = withContext(Dispatchers.IO) {
         stockOrderMutex.withLock {
             require(!isEmergencyLiquidation || draft.side == KisOrderSide.SELL) {
@@ -459,6 +485,16 @@ class HabitRepository(
             require(draft.productCode.length in 6..7) { "종목코드를 확인해 주세요." }
             require(draft.orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) {
                 "주문 방식은 지정가 또는 시장가만 사용할 수 있습니다."
+            }
+            intendedBuyOrderId?.let { buyOrderId ->
+                require(draft.side == KisOrderSide.SELL) { "매수 lot 연결은 매도 주문에만 사용할 수 있습니다." }
+                val buyOrder = habitDao.getStockOrderById(buyOrderId)
+                    ?: throw IllegalArgumentException("연결할 매수 기록을 찾을 수 없습니다. (id=$buyOrderId)")
+                require(buyOrder.side == KisOrderSide.BUY.name) { "매수 기록을 선택해 주세요." }
+                require(buyOrder.productCode == draft.productCode) { "같은 종목의 매수 기록만 선택할 수 있습니다." }
+                require(quantity <= buyOrder.remainingQuantity) {
+                    "매도 수량이 선택한 매수 기록의 남은 수량을 초과합니다."
+                }
             }
             val quoteMarket = KisStockMarket.values()
                 .firstOrNull { it.orderExchangeCode == draft.exchangeIdDivisionCode }
@@ -489,8 +525,9 @@ class HabitRepository(
             }
 
             val currentPrice = verifiedCurrentPrice
-                ?: kisDomesticStockClient.getCurrentPrice(config, accessToken, draft.productCode, quoteMarket)
-                    .currentPrice.toLongOrNull()
+                ?: withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                    kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, draft.productCode, quoteMarket)
+                }.currentPrice.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
             require(currentPrice > 0L) { "현재가를 확인하지 못했습니다. (종목=${draft.productCode})" }
             val estimatedUnitPrice = if (draft.orderDivisionCode == stockLimitOrderCode) requestedPrice else currentPrice
@@ -508,23 +545,26 @@ class HabitRepository(
                         "오늘 누적 예상 매수금액이 하루 한도를 초과합니다. (${dailyUsed + estimatedAmount} > $limit)"
                     }
                 }
-                val buyable = kisDomesticStockClient.getBuyableQuantity(
-                    config = config,
-                    accessToken = accessToken,
-                    productCode = draft.productCode,
-                    unitPrice = draft.orderUnitPrice,
-                    orderDivisionCode = if (draft.orderDivisionCode == stockLimitOrderCode) {
-                        stockMarketOrderCode
-                    } else {
-                        draft.orderDivisionCode
-                    },
-                )
+                val buyable = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                    kisDomesticStockClient.getBuyableQuantity(
+                        config = retryConfig,
+                        accessToken = retryToken,
+                        productCode = draft.productCode,
+                        unitPrice = draft.orderUnitPrice,
+                        orderDivisionCode = if (draft.orderDivisionCode == stockLimitOrderCode) {
+                            stockMarketOrderCode
+                        } else {
+                            draft.orderDivisionCode
+                        },
+                    )
+                }
                 require(quantity <= buyable.quantity) {
                     "매수가능수량을 초과합니다. (요청=${quantity}주, 가능=${buyable.quantity}주)"
                 }
             } else {
-                val sellable = kisDomesticStockClient.getSellableQuantity(config, accessToken, draft.productCode)
-                    .quantity.toLongOrNull() ?: 0L
+                val sellable = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                    kisDomesticStockClient.getSellableQuantity(retryConfig, retryToken, draft.productCode)
+                }.quantity.toLongOrNull() ?: 0L
                 require(quantity <= sellable) {
                     "매도가능수량을 초과합니다. (요청=${quantity}주, 가능=${sellable}주)"
                 }
@@ -532,7 +572,9 @@ class HabitRepository(
 
             val now = LocalDateTime.now()
             val result = try {
-                kisDomesticStockClient.placeCashOrder(config, accessToken, draft)
+                withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                    kisDomesticStockClient.placeCashOrder(retryConfig, retryToken, draft)
+                }
             } catch (timeout: SocketTimeoutException) {
                 val unknownOrder = StockOrderEntity(
                     orderNumber = "UNKNOWN-${System.currentTimeMillis()}",
@@ -547,6 +589,7 @@ class HabitRepository(
                     orderDivisionCode = draft.orderDivisionCode,
                     exchangeCode = draft.exchangeIdDivisionCode,
                     source = source.name,
+                    intendedBuyOrderId = intendedBuyOrderId,
                     status = StockOrderStatus.UNKNOWN.name,
                     message = "주문 응답 시간 초과. KIS 주문내역 확인 전 재주문 금지",
                     createdAt = now,
@@ -574,6 +617,7 @@ class HabitRepository(
                 orderDivisionCode = draft.orderDivisionCode,
                 exchangeCode = draft.exchangeIdDivisionCode,
                 source = source.name,
+                intendedBuyOrderId = intendedBuyOrderId,
                 status = StockOrderStatus.SUBMITTED.name,
                 message = result.message,
                 createdAt = now,
@@ -604,7 +648,9 @@ class HabitRepository(
             "사용자가 전체 주문을 긴급 차단한 상태입니다. 차단을 해제한 뒤 다시 시도해 주세요."
         }
         val (config, accessToken) = getKisConfigAndAccessToken()
-        val balances = kisDomesticStockClient.getBalance(config, accessToken, market)
+        val balances = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+        }
             .filter { it.quantity.toLongOrNull()?.let { quantity -> quantity > 0L } == true }
         require(balances.isNotEmpty()) { "매도할 보유 종목이 없습니다." }
 
@@ -627,6 +673,7 @@ class HabitRepository(
                     productName = balance.productName,
                     source = StockOrderSource.MANUAL,
                     isEmergencyLiquidation = true,
+                    verifiedCurrentPrice = balance.currentPrice.toLongOrNull()?.takeIf { it > 0L },
                 )
             }.onSuccess(submittedOrders::add)
                 .onFailure { error ->
@@ -643,37 +690,263 @@ class HabitRepository(
 
     suspend fun syncStockOrderExecutions(): Int = withContext(Dispatchers.IO) {
         stockOrderMutex.withLock {
-            val unfinished = habitDao.getUnfinishedStockOrders().filterNot { it.orderNumber.startsWith("UNKNOWN-") }
-            if (unfinished.isEmpty()) return@withLock 0
             val (config, accessToken) = getKisConfigAndAccessToken()
-            val executionsByDate = unfinished.map(StockOrderEntity::orderDate).distinct().associateWith { orderDate ->
+            val today = LocalDate.now()
+            val startDate = stockExecutionPrefs.getString(lastStockExecutionSyncDateKey, null)
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.coerceAtMost(today)
+                ?.coerceAtLeast(today.minusMonths(3))
+                ?: today
+            val executions = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
                 kisDomesticStockClient.getOrderExecutions(
-                    config = config,
-                    accessToken = accessToken,
-                    startDate = orderDate,
-                    endDate = orderDate,
-                ).associateBy { execution -> execution.orderNumber }
-            }
-            var updatedCount = 0
-            unfinished.forEach { order ->
-                val execution = executionsByDate[order.orderDate]?.get(order.orderNumber)
-                    ?: return@forEach
-                applyStockExecution(
-                    order = order,
-                    filledQuantity = execution.filledQuantity,
-                    filledAveragePrice = execution.filledAveragePrice,
-                    canceledQuantity = execution.canceledQuantity,
-                    rejectedQuantity = execution.rejectedQuantity,
-                    isCanceled = execution.isCanceled,
+                    config = retryConfig,
+                    accessToken = retryToken,
+                    startDate = startDate,
+                    endDate = today,
                 )
-                updatedCount += 1
+            }.sortedWith(compareBy(KisOrderExecution::orderDate, KisOrderExecution::orderTime))
+            var updatedCount = 0
+            if (executions.isNotEmpty()) {
+                persistChange {
+                    database.withTransaction {
+                        executions.forEach { execution ->
+                            val storedOrder = habitDao.getStockOrder(execution.orderDate, execution.orderNumber)
+                            if (storedOrder != null) {
+                                applyStockExecutionInTransaction(
+                                    order = storedOrder,
+                                    filledQuantity = execution.filledQuantity,
+                                    filledAveragePrice = execution.filledAveragePrice,
+                                    canceledQuantity = execution.canceledQuantity,
+                                    rejectedQuantity = execution.rejectedQuantity,
+                                    isCanceled = execution.isCanceled,
+                                )
+                                updatedCount += 1
+                                return@forEach
+                            }
+                            if (execution.filledQuantity <= 0L) return@forEach
+
+                            val filledPrice = execution.filledAveragePrice ?: execution.orderedUnitPrice
+                            habitDao.insertStockOrder(
+                                StockOrderEntity(
+                                    orderNumber = execution.orderNumber,
+                                    orderDate = execution.orderDate,
+                                    orderTime = execution.orderTime,
+                                    side = execution.side.name,
+                                    productCode = execution.productCode,
+                                    productName = execution.productName.ifBlank { execution.productCode },
+                                    requestedQuantity = execution.orderedQuantity.coerceAtLeast(execution.filledQuantity),
+                                    requestedUnitPrice = execution.orderedUnitPrice,
+                                    referencePrice = filledPrice,
+                                    orderDivisionCode = execution.orderDivisionCode,
+                                    exchangeCode = execution.exchangeCode,
+                                    source = StockOrderSource.EXTERNAL.name,
+                                    status = StockOrderStatus.FILLED.name,
+                                    filledQuantity = execution.filledQuantity,
+                                    filledAveragePrice = execution.filledAveragePrice,
+                                    remainingQuantity = if (execution.side == KisOrderSide.BUY) {
+                                        execution.filledQuantity
+                                    } else {
+                                        0L
+                                    },
+                                    message = "KIS 계좌 체결내역에서 가져온 외부 주문",
+                                    createdAt = execution.orderDate.atStartOfDay(),
+                                    updatedAt = LocalDateTime.now(),
+                                ),
+                            )
+                            updatedCount += 1
+                        }
+                    }
+                }
             }
+            stockExecutionPrefs.edit().putString(lastStockExecutionSyncDateKey, today.toString()).apply()
             updatedCount
         }
     }
 
+    suspend fun saveManualStockExecution(
+        productCode: String,
+        productName: String,
+        side: KisOrderSide,
+        orderDate: LocalDate,
+        quantity: Long,
+        unitPrice: Long,
+    ) {
+        val sanitizedCode = productCode.trim()
+        require(sanitizedCode.length in 6..7) { "종목을 선택해 주세요." }
+        require(quantity > 0L) { "수량은 1주 이상이어야 합니다." }
+        require(unitPrice > 0L) { "실제 체결가는 0보다 커야 합니다." }
+        val now = LocalDateTime.now()
+        val orderNumber = "MANUAL-${now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS"))}"
+        persistChange {
+            habitDao.insertStockOrder(
+                StockOrderEntity(
+                    orderNumber = orderNumber,
+                    orderDate = orderDate,
+                    orderTime = now.format(java.time.format.DateTimeFormatter.ofPattern("HHmmss")),
+                    side = side.name,
+                    productCode = sanitizedCode,
+                    productName = productName.trim().ifBlank { sanitizedCode },
+                    requestedQuantity = quantity,
+                    requestedUnitPrice = unitPrice,
+                    referencePrice = unitPrice,
+                    orderDivisionCode = "",
+                    exchangeCode = "",
+                    source = StockOrderSource.MANUAL_ENTRY.name,
+                    status = StockOrderStatus.FILLED.name,
+                    filledQuantity = quantity,
+                    filledAveragePrice = unitPrice,
+                    remainingQuantity = if (side == KisOrderSide.BUY) quantity else 0L,
+                    message = "사용자가 직접 입력한 체결 기록",
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+        }
+    }
+
+    suspend fun updateManualStockExecution(
+        orderId: Long,
+        productCode: String,
+        productName: String,
+        side: KisOrderSide,
+        orderDate: LocalDate,
+        quantity: Long,
+        unitPrice: Long,
+    ) {
+        val sanitizedCode = productCode.trim()
+        require(sanitizedCode.length in 6..7) { "종목을 선택해 주세요." }
+        require(quantity > 0L) { "수량은 1주 이상이어야 합니다." }
+        require(unitPrice > 0L) { "실제 체결가는 0보다 커야 합니다." }
+        persistChange {
+            database.withTransaction {
+                val order = habitDao.getStockOrderById(orderId)
+                    ?: throw IllegalArgumentException("수동 체결 기록을 찾을 수 없습니다. (id=$orderId)")
+                require(order.source == StockOrderSource.MANUAL_ENTRY.name) { "수동 입력 기록만 수정할 수 있습니다." }
+                require(habitDao.countStockSellAllocations(orderId) == 0) {
+                    "매수 lot 연결을 먼저 취소한 후 수정해 주세요."
+                }
+                require(
+                    (order.side == KisOrderSide.BUY.name && order.remainingQuantity == order.filledQuantity) ||
+                        (order.side == KisOrderSide.SELL.name && order.appliedFilledQuantity == 0L),
+                ) {
+                    "다른 매매에 사용된 기록은 연결을 해제한 후 수정해 주세요."
+                }
+                habitDao.updateStockOrder(
+                    order.copy(
+                        orderDate = orderDate,
+                        side = side.name,
+                        productCode = sanitizedCode,
+                        productName = productName.trim().ifBlank { sanitizedCode },
+                        requestedQuantity = quantity,
+                        requestedUnitPrice = unitPrice,
+                        referencePrice = unitPrice,
+                        filledQuantity = quantity,
+                        appliedFilledQuantity = 0L,
+                        filledAveragePrice = unitPrice,
+                        remainingQuantity = if (side == KisOrderSide.BUY) quantity else 0L,
+                        estimatedRealizedProfit = null,
+                        message = "사용자가 수정한 수동 체결 기록",
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun allocateStockSellToBuyLot(sellOrderId: Long, buyOrderId: Long, quantity: Long) {
+        persistChange {
+            database.withTransaction {
+                val sellOrder = habitDao.getStockOrderById(sellOrderId)
+                    ?: throw IllegalArgumentException("매도 기록을 찾을 수 없습니다. (id=$sellOrderId)")
+                val buyOrder = habitDao.getStockOrderById(buyOrderId)
+                    ?: throw IllegalArgumentException("매수 기록을 찾을 수 없습니다. (id=$buyOrderId)")
+                require(sellOrder.side == KisOrderSide.SELL.name) { "매도 기록만 매수 건에 연결할 수 있습니다." }
+                require(buyOrder.side == KisOrderSide.BUY.name) { "매수 기록을 선택해 주세요." }
+                require(sellOrder.productCode == buyOrder.productCode) { "같은 종목의 매수 건만 연결할 수 있습니다." }
+                require(!buyOrder.orderDate.isAfter(sellOrder.orderDate)) { "매도일 이후의 매수 건은 연결할 수 없습니다." }
+
+                val unallocatedSellQuantity =
+                    (sellOrder.filledQuantity - sellOrder.appliedFilledQuantity).coerceAtLeast(0L)
+                require(unallocatedSellQuantity > 0L) { "이미 모든 매도 수량이 매수 건에 연결되었습니다." }
+                require(buyOrder.remainingQuantity > 0L) { "선택한 매수 건에 남은 수량이 없습니다." }
+                require(quantity > 0L && quantity <= unallocatedSellQuantity) {
+                    "연결 수량은 남은 매도 수량 이하여야 합니다."
+                }
+                require(quantity <= buyOrder.remainingQuantity) { "연결 수량이 선택한 매수 건의 남은 수량을 초과합니다." }
+                val buyPrice = buyOrder.filledAveragePrice ?: buyOrder.referencePrice
+                val sellPrice = sellOrder.filledAveragePrice ?: sellOrder.referencePrice
+                require(buyPrice > 0L && sellPrice > 0L) { "매수·매도 체결가를 확인해 주세요." }
+                val realizedProfit = Math.multiplyExact(sellPrice - buyPrice, quantity)
+                habitDao.insertStockSellAllocation(
+                    StockSellAllocationEntity(
+                        sellOrderId = sellOrder.id,
+                        buyOrderId = buyOrder.id,
+                        quantity = quantity,
+                        buyUnitPrice = buyPrice,
+                        sellUnitPrice = sellPrice,
+                        realizedProfit = realizedProfit,
+                    ),
+                )
+                habitDao.updateStockOrder(
+                    buyOrder.copy(
+                        remainingQuantity = buyOrder.remainingQuantity - quantity,
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+                habitDao.updateStockOrder(
+                    sellOrder.copy(
+                        appliedFilledQuantity = sellOrder.appliedFilledQuantity + quantity,
+                        estimatedRealizedProfit =
+                            (sellOrder.estimatedRealizedProfit ?: 0L) + realizedProfit,
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun deleteStockSellAllocation(allocation: StockSellAllocationEntity) {
+        persistChange {
+            database.withTransaction {
+                val storedAllocation = habitDao.getStockSellAllocationById(allocation.id)
+                    ?: throw IllegalArgumentException("이미 취소되었거나 존재하지 않는 매수 건 연결입니다. (id=${allocation.id})")
+                val sellOrder = habitDao.getStockOrderById(storedAllocation.sellOrderId)
+                    ?: throw IllegalArgumentException("매도 기록을 찾을 수 없습니다. (id=${storedAllocation.sellOrderId})")
+                val buyOrder = habitDao.getStockOrderById(storedAllocation.buyOrderId)
+                    ?: throw IllegalArgumentException("매수 기록을 찾을 수 없습니다. (id=${storedAllocation.buyOrderId})")
+                require(habitDao.deleteStockSellAllocationById(storedAllocation.id) == 1) {
+                    "매수 건 연결이 이미 취소되었습니다. (id=${storedAllocation.id})"
+                }
+                val remainingApplied =
+                    (sellOrder.appliedFilledQuantity - storedAllocation.quantity).coerceAtLeast(0L)
+                habitDao.updateStockOrder(
+                    buyOrder.copy(
+                        remainingQuantity = buyOrder.remainingQuantity + storedAllocation.quantity,
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+                habitDao.updateStockOrder(
+                    sellOrder.copy(
+                        appliedFilledQuantity = remainingApplied,
+                        intendedBuyOrderId = if (sellOrder.intendedBuyOrderId == storedAllocation.buyOrderId) {
+                            null
+                        } else {
+                            sellOrder.intendedBuyOrderId
+                        },
+                        estimatedRealizedProfit = if (remainingApplied == 0L) {
+                            null
+                        } else {
+                            (sellOrder.estimatedRealizedProfit ?: 0L) - storedAllocation.realizedProfit
+                        },
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+            }
+        }
+    }
+
     suspend fun resolveUnknownStockOrder(orderId: Long) {
-        val order = habitDao.getStockOrders().firstOrNull { it.id == orderId }
+        val order = habitDao.getStockOrderById(orderId)
             ?: throw IllegalArgumentException("주문 기록을 찾을 수 없습니다. (id=$orderId)")
         require(order.status == StockOrderStatus.UNKNOWN.name) { "확인 대기 주문이 아닙니다." }
         persistChange {
@@ -688,7 +961,7 @@ class HabitRepository(
     }
 
     suspend fun getStockBuyLotRows(balanceStocks: List<KisBalanceStock>): List<StockBuyLotRow> = withContext(Dispatchers.IO) {
-        val orders = habitDao.getStockOrders().filter { it.side == KisOrderSide.BUY.name && it.filledQuantity > 0L }
+        val orders = habitDao.getFilledStockBuyOrders()
         if (orders.isEmpty()) return@withContext emptyList()
         val currentPrices = balanceStocks.associate { balance ->
             balance.productCode to balance.currentPrice.toLongOrNull()
@@ -707,12 +980,17 @@ class HabitRepository(
         require(targets.isNotEmpty()) { "목표 비중을 먼저 등록해 주세요." }
         require(targets.sumOf(StockTargetAllocationEntity::targetPercent) <= 100.0001) { "목표 비중 합계가 100%를 초과합니다." }
         val (config, accessToken) = getKisConfigAndAccessToken()
-        val balances = kisDomesticStockClient.getBalance(config, accessToken)
+        val market = currentStockMarket()
+        val balances = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+        }
         val managedCodes = targets.map(StockTargetAllocationEntity::productCode).toSet()
         val balanceMap = balances.associateBy(KisBalanceStock::productCode)
         val prices = managedCodes.associateWith { code ->
             balanceMap[code]?.currentPrice?.toLongOrNull()?.takeIf { it > 0L }
-                ?: kisDomesticStockClient.getCurrentPrice(config, accessToken, code).currentPrice.toLongOrNull()
+                ?: withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                    kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, code, market)
+                }.currentPrice.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=$code)")
         }
         val totalValue = balances.filter { it.productCode in managedCodes }.sumOf { balance ->
@@ -754,7 +1032,7 @@ class HabitRepository(
                 orderDivisionCode = stockLimitOrderCode,
                 orderQuantity = line.orderQuantity.toString(),
                 orderUnitPrice = line.referencePrice.toString(),
-                exchangeIdDivisionCode = "KRX",
+                exchangeIdDivisionCode = currentStockMarket().orderExchangeCode,
                 sellType = "01",
                 conditionPrice = "",
             ),
@@ -763,11 +1041,13 @@ class HabitRepository(
         )
     }
 
-    suspend fun getStockJournalAnalysis(): StockJournalAnalysis = withContext(Dispatchers.IO) {
-        val orders = habitDao.getStockOrders()
+    fun calculateStockJournalAnalysis(orders: List<StockOrderEntity>): StockJournalAnalysis {
         val buys = orders.filter { it.side == KisOrderSide.BUY.name && it.filledQuantity > 0L }
-        val sells = orders.filter { it.side == KisOrderSide.SELL.name && it.appliedFilledQuantity > 0L }
-        val profitable = sells.count { (it.estimatedRealizedProfit ?: 0L) > 0L }
+        val sells = orders.filter { it.side == KisOrderSide.SELL.name && it.filledQuantity > 0L }
+        val analyzedSells = sells.filter {
+            it.estimatedRealizedProfit != null && it.appliedFilledQuantity == it.filledQuantity
+        }
+        val profitable = analyzedSells.count { (it.estimatedRealizedProfit ?: 0L) > 0L }
         val sourceCounts = orders.filter { it.filledQuantity > 0L }
             .mapNotNull { order -> StockOrderSource.values().firstOrNull { it.name == order.source } }
             .groupingBy { it }
@@ -775,10 +1055,14 @@ class HabitRepository(
         StockJournalAnalysis(
             filledBuyCount = buys.size,
             filledSellCount = sells.size,
-            realizedTradeCount = sells.size,
+            realizedTradeCount = analyzedSells.size,
             profitableTradeCount = profitable,
-            estimatedRealizedProfit = sells.sumOf { it.estimatedRealizedProfit ?: 0L },
-            winRatePercent = if (sells.isNotEmpty()) profitable.toDouble() / sells.size.toDouble() * 100.0 else null,
+            estimatedRealizedProfit = analyzedSells.sumOf { it.estimatedRealizedProfit ?: 0L },
+            winRatePercent = if (analyzedSells.isNotEmpty()) {
+                profitable.toDouble() / analyzedSells.size.toDouble() * 100.0
+            } else {
+                null
+            },
             sourceCounts = sourceCounts,
         )
     }
@@ -811,6 +1095,14 @@ class HabitRepository(
                     skippedReason = "KIS 휴장일이므로 자동화 규칙을 확인하지 않습니다.",
                 )
             }
+            if (
+                habitDao.getUnfinishedStockOrders().any {
+                    it.status == StockOrderStatus.SUBMITTED.name ||
+                        it.status == StockOrderStatus.PARTIALLY_FILLED.name
+                }
+            ) {
+                syncStockOrderExecutions()
+            }
             val (config, accessToken) = getKisConfigAndAccessToken()
             val wasBlocked = safety.globalOrderBlocked
             safety = refreshCrashGuard(safety, config, accessToken)
@@ -830,7 +1122,9 @@ class HabitRepository(
             }
             val activeRuleCount = rulesByProduct.values.sumOf { rules -> rules.size }
             var monitoredProductCount = 0
-            val balanceMap = kisDomesticStockClient.getBalance(config, accessToken, market).associateBy(KisBalanceStock::productCode)
+            val balanceMap = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+            }.associateBy(KisBalanceStock::productCode)
             for ((productCode, rules) in rulesByProduct) {
                 val balance = balanceMap[productCode] ?: continue
                 val holdingQuantity = balance.quantity.toLongOrNull() ?: continue
@@ -838,7 +1132,9 @@ class HabitRepository(
                 val averagePrice = balance.averagePrice.toDoubleOrNull()?.takeIf { it > 0.0 } ?: continue
                 val currentPrice = balance.currentPrice.toLongOrNull()?.takeIf { it > 0L }
                     ?: try {
-                        kisDomesticStockClient.getCurrentPrice(config, accessToken, productCode, market).currentPrice.toLong()
+                        withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                            kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, productCode, market)
+                        }.currentPrice.toLong()
                     } catch (error: Exception) {
                         saveStockAutomationEvent(
                             level = "ERROR",
@@ -854,7 +1150,7 @@ class HabitRepository(
                 for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
                     var rule = storedRule
                     val ruleType = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType } ?: continue
-                    if (ruleType == StockExitRuleType.TRAILING_STOP) {
+                    if (ruleType == StockExitRuleType.TRAILING_STOP && rule.triggerPrice == null) {
                         val newHigh = max(rule.referenceHighPrice ?: currentPrice, currentPrice)
                         if (newHigh != rule.referenceHighPrice) {
                             rule = rule.copy(referenceHighPrice = newHigh, updatedAt = LocalDateTime.now())
@@ -862,11 +1158,15 @@ class HabitRepository(
                         }
                     }
                     val triggered = when (ruleType) {
-                        StockExitRuleType.STOP_LOSS -> returnPercent <= -rule.triggerValue
-                        StockExitRuleType.TAKE_PROFIT -> returnPercent >= rule.triggerValue
+                        StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { currentPrice <= it }
+                            ?: (returnPercent <= -rule.triggerValue)
+                        StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { currentPrice >= it }
+                            ?: (returnPercent >= rule.triggerValue)
                         StockExitRuleType.TRAILING_STOP -> {
-                            val high = rule.referenceHighPrice ?: currentPrice
-                            currentPrice.toDouble() <= high.toDouble() * (1.0 - rule.triggerValue / 100.0)
+                            rule.triggerPrice?.let { currentPrice <= it } ?: run {
+                                val high = rule.referenceHighPrice ?: currentPrice
+                                currentPrice.toDouble() <= high.toDouble() * (1.0 - rule.triggerValue / 100.0)
+                            }
                         }
                         StockExitRuleType.TIME_EXIT -> {
                             val oldestBuyDate = habitDao.getOldestOpenStockBuyDate(productCode)
@@ -876,12 +1176,16 @@ class HabitRepository(
                     if (!triggered) continue
 
                     val triggerMessage = when (ruleType) {
-                        StockExitRuleType.STOP_LOSS -> "발동 조건: 손절 -${formatStockRuleValue(rule.triggerValue)}% 이하"
-                        StockExitRuleType.TAKE_PROFIT -> "발동 조건: 익절 +${formatStockRuleValue(rule.triggerValue)}% 이상"
-                        StockExitRuleType.TRAILING_STOP -> "발동 조건: 고점 ${formatStockPrice(rule.referenceHighPrice ?: currentPrice)} 대비 -${formatStockRuleValue(rule.triggerValue)}%"
+                        StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
+                            ?: "발동 조건: 손절 -${formatStockRuleValue(rule.triggerValue)}% 이하"
+                        StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이상" }
+                            ?: "발동 조건: 익절 +${formatStockRuleValue(rule.triggerValue)}% 이상"
+                        StockExitRuleType.TRAILING_STOP -> rule.triggerPrice?.let { "발동 조건: ${formatStockPrice(it)} 이하" }
+                            ?: "발동 조건: 고점 ${formatStockPrice(rule.referenceHighPrice ?: currentPrice)} 대비 -${formatStockRuleValue(rule.triggerValue)}%"
                         StockExitRuleType.TIME_EXIT -> "발동 조건: 보유 ${rule.triggerValue.toLong()}일 도달"
                     }
                     val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode } ?: StockRuleAction.NOTIFY_ONLY
+                    var shouldDisableRule = action == StockRuleAction.NOTIFY_ONLY
                     val noticeLines = mutableListOf(
                         "${balance.productName} ($productCode) · ${market.stockNotificationLabel()}",
                         "현재가 ${formatStockPrice(currentPrice)} · 평균가 ${formatStockPrice(averagePrice.toLong())} · 수익률 ${formatStockReturn(returnPercent)}",
@@ -928,6 +1232,7 @@ class HabitRepository(
                             }.onSuccess { order ->
                                 noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 접수 · 주문번호 ${order.orderNumber}"
                                 autoOrderSubmitted = true
+                                shouldDisableRule = true
                             }.onFailure { error ->
                                 noticeLines += "처리: ${orderTypeLabel} ${sellQuantity}주 매도 실패 · ${error.message.orEmpty()}"
                             }
@@ -945,14 +1250,16 @@ class HabitRepository(
                         productCode = productCode,
                         message = noticeMessage,
                     )
-                    persistChange {
-                        habitDao.updateStockExitRule(
-                            rule.copy(
-                                enabled = false,
-                                lastTriggeredAt = LocalDateTime.now(),
-                                updatedAt = LocalDateTime.now(),
-                            ),
-                        )
+                    if (shouldDisableRule) {
+                        persistChange {
+                            habitDao.updateStockExitRule(
+                                rule.copy(
+                                    enabled = false,
+                                    lastTriggeredAt = LocalDateTime.now(),
+                                    updatedAt = LocalDateTime.now(),
+                                ),
+                            )
+                        }
                     }
                     if (autoOrderSubmitted) break
                 }
@@ -970,6 +1277,13 @@ class HabitRepository(
         time >= regularMarketOpenTime && time < regularMarketCloseTime -> KisStockMarket.UNIFIED
         time >= nxtAfterMarketOpenTime && time < nxtAfterMarketCloseTime -> KisStockMarket.NXT
         else -> null
+    }
+
+    fun getCurrentStockOrderExchangeCode(): String = currentStockMarket().orderExchangeCode
+
+    private fun currentStockMarket(): KisStockMarket {
+        val marketTime = ZonedDateTime.now(ZoneId.of("Asia/Seoul")).toLocalTime()
+        return resolveActiveStockMarket(marketTime) ?: KisStockMarket.KRX
     }
 
     private fun KisStockMarket.stockNotificationLabel(): String = when (this) {
@@ -998,7 +1312,9 @@ class HabitRepository(
         if (safety.globalOrderBlocked || !safety.crashGuardEnabled) return safety
         val benchmarkCode = safety.crashBenchmarkCode ?: return safety
         val threshold = safety.crashThresholdPercent ?: return safety
-        val index = kisDomesticStockClient.getIndexPrice(config, accessToken, benchmarkCode)
+        val index = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.getIndexPrice(retryConfig, retryToken, benchmarkCode)
+        }
         if (index.changeRatePercent > -threshold) return safety
         val reason = "$STOCK_CRASH_GUARD_BLOCK_PREFIX ${index.name} 전일 대비 ${"%.2f".format(index.changeRatePercent)}%로 급락 기준 -${threshold}% 도달"
         val blocked = safety.copy(
@@ -1015,7 +1331,7 @@ class HabitRepository(
         return blocked
     }
 
-    private suspend fun applyStockExecution(
+    private suspend fun applyStockExecutionInTransaction(
         order: StockOrderEntity,
         filledQuantity: Long,
         filledAveragePrice: Long?,
@@ -1023,7 +1339,9 @@ class HabitRepository(
         rejectedQuantity: Long,
         isCanceled: Boolean,
     ) {
-        val normalizedFilledQuantity = filledQuantity.coerceAtLeast(0L).coerceAtMost(order.requestedQuantity)
+        val normalizedFilledQuantity = filledQuantity
+            .coerceAtLeast(order.filledQuantity)
+            .coerceAtMost(order.requestedQuantity)
         val status = when {
             rejectedQuantity > 0L && normalizedFilledQuantity == 0L -> StockOrderStatus.REJECTED
             isCanceled || canceledQuantity > 0L -> StockOrderStatus.CANCELED
@@ -1031,51 +1349,77 @@ class HabitRepository(
             normalizedFilledQuantity < order.requestedQuantity -> StockOrderStatus.PARTIALLY_FILLED
             else -> StockOrderStatus.FILLED
         }
-        persistChange {
-            database.withTransaction {
-                if (order.side == KisOrderSide.BUY.name) {
-                    val newlyFilled = (normalizedFilledQuantity - order.filledQuantity).coerceAtLeast(0L)
-                    habitDao.updateStockOrder(
-                        order.copy(
-                            status = status.name,
-                            filledQuantity = normalizedFilledQuantity,
-                            filledAveragePrice = filledAveragePrice ?: order.filledAveragePrice,
-                            remainingQuantity = order.remainingQuantity + newlyFilled,
-                            updatedAt = LocalDateTime.now(),
-                        ),
-                    )
-                } else {
-                    var allocationRemaining = (normalizedFilledQuantity - order.appliedFilledQuantity).coerceAtLeast(0L)
-                    var realizedProfit = order.estimatedRealizedProfit ?: 0L
-                    val sellPrice = filledAveragePrice ?: order.filledAveragePrice ?: order.referencePrice
-                    if (allocationRemaining > 0L) {
-                        habitDao.getOpenStockBuyLots(order.productCode).forEach { buyLot ->
-                            if (allocationRemaining <= 0L) return@forEach
-                            val allocated = minOf(allocationRemaining, buyLot.remainingQuantity)
-                            val buyPrice = buyLot.filledAveragePrice ?: buyLot.referencePrice
-                            realizedProfit += (sellPrice - buyPrice) * allocated
-                            allocationRemaining -= allocated
-                            habitDao.updateStockOrder(
-                                buyLot.copy(
-                                    remainingQuantity = buyLot.remainingQuantity - allocated,
-                                    updatedAt = LocalDateTime.now(),
-                                ),
-                            )
-                        }
-                    }
-                    habitDao.updateStockOrder(
-                        order.copy(
-                            status = status.name,
-                            filledQuantity = normalizedFilledQuantity,
-                            appliedFilledQuantity = normalizedFilledQuantity - allocationRemaining,
-                            filledAveragePrice = filledAveragePrice ?: order.filledAveragePrice,
-                            estimatedRealizedProfit = realizedProfit,
-                            updatedAt = LocalDateTime.now(),
-                        ),
-                    )
-                }
+        val effectiveFilledAveragePrice = filledAveragePrice ?: order.filledAveragePrice
+        if (order.side == KisOrderSide.BUY.name) {
+            val alreadyAllocatedQuantity =
+                (order.filledQuantity - order.remainingQuantity).coerceAtLeast(0L)
+            habitDao.updateStockOrder(
+                order.copy(
+                    status = status.name,
+                    filledQuantity = normalizedFilledQuantity,
+                    filledAveragePrice = effectiveFilledAveragePrice,
+                    remainingQuantity =
+                        (normalizedFilledQuantity - alreadyAllocatedQuantity).coerceAtLeast(0L),
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+            return
+        }
+
+        var appliedQuantity = order.appliedFilledQuantity.coerceAtMost(normalizedFilledQuantity)
+        var realizedProfit = order.estimatedRealizedProfit
+        val isFinalExecution = status == StockOrderStatus.FILLED ||
+            status == StockOrderStatus.CANCELED ||
+            status == StockOrderStatus.REJECTED
+        val intendedBuyOrder = if (isFinalExecution) {
+            order.intendedBuyOrderId?.let { habitDao.getStockOrderById(it) }
+        } else {
+            null
+        }
+        if (
+            intendedBuyOrder != null &&
+            intendedBuyOrder.side == KisOrderSide.BUY.name &&
+            intendedBuyOrder.productCode == order.productCode
+        ) {
+            val quantityToAllocate = minOf(
+                (normalizedFilledQuantity - appliedQuantity).coerceAtLeast(0L),
+                intendedBuyOrder.remainingQuantity,
+            )
+            val buyPrice = intendedBuyOrder.filledAveragePrice ?: intendedBuyOrder.referencePrice
+            val sellPrice = effectiveFilledAveragePrice ?: order.referencePrice
+            if (quantityToAllocate > 0L && buyPrice > 0L && sellPrice > 0L) {
+                val profitToAdd = Math.multiplyExact(sellPrice - buyPrice, quantityToAllocate)
+                habitDao.insertStockSellAllocation(
+                    StockSellAllocationEntity(
+                        sellOrderId = order.id,
+                        buyOrderId = intendedBuyOrder.id,
+                        quantity = quantityToAllocate,
+                        buyUnitPrice = buyPrice,
+                        sellUnitPrice = sellPrice,
+                        realizedProfit = profitToAdd,
+                    ),
+                )
+                habitDao.updateStockOrder(
+                    intendedBuyOrder.copy(
+                        remainingQuantity = intendedBuyOrder.remainingQuantity - quantityToAllocate,
+                        updatedAt = LocalDateTime.now(),
+                    ),
+                )
+                appliedQuantity += quantityToAllocate
+                realizedProfit = Math.addExact(realizedProfit ?: 0L, profitToAdd)
             }
         }
+
+        habitDao.updateStockOrder(
+            order.copy(
+                status = status.name,
+                filledQuantity = normalizedFilledQuantity,
+                appliedFilledQuantity = appliedQuantity,
+                filledAveragePrice = effectiveFilledAveragePrice,
+                estimatedRealizedProfit = realizedProfit,
+                updatedAt = LocalDateTime.now(),
+            ),
+        )
     }
 
     private suspend fun saveStockAutomationEvent(
@@ -1148,6 +1492,44 @@ class HabitRepository(
         }.value
         config to accessToken
     }
+
+    private suspend fun <T> withKisAccessTokenRetry(
+        config: KisApiConfig,
+        accessToken: String,
+        request: (KisApiConfig, String) -> T,
+    ): T = try {
+        request(config, accessToken)
+    } catch (error: Exception) {
+        if (!kisDomesticStockClient.isAccessTokenError(error)) throw error
+        val (refreshedConfig, refreshedToken) = refreshKisConfigAndAccessToken(accessToken)
+        request(refreshedConfig, refreshedToken)
+    }
+
+    private suspend fun refreshKisConfigAndAccessToken(failedAccessToken: String): Pair<KisApiConfig, String> =
+        kisAccessTokenMutex.withLock {
+            val environment = KisEnvironment.REAL
+            val entity = habitDao.getKisApiConfig(environment.apiValue)
+                ?: throw IllegalStateException("KIS 설정을 먼저 저장해 주세요.")
+            val config = entity.toKisApiConfig(kisConfigCipher)
+            val storedToken = entity.encryptedAccessToken
+                ?.let(kisConfigCipher::decrypt)
+                ?.takeIf(String::isNotBlank)
+            if (
+                storedToken != null &&
+                storedToken != failedAccessToken &&
+                entity.accessTokenExpiredAt?.isAfter(LocalDateTime.now().plusMinutes(5)) == true
+            ) {
+                return@withLock config to storedToken
+            }
+            val token = kisDomesticStockClient.issueAccessToken(config)
+            habitDao.updateKisAccessToken(
+                environment = environment.apiValue,
+                encryptedAccessToken = kisConfigCipher.encrypt(token.value),
+                accessTokenExpiredAt = token.expiresAt,
+                updatedAt = LocalDateTime.now(),
+            )
+            config to token.value
+        }
 
     suspend fun getVocabularyWord(wordId: Long): VocabularyWordEntity? =
         habitDao.getVocabularyWordById(wordId)

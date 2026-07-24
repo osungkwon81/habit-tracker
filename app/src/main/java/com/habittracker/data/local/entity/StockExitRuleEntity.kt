@@ -21,6 +21,8 @@ data class StockExitRuleEntity(
     val ruleType: String,
     @ColumnInfo(name = "trigger_value")
     val triggerValue: Double,
+    @ColumnInfo(name = "trigger_price")
+    val triggerPrice: Long? = null,
     @ColumnInfo(name = "sell_quantity_percent")
     val sellQuantityPercent: Double,
     @ColumnInfo(name = "action_mode")

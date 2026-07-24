@@ -576,6 +576,53 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_22_23 = object : Migration(22, 23) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `stock_exit_rule`
+                ADD COLUMN `trigger_price` INTEGER
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_23_24 = object : Migration(23, 24) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_sell_allocation` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `sell_order_id` INTEGER NOT NULL,
+                    `buy_order_id` INTEGER NOT NULL,
+                    `quantity` INTEGER NOT NULL,
+                    `buy_unit_price` INTEGER NOT NULL,
+                    `sell_unit_price` INTEGER NOT NULL,
+                    `realized_profit` INTEGER NOT NULL,
+                    `created_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_stock_sell_allocation_sell_order_id` ON `stock_sell_allocation` (`sell_order_id`)",
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_stock_sell_allocation_buy_order_id` ON `stock_sell_allocation` (`buy_order_id`)",
+            )
+        }
+    }
+
+    private val MIGRATION_24_25 = object : Migration(24, 25) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `stock_order`
+                ADD COLUMN `intended_buy_order_id` INTEGER
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -594,6 +641,9 @@ object HabitTrackerMigrations {
         MIGRATION_19_20,
         MIGRATION_20_21,
         MIGRATION_21_22,
+        MIGRATION_22_23,
+        MIGRATION_23_24,
+        MIGRATION_24_25,
     )
 }
 
