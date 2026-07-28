@@ -67,6 +67,7 @@ class StockAutomationService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitoringJob: Job? = null
+    private var foregroundNotificationMessage: String? = null
     private var finalSyncAttemptKey: String? = null
     private val realtimeClient = KisRealtimeStockClient()
     private var cachedApprovalKey: CachedApprovalKey? = null
@@ -90,8 +91,8 @@ class StockAutomationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startInForeground("실시간 시세 연결을 준비하고 있습니다.")
         if (monitoringJob?.isActive != true) {
+            startInForeground("실시간 시세 연결을 준비하고 있습니다.")
             monitoringJob = serviceScope.launch { monitorStocks() }
         }
         return START_STICKY
@@ -435,6 +436,7 @@ class StockAutomationService : Service() {
     )
 
     private fun startInForeground(message: String) {
+        foregroundNotificationMessage = message
         val notification = buildNotification(
             channelId = foregroundChannelId,
             title = "주식 자동화 모니터링",
@@ -453,6 +455,8 @@ class StockAutomationService : Service() {
     }
 
     private fun updateForegroundNotification(message: String) {
+        if (foregroundNotificationMessage == message) return
+        foregroundNotificationMessage = message
         notificationManager().notify(
             foregroundNotificationId,
             buildNotification(foregroundChannelId, "주식 자동화 모니터링", message, ongoing = true),

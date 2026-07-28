@@ -44,7 +44,8 @@ object LottoNumberGenerator {
     private const val backtestRandomCandidateCount = 48
     private const val backtestSampleCount = 60
     private val baseAppearanceRate = pickCount.toDouble() / maxNumber
-    private const val historyAnalysisMaximumScore = 24.9
+    private const val historyAnalysisMaximumScore = 27.4
+    private const val maximumBacktestWeightAdjustment = 0.10
     private val random = Random.Default
 
     fun generateBalanced(
@@ -236,7 +237,8 @@ object LottoNumberGenerator {
             "gapPriorDraws": 20.0,
             "gapScale": 35.0,
             "transitionPrior": 24.0,
-            "transitionLogScale": 18.0
+            "transitionLogScale": 18.0,
+            "shapeProfiles": ["sortedPosition", "adjacentGapPosition", "consecutivePairCount"]
           },
           "scoreComposition": {
             "data": {"number": 0.55, "pair": 0.30, "gap": 0.15},
@@ -244,12 +246,19 @@ object LottoNumberGenerator {
             "backtest": {"data": 0.60, "pattern": 0.40},
             "backtestStrategyMatched": true,
             "backtestEligibleCandidateBaseline": true,
+            "backtestWeightCalibration": {
+              "components": ["data", "pattern", "distribution"],
+              "minimumSamples": $minimumBacktestSamples,
+              "maximumAdjustment": $maximumBacktestWeightAdjustment,
+              "normalized": true
+            },
             "avoidanceCenter": 50.0,
             "avoidanceScale": 5.0
           },
           "finalSelection": {
             "overlapPenalties": {"two": 1.5, "three": 5.0, "fourOrMore": 10.0},
-            "multipleUsePenaltyMultiplier": 2.4
+            "multipleUsePenaltyMultiplier": 2.4,
+            "diversifiedMaximumPairwiseOverlap": 2
           },
           "balanced": {
             "recentSumTolerance": 42.0,
@@ -315,6 +324,11 @@ object LottoNumberGenerator {
         val longPairFrequency = buildPairFrequencyMap(history)
         val historyAnalysis = buildHistoryAnalysisProfile(history)
         val lastSeenGap = buildLastSeenGap(history)
+        val backtestProfile = if (includeBacktest) {
+            buildBacktestProfile(history, backtestStrategy)
+        } else {
+            BacktestProfile()
+        }
 
         return TrendProfile(
             recentSumAverage = recentWindow.map(List<Int>::sum).average(),
@@ -326,11 +340,8 @@ object LottoNumberGenerator {
             gapEvidence = buildGapEvidence(history, lastSeenGap),
             transitionProfile = buildTransitionProfile(history),
             historyAnalysis = historyAnalysis,
-            backtestProfile = if (includeBacktest) {
-                buildBacktestProfile(history, backtestStrategy)
-            } else {
-                BacktestProfile()
-            },
+            backtestProfile = backtestProfile,
+            scoreWeights = calibratedScoreWeights(backtestStrategy, backtestProfile),
         )
     }
 
@@ -523,10 +534,19 @@ object LottoNumberGenerator {
         selected += remaining.removeFirst()
 
         while (selected.size < gameCount && remaining.isNotEmpty()) {
+            val selectable = strategy.maximumPairwiseOverlap?.let { maximumOverlap ->
+                remaining.filter { candidate ->
+                    selected.all { picked ->
+                        candidate.numbers.intersect(picked.numbers.toSet()).size <= maximumOverlap
+                    }
+                }
+            } ?: remaining
+            if (selectable.isEmpty()) break
+
             val coverage = selected.flatMap { it.numbers }.toSet()
             val numberUsage = selected.flatMap { it.numbers }.groupingBy { it }.eachCount()
             val selectedPairs = selected.flatMap { drawPairs(it.numbers) }.toSet()
-            val next = remaining.maxByOrNull { candidate ->
+            val next = selectable.maxByOrNull { candidate ->
                 val overlapPenalty = selected.sumOf { picked ->
                     val overlap = candidate.numbers.intersect(picked.numbers.toSet()).size
                     when {
@@ -575,10 +595,11 @@ object LottoNumberGenerator {
         val patternScore = (historyPatternScore * 0.65 + transitionScore * 0.35).coerceIn(0.0, 100.0)
         val distributionScore = scoreDistribution(numbers, trendProfile, strategy)
         val avoidanceScore = (50.0 + publicPickAvoidanceScore(numbers) * 5.0).coerceIn(0.0, 100.0)
+        val weights = trendProfile.scoreWeights
         val totalScore = (
-            dataScore * strategy.dataWeight +
-                patternScore * strategy.patternWeight +
-                distributionScore * strategy.distributionWeight
+            dataScore * weights.data +
+                patternScore * weights.pattern +
+                distributionScore * weights.distribution
             ).coerceIn(0.0, 100.0)
 
         return CandidateScore(
@@ -588,6 +609,38 @@ object LottoNumberGenerator {
             distributionScore = distributionScore,
             avoidanceScore = avoidanceScore,
             validationScore = trendProfile.backtestProfile.averagePercentile,
+        )
+    }
+
+    private fun calibratedScoreWeights(
+        strategy: CoverageStrategy,
+        backtestProfile: BacktestProfile,
+    ): ScoreWeights {
+        val baseWeights = ScoreWeights(
+            data = strategy.dataWeight,
+            pattern = strategy.patternWeight,
+            distribution = strategy.distributionWeight,
+        )
+        if (backtestProfile.sampleCount < minimumBacktestSamples) return baseWeights
+
+        val reliability =
+            (backtestProfile.sampleCount - minimumBacktestSamples + 1).toDouble() /
+                (backtestSampleCount - minimumBacktestSamples + 1).toDouble()
+
+        fun adjustment(percentile: Double): Double =
+            1.0 + ((percentile - 50.0) / 50.0) * maximumBacktestWeightAdjustment * reliability.coerceIn(0.0, 1.0)
+
+        val adjustedData = baseWeights.data * adjustment(backtestProfile.dataAveragePercentile)
+        val adjustedPattern = baseWeights.pattern * adjustment(backtestProfile.patternAveragePercentile)
+        val adjustedDistribution =
+            baseWeights.distribution * adjustment(backtestProfile.distributionAveragePercentile)
+        val total = adjustedData + adjustedPattern + adjustedDistribution
+        if (total <= 0.0) return baseWeights
+
+        return ScoreWeights(
+            data = adjustedData / total,
+            pattern = adjustedPattern / total,
+            distribution = adjustedDistribution / total,
         )
     }
 
@@ -733,7 +786,7 @@ object LottoNumberGenerator {
     )
 
     private fun buildHistoryAnalysisProfile(history: List<List<Int>>): HistoryAnalysisProfile {
-        val analysisWindow = history.take(minOf(180, history.size)).ifEmpty { history }
+        val analysisWindow = history.take(minOf(180, history.size)).ifEmpty { history }.map(List<Int>::sorted)
         return HistoryAnalysisProfile(
             drawCount = analysisWindow.size,
             sumAverage = analysisWindow.map(List<Int>::sum).average(),
@@ -747,6 +800,13 @@ object LottoNumberGenerator {
             sumBuckets = analysisWindow.groupingBy { draw -> draw.sum() / 10 }.eachCount(),
             spreadBuckets = analysisWindow.groupingBy { draw -> (draw.last() - draw.first()) / 5 }.eachCount(),
             acBuckets = analysisWindow.groupingBy { draw -> acValue(draw) }.eachCount(),
+            positionBuckets = (0 until pickCount).map { position ->
+                analysisWindow.groupingBy { draw -> draw[position] }.eachCount()
+            },
+            adjacentGapBuckets = (0 until pickCount - 1).map { position ->
+                analysisWindow.groupingBy { draw -> draw[position + 1] - draw[position] }.eachCount()
+            },
+            consecutivePairBuckets = analysisWindow.groupingBy(::consecutivePairCount).eachCount(),
         )
     }
 
@@ -755,6 +815,9 @@ object LottoNumberGenerator {
         strategy: CoverageStrategy,
     ): BacktestProfile {
         val percentiles = mutableListOf<Double>()
+        val dataPercentiles = mutableListOf<Double>()
+        val patternPercentiles = mutableListOf<Double>()
+        val distributionPercentiles = mutableListOf<Double>()
         val maxSamples = minOf(backtestSampleCount, history.size - minimumBacktestTrainingDraws)
         if (maxSamples <= 0) return BacktestProfile()
 
@@ -774,6 +837,9 @@ object LottoNumberGenerator {
             } && !isHistoricalDuplicate(actualNumbers, trainingHistory)
             if (!actualEligible) {
                 percentiles += 0.0
+                dataPercentiles += 0.0
+                patternPercentiles += 0.0
+                distributionPercentiles += 0.0
                 continue
             }
             val actualCandidateScore = scoreCandidate(
@@ -784,7 +850,7 @@ object LottoNumberGenerator {
             )
             val actualScore = actualCandidateScore.dataScore * 0.60 + actualCandidateScore.patternScore * 0.40
             val baselineRandom = Random(seed = targetIndex * 10_007 + history[targetIndex].sum() * 97)
-            val randomScores = mutableListOf<Double>()
+            val randomScores = mutableListOf<CandidateScore>()
             var attempt = 0
             val maximumAttempts = backtestRandomCandidateCount * 200
             while (randomScores.size < backtestRandomCandidateCount && attempt < maximumAttempts) {
@@ -801,10 +867,25 @@ object LottoNumberGenerator {
                     lastDraw = lastTrainingDraw,
                     strategy = strategy,
                 )
-                randomScores += randomCandidateScore.dataScore * 0.60 + randomCandidateScore.patternScore * 0.40
+                randomScores += randomCandidateScore
             }
             if (randomScores.isEmpty()) continue
-            percentiles += randomScores.count { it <= actualScore }.toDouble() / randomScores.size * 100.0
+            percentiles += scorePercentile(
+                actualScore = actualScore,
+                baselineScores = randomScores.map { it.dataScore * 0.60 + it.patternScore * 0.40 },
+            )
+            dataPercentiles += scorePercentile(
+                actualScore = actualCandidateScore.dataScore,
+                baselineScores = randomScores.map(CandidateScore::dataScore),
+            )
+            patternPercentiles += scorePercentile(
+                actualScore = actualCandidateScore.patternScore,
+                baselineScores = randomScores.map(CandidateScore::patternScore),
+            )
+            distributionPercentiles += scorePercentile(
+                actualScore = actualCandidateScore.distributionScore,
+                baselineScores = randomScores.map(CandidateScore::distributionScore),
+            )
         }
 
         if (percentiles.size < minimumBacktestSamples) return BacktestProfile(sampleCount = percentiles.size)
@@ -812,8 +893,14 @@ object LottoNumberGenerator {
             sampleCount = percentiles.size,
             averagePercentile = percentiles.average(),
             aboveRandomRate = percentiles.count { it > 50.0 }.toDouble() / percentiles.size * 100.0,
+            dataAveragePercentile = dataPercentiles.average(),
+            patternAveragePercentile = patternPercentiles.average(),
+            distributionAveragePercentile = distributionPercentiles.average(),
         )
     }
+
+    private fun scorePercentile(actualScore: Double, baselineScores: List<Double>): Double =
+        baselineScores.count { it <= actualScore }.toDouble() / baselineScores.size * 100.0
 
     private fun buildLastSeenGap(history: List<List<Int>>): Map<Int, Int> {
         return (1..maxNumber).associateWith { number ->
@@ -844,9 +931,22 @@ object LottoNumberGenerator {
         val bucketScore =
             patternBucketScore(profile.sumBuckets, sum / 10) * 2.0 +
                 patternBucketScore(profile.spreadBuckets, spread / 5) * 1.4 +
-                patternBucketScore(profile.acBuckets, ac) * 1.2
+                patternBucketScore(profile.acBuckets, ac) * 1.2 +
+                positionalPatternScore(numbers, profile.positionBuckets) * 1.0 +
+                positionalPatternScore(adjacentGaps(numbers), profile.adjacentGapBuckets) * 0.8 +
+                patternBucketScore(profile.consecutivePairBuckets, consecutivePairCount(numbers)) * 0.7
 
         return shapeScore + bucketScore
+    }
+
+    private fun positionalPatternScore(
+        values: List<Int>,
+        buckets: List<Map<Int, Int>>,
+    ): Double {
+        if (values.size != buckets.size || values.isEmpty()) return 0.0
+        return values.indices.map { index ->
+            patternBucketScore(buckets[index], values[index])
+        }.average()
     }
 
     private fun patternBucketScore(buckets: Map<Int, Int>, bucket: Int): Double {
@@ -996,6 +1096,12 @@ object LottoNumberGenerator {
         return longest
     }
 
+    private fun adjacentGaps(numbers: List<Int>): List<Int> =
+        numbers.sorted().zipWithNext { first, second -> second - first }
+
+    private fun consecutivePairCount(numbers: List<Int>): Int =
+        adjacentGaps(numbers).count { gap -> gap == 1 }
+
     private fun lowMiddleHighBalanceScore(numbers: List<Int>): Double {
         val lowCount = numbers.count { it <= 15 }
         val middleCount = numbers.count { it in 16..30 }
@@ -1040,6 +1146,7 @@ object LottoNumberGenerator {
         val transitionProfile: TransitionProfile,
         val historyAnalysis: HistoryAnalysisProfile,
         val backtestProfile: BacktestProfile,
+        val scoreWeights: ScoreWeights,
     )
 
     private data class EvidenceWindow(
@@ -1094,12 +1201,24 @@ object LottoNumberGenerator {
         val sumBuckets: Map<Int, Int>,
         val spreadBuckets: Map<Int, Int>,
         val acBuckets: Map<Int, Int>,
+        val positionBuckets: List<Map<Int, Int>>,
+        val adjacentGapBuckets: List<Map<Int, Int>>,
+        val consecutivePairBuckets: Map<Int, Int>,
     )
 
     private data class BacktestProfile(
         val sampleCount: Int = 0,
         val averagePercentile: Double = 50.0,
         val aboveRandomRate: Double = 0.0,
+        val dataAveragePercentile: Double = 50.0,
+        val patternAveragePercentile: Double = 50.0,
+        val distributionAveragePercentile: Double = 50.0,
+    )
+
+    private data class ScoreWeights(
+        val data: Double,
+        val pattern: Double,
+        val distribution: Double,
     )
 
     private data class CandidateScore(
@@ -1132,6 +1251,7 @@ object LottoNumberGenerator {
         val newCoverageWeight: Double,
         val bucketBonusWeight: Double,
         val selectionAvoidanceWeight: Double,
+        val maximumPairwiseOverlap: Int?,
         val dataWeight: Double,
         val patternWeight: Double,
         val distributionWeight: Double,
@@ -1143,6 +1263,7 @@ object LottoNumberGenerator {
             newCoverageWeight = 1.0,
             bucketBonusWeight = 0.45,
             selectionAvoidanceWeight = 0.0,
+            maximumPairwiseOverlap = null,
             dataWeight = 0.45,
             patternWeight = 0.35,
             distributionWeight = 0.20,
@@ -1154,6 +1275,7 @@ object LottoNumberGenerator {
             newCoverageWeight = 1.55,
             bucketBonusWeight = 0.7,
             selectionAvoidanceWeight = 0.08,
+            maximumPairwiseOverlap = 2,
             dataWeight = 0.40,
             patternWeight = 0.20,
             distributionWeight = 0.40,
