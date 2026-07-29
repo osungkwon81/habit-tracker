@@ -144,7 +144,7 @@ class StockViewModel(
         if (!state.isConfigSaved || state.isLoadingOwnedStocks || (!force && state.hasLoadedOwnedStocks)) return
         _uiState.update { it.copy(isLoadingOwnedStocks = true) }
         viewModelScope.launch {
-            runCatching { repository.getKisBalanceStocks() }
+            runCatching { repository.getKisBalanceStocks(forceRefresh = force) }
                 .onSuccess { stocks ->
                     _uiState.update {
                         it.copy(
@@ -344,13 +344,14 @@ class StockViewModel(
         }
     }
 
-    fun loadPortfolioData() {
-        if (!_uiState.value.isConfigSaved) return
+    fun loadPortfolioData(forceRefresh: Boolean = false) {
+        val state = _uiState.value
+        if (!state.isConfigSaved || state.isLoadingPortfolio) return
         _uiState.update { it.copy(isLoadingPortfolio = true) }
         viewModelScope.launch {
             runCatching {
                 repository.syncStockOrderExecutions()
-                val balanceStocks = repository.getKisBalanceStocks()
+                val balanceStocks = repository.getKisBalanceStocks(forceRefresh = forceRefresh)
                 balanceStocks to repository.getStockBuyLotRows(balanceStocks)
             }.onSuccess { (balanceStocks, rows) ->
                 _uiState.update {

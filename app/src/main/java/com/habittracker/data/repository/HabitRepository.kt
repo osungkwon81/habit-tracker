@@ -128,8 +128,15 @@ class HabitRepository(
         const val stockSafetyConfigId = 1
         const val stockLimitOrderCode = "00"
         const val stockMarketOrderCode = "01"
+        const val kisBalanceCacheTtlNanos = 2_000_000_000L
         val generatedLottoSources = setOf("균형형", "분산형")
     }
+
+    private data class KisBalanceCacheEntry(
+        val market: KisStockMarket,
+        val stocks: List<KisBalanceStock>,
+        val fetchedAtNanos: Long,
+    )
 
     val managedTaskValueTypes: List<ValueType> = listOf(ValueType.NUMBER, ValueType.EXERCISE)
 
@@ -140,9 +147,11 @@ class HabitRepository(
     private val kisMarketCalendarPrefs = context.getSharedPreferences(kisMarketCalendarPrefsName, Context.MODE_PRIVATE)
     private val stockExecutionPrefs = context.getSharedPreferences(stockExecutionPrefsName, Context.MODE_PRIVATE)
     private val kisMarketCapCacheMutex = Mutex()
+    private val kisBalanceCacheMutex = Mutex()
     private val kisAccessTokenMutex = Mutex()
     private val stockOrderMutex = Mutex()
     private val stockAutomationMutex = Mutex()
+    private var kisBalanceCache: KisBalanceCacheEntry? = null
     private val kisConfigCipher = AndroidKeystoreStringCipher()
     private val kisDomesticStockClient = KisDomesticStockClient()
     private val regularMarketOpenTime = LocalTime.of(9, 0)
@@ -285,12 +294,31 @@ class HabitRepository(
     fun observeKisAccessTokenExpiredAt(environment: KisEnvironment): Flow<LocalDateTime?> =
         habitDao.observeKisAccessTokenExpiredAt(environment.apiValue)
 
-    suspend fun getKisBalanceStocks(): List<KisBalanceStock> = withContext(Dispatchers.IO) {
-        val (config, accessToken) = getKisConfigAndAccessToken()
+    suspend fun getKisBalanceStocks(forceRefresh: Boolean = false): List<KisBalanceStock> = withContext(Dispatchers.IO) {
         val marketTime = ZonedDateTime.now(ZoneId.of("Asia/Seoul")).toLocalTime()
         val market = resolveActiveStockMarket(marketTime) ?: KisStockMarket.KRX
-        withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
-            kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+        val requestedAtNanos = System.nanoTime()
+        kisBalanceCacheMutex.withLock {
+            val nowNanos = System.nanoTime()
+            kisBalanceCache
+                ?.takeIf { cached ->
+                    val refreshedWhileWaiting = cached.fetchedAtNanos >= requestedAtNanos
+                    val cacheIsFresh =
+                        !forceRefresh && nowNanos - cached.fetchedAtNanos < kisBalanceCacheTtlNanos
+                    cached.market == market && (refreshedWhileWaiting || cacheIsFresh)
+                }
+                ?.let { return@withLock it.stocks }
+
+            val (config, accessToken) = getKisConfigAndAccessToken()
+            withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+                kisDomesticStockClient.getBalance(retryConfig, retryToken, market)
+            }.also { stocks ->
+                kisBalanceCache = KisBalanceCacheEntry(
+                    market = market,
+                    stocks = stocks,
+                    fetchedAtNanos = System.nanoTime(),
+                )
+            }
         }
     }
 
@@ -306,6 +334,12 @@ class HabitRepository(
                         if (stocks.isNotEmpty()) saveKisMarketCapCache(today, stocks)
                     }
                 }
+        }
+    }
+
+    private suspend fun invalidateKisBalanceCache() {
+        kisBalanceCacheMutex.withLock {
+            kisBalanceCache = null
         }
     }
 
@@ -650,6 +684,7 @@ class HabitRepository(
                 updatedAt = now,
             )
             persistChange { habitDao.insertStockOrder(order) }
+            invalidateKisBalanceCache()
             saveStockAutomationEvent(
                 level = "INFO",
                 eventType = "ORDER_SUBMITTED",
@@ -2298,6 +2333,19 @@ class HabitRepository(
         }
     }
 
+    suspend fun increasePlantWateringIntervalOneDay(plantId: Long) {
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("화분 정보를 찾을 수 없습니다.")
+        persistChange {
+            habitDao.updatePlant(
+                existingPlant.copy(
+                    wateringIntervalDays = existingPlant.wateringIntervalDays + 1,
+                    nextWateringDate = existingPlant.nextWateringDate.plusDays(1),
+                    updatedAt = LocalDateTime.now(),
+                ),
+            )
+        }
+    }
+
     suspend fun deletePlant(plantId: Long) {
         val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("삭제할 화분을 찾을 수 없습니다.")
         persistChange {
@@ -2331,6 +2379,7 @@ class HabitRepository(
                 ),
             )
         }
+        invalidateKisBalanceCache()
     }
 
     suspend fun saveVocabularyWord(wordId: Long?, word: String, meaning: String, pronunciation: String?) {

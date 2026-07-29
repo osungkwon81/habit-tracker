@@ -164,6 +164,18 @@ class PlantViewModel(
         }
     }
 
+    fun increaseWateringIntervalOneDay(plantId: Long) {
+        viewModelScope.launch {
+            runCatching {
+                repository.increasePlantWateringIntervalOneDay(plantId)
+            }.onSuccess {
+                statusMessage.value = "물주기 주기와 예정일을 하루 늘렸습니다."
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "물주기 주기 변경에 실패했습니다."
+            }
+        }
+    }
+
     fun deletePlant(plantId: Long) {
         viewModelScope.launch {
             runCatching {

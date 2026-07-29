@@ -146,6 +146,7 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
                         DuePlantRow(
                             plant = plant,
                             onComplete = { viewModel.completeWatering(plant.id) },
+                            onIncreaseInterval = { viewModel.increaseWateringIntervalOneDay(plant.id) },
                         )
                     }
                 }
@@ -364,6 +365,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
 private fun DuePlantRow(
     plant: PlantEntity,
     onComplete: () -> Unit,
+    onIncreaseInterval: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -386,6 +388,28 @@ private fun DuePlantRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        Surface(
+            onClick = onIncreaseInterval,
+            modifier = Modifier.height(40.dp),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.primary,
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+            ),
+        ) {
+            Box(
+                modifier = Modifier.padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "+1일",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
     }
 }

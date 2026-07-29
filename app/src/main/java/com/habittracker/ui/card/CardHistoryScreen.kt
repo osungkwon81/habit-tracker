@@ -1,5 +1,6 @@
 package com.habittracker.ui.card
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import com.habittracker.R
 import androidx.compose.foundation.background
@@ -14,13 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -38,6 +43,7 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -137,51 +143,98 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
 
 @Composable
 private fun CardTopSummaryContent(summary: CardTopSummary) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        CardSummaryMetric(
-            label = "현재 금액",
-            value = formatWon(summary.currentAmount),
-            meta = summary.currentDate?.toString() ?: "기록 없음",
-            modifier = Modifier.weight(1f),
-        )
-        CardSummaryMetric(
-            label = "${summary.averageDate.year}년 매월 ${summary.averageDate.dayOfMonth}일 평균",
-            value = formatWon(summary.sameDayYearAverage),
-            meta = if (summary.sameDayYearAverageCount > 0) {
-                "${summary.sameDayYearAverageCount}개월 기준"
-            } else {
-                "기록 없음"
-            },
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun CardSummaryMetric(label: String, value: String, meta: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = "입력 날짜 사용 금액",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = summary.currentDate?.toString() ?: summary.averageDate.toString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .background(
+                        color = if (summary.currentDate != null) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        shape = RoundedCornerShape(99.dp),
+                    )
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            ) {
+                Text(
+                    text = if (summary.currentDate != null) "등록됨" else "기록 없음",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (summary.currentDate != null) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
         Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
+            text = formatWon(summary.currentAmount),
+            style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
-        Text(
-            text = meta,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant),
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = "올해 같은 날짜 평균",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = if (summary.sameDayYearAverageCount > 0) {
+                        "${summary.averageDate.year}년 매월 ${summary.averageDate.dayOfMonth}일 · ${summary.sameDayYearAverageCount}개월 기준"
+                    } else {
+                        "${summary.averageDate.year}년 매월 ${summary.averageDate.dayOfMonth}일 · 기록 없음"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = formatWon(summary.sameDayYearAverage),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -307,14 +360,63 @@ private fun CardHistoryInputCard(
 private fun MonthSelectorCard(selectedMonthLabel: String, onPrevious: () -> Unit, onNext: () -> Unit) {
     AppSectionCard {
         AppSectionHeader(title = "결제월 선택")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppSecondaryButton(text = "이전 달", onClick = onPrevious, modifier = Modifier.weight(1f))
-            Text(
-                text = selectedMonthLabel,
-                modifier = Modifier.weight(1f),
-                fontWeight = FontWeight.Bold,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CardMonthNavigationButton(
+                contentDescription = "이전 달",
+                rotation = 180f,
+                onClick = onPrevious,
             )
-            AppSecondaryButton(text = "다음 달", onClick = onNext, modifier = Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = selectedMonthLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            CardMonthNavigationButton(
+                contentDescription = "다음 달",
+                onClick = onNext,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CardMonthNavigationButton(
+    contentDescription: String,
+    rotation: Float = 0f,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(40.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                painter = painterResource(R.drawable.ic_chevron_right),
+                contentDescription = contentDescription,
+                modifier = Modifier
+                    .size(22.dp)
+                    .rotate(rotation),
+            )
         }
     }
 }

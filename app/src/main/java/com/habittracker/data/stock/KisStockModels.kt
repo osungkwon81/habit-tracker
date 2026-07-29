@@ -559,21 +559,24 @@ internal class KisDomesticStockClient {
             try {
                 return requestJsonOnce(url, method, headers, body)
             } catch (error: KisApiException) {
-                if (
-                    method != "GET" ||
-                    error.apiCode != RATE_LIMIT_ERROR_CODE ||
-                    retryCount >= MAX_RATE_LIMIT_RETRIES
-                ) {
+                val isRateLimitError =
+                    error.apiCode == RATE_LIMIT_ERROR_CODE ||
+                        error.message.orEmpty().contains("초당 거래건수")
+                if (!isRateLimitError) {
                     throw error
                 }
-                retryCount += 1
-                val retryDelayMillis = RATE_LIMIT_RETRY_DELAY_MILLIS * retryCount
+                val retryAttempt = retryCount + 1
+                val retryDelayMillis = RATE_LIMIT_RETRY_DELAY_MILLIS * retryAttempt
+                deferRequestsFor(retryDelayMillis)
+                if (method != "GET" || retryCount >= MAX_RATE_LIMIT_RETRIES) {
+                    throw error
+                }
+                retryCount = retryAttempt
                 Log.w(
                     LOG_TAG,
                     "KIS API rate limit exceeded. Retrying GET request. " +
                         "(path=${URL(url).path}, attempt=$retryCount, delayMs=$retryDelayMillis)",
                 )
-                sleepForRateLimit(retryDelayMillis)
             }
         }
     }
@@ -630,6 +633,13 @@ internal class KisDomesticStockClient {
                 sleepForRateLimit((waitNanos + 999_999L) / 1_000_000L)
             }
             nextRequestAtNanos = System.nanoTime() + MIN_REQUEST_INTERVAL_MILLIS * 1_000_000L
+        }
+    }
+
+    private fun deferRequestsFor(delayMillis: Long) {
+        synchronized(requestRateLock) {
+            val cooldownUntilNanos = System.nanoTime() + delayMillis * 1_000_000L
+            nextRequestAtNanos = maxOf(nextRequestAtNanos, cooldownUntilNanos)
         }
     }
 

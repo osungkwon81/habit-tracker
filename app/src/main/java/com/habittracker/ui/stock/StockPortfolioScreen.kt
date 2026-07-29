@@ -167,7 +167,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         item {
             AppSecondaryButton(
                 text = if (uiState.isLoadingPortfolio) "갱신 중" else "체결·현재가 갱신",
-                onClick = viewModel::loadPortfolioData,
+                onClick = { viewModel.loadPortfolioData(forceRefresh = true) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = uiState.isConfigSaved && !uiState.isLoadingPortfolio,
             )

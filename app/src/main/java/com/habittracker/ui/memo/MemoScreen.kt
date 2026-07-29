@@ -1,19 +1,25 @@
 ﻿package com.habittracker.ui.memo
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import com.habittracker.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,6 +31,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -37,7 +45,6 @@ import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
-import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
@@ -273,10 +280,39 @@ private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit, onToggle
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
             )
-            AppSecondaryButton(
-                text = if (memoNote.isPinned) "고정 해제" else "상단 고정",
+            Surface(
                 onClick = onTogglePinned,
-            )
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = if (memoNote.isPinned) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                contentColor = if (memoNote.isPinned) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (memoNote.isPinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+                ),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_push_pin),
+                        contentDescription = if (memoNote.isPinned) "상단 고정 해제" else "상단 고정",
+                        modifier = Modifier
+                            .size(20.dp)
+                            .rotate(if (memoNote.isPinned) 0f else 35f),
+                    )
+                }
+            }
         }
         Text(
             text = previewText,
