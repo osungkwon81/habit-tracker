@@ -29,6 +29,8 @@ enum class StockOrderSource(val label: String) {
     TAKE_PROFIT("이 앱 자동 매도 · 익절"),
     TRAILING_STOP("이 앱 자동 매도 · 고점 추적"),
     TIME_EXIT("이 앱 자동 매도 · 기간 청산"),
+    INTRADAY_BUY("이 앱 자동 매수 · 당일 상승"),
+    INTRADAY_SELL("이 앱 자동 매도 · 당일 상승"),
     REBALANCE("이 앱 리밸런싱"),
 }
 
@@ -37,16 +39,26 @@ enum class StockExitRuleType(val label: String, val unit: String) {
     TAKE_PROFIT("익절", "%"),
     TRAILING_STOP("고점 추적", "%"),
     TIME_EXIT("보유 기간", "일"),
+    INTRADAY_RISE("당일 상승", "%"),
 }
 
 enum class StockRuleAction(val label: String) {
     NOTIFY_ONLY("알림만"),
     AUTO_SELL("자동 매도"),
+    AUTO_BUY("자동 매수"),
 }
 
 data class KisBuyableQuantity(
     val quantity: Long,
     val amount: Long,
+)
+
+data class StockOrderAvailability(
+    val side: KisOrderSide,
+    val holdingQuantity: Long,
+    val availableQuantity: Long,
+    val availableAmount: Long?,
+    val currentPrice: Long,
 )
 
 data class KisMarketIndex(

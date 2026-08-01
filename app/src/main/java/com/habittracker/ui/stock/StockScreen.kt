@@ -132,7 +132,7 @@ fun StockScreen(
         }
         item { StockSectionTitle("자동화·전략") }
         item {
-            StockMenuCard("🛡", "자동 매도·알림", "손절·익절·고점 추적 조건으로 알림 또는 매도를 실행합니다.", Color(0xFF9A5B1A), onOpenAutomation)
+            StockMenuCard("🛡", "자동 매매·알림", "손절·익절·당일 상승 조건으로 알림 또는 분할 매매를 실행합니다.", Color(0xFF9A5B1A), onOpenAutomation)
         }
         item {
             StockMenuCard("⚖", "목표 비중 리밸런싱", "현재 비중과 목표 비중을 비교해 종목별 주문 수량을 계산합니다.", Color(0xFF6D4C8E), onOpenRebalance)
@@ -345,8 +345,8 @@ private fun StockRiskSummaryCard(
             }
             automaticOrderStopped -> {
                 riskLevel = StockRiskLevel.CAUTION
-                riskTitle = "자동 매도 주문이 꺼져 있습니다."
-                riskDetail = "자동 매도 규칙 ${summary.activeAutoSellRuleCount}개가 발동해도 주문하지 않습니다."
+                riskTitle = "자동 주문이 꺼져 있습니다."
+                riskDetail = "자동 매매 규칙 ${summary.activeAutoSellRuleCount}개가 발동해도 주문하지 않습니다."
             }
             summary.positions.isEmpty() -> {
                 riskLevel = StockRiskLevel.NEUTRAL
@@ -475,7 +475,7 @@ private fun StockRiskSummaryCard(
                 modifier = Modifier.weight(1f),
             )
         }
-        AppSupportText("상세 규칙과 안전 설정은 자동 매도·알림 및 KIS·안전 설정에서 변경할 수 있습니다.")
+        AppSupportText("상세 규칙과 안전 설정은 자동 매매·알림 및 KIS·안전 설정에서 변경할 수 있습니다.")
     }
 }
 
@@ -917,7 +917,7 @@ private fun buildStockHomeDashboardSummary(
             .map(StockPositionSummary::productName),
         activeRuleCount = activeRules.size,
         activeAutoSellRuleCount = activeRules.count {
-            it.actionMode == StockRuleAction.AUTO_SELL.name
+            it.actionMode in setOf(StockRuleAction.AUTO_SELL.name, StockRuleAction.AUTO_BUY.name)
         },
         firstStopEstimatedLoss = firstStopLosses.takeIf { it.isNotEmpty() }?.sum(),
         firstStopCoveredPositionCount = firstStopLosses.size,

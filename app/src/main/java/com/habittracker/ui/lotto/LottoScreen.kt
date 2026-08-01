@@ -676,7 +676,9 @@ private fun RoundSavedTicketDeck(
 ) {
     val groupedBySource = tickets.groupBy(::normalizeSourceLabel)
     val hasWinningTicket = draw?.let { winningDraw ->
-        tickets.any { ticket -> calculateWinningRank(ticket, winningDraw) != null }
+        tickets.any { ticket ->
+            !ticket.isEvaluationTarget && calculateWinningRank(ticket, winningDraw) != null
+        }
     } ?: false
     val roundStatusText = when {
         draw == null -> "추첨 대기"

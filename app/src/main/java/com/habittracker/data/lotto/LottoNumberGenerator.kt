@@ -3,6 +3,7 @@ package com.habittracker.data.lotto
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 data class LottoGeneratedTicket(
@@ -11,6 +12,7 @@ data class LottoGeneratedTicket(
     val score: LottoAnalysisScore? = null,
     val generationMode: String? = null,
     val generationSeed: Long? = null,
+    val featureSnapshotJson: String? = null,
 )
 
 data class LottoAnalysisScore(
@@ -35,6 +37,7 @@ enum class LottoGenerationMode(
 object LottoNumberGenerator {
     // 사용자에게 노출하는 생성기 버전이다. 세부 설정 차이는 저장된 config hash로 구분한다.
     const val CURRENT_GENERATION_VERSION = "2026-07-13-v2"
+    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 2
 
     private const val maxNumber = 45
     private const val pickCount = 6
@@ -43,7 +46,18 @@ object LottoNumberGenerator {
     private const val minimumBacktestSamples = 24
     private const val backtestRandomCandidateCount = 48
     private const val backtestSampleCount = 60
+    private const val adaptiveMinimumTrainingDraws = 45
+    private const val adaptiveMinimumEvaluationRounds = 240
+    private const val adaptiveMinimumOpportunities = 600
+    private const val adaptivePriorOpportunities = 900.0
+    private const val adaptiveSignificanceZ = 2.40
+    private const val adaptiveMaximumLift = 0.08
+    private const val adaptiveSegmentCount = 3
+    private const val recentSumWindow = 30
+    private const val minimumSumImprovementRate = 0.01
     private val baseAppearanceRate = pickCount.toDouble() / maxNumber
+    private val theoreticalSumAverage = pickCount * (maxNumber + 1) / 2.0
+    private val gapThresholds = listOf(5, 10, 15)
     private const val historyAnalysisMaximumScore = 27.4
     private const val maximumBacktestWeightAdjustment = 0.10
     private val random = Random.Default
@@ -179,14 +193,15 @@ object LottoNumberGenerator {
     fun configurationSnapshot(): String =
         """
         {
-          "snapshotSchema": 1,
+          "snapshotSchema": 2,
           "generationVersion": "$CURRENT_GENERATION_VERSION",
+          "ticketFeatureSnapshotSchema": $CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION,
           "numberRange": [1, $maxNumber],
           "pickCount": $pickCount,
           "defaultGameCount": $defaultGameCount,
           "candidateMaxAttemptMultiplier": 20,
           "history": {
-            "recentWindow": 30,
+            "recentWindow": $recentSumWindow,
             "analysisWindow": 180,
             "minimumBacktestTrainingDraws": $minimumBacktestTrainingDraws,
             "minimumBacktestSamples": $minimumBacktestSamples,
@@ -206,39 +221,53 @@ object LottoNumberGenerator {
             "PRECISE": {"candidatePoolSize": ${LottoGenerationMode.PRECISE.candidatePoolSize}, "finalistPoolSize": ${LottoGenerationMode.PRECISE.finalistPoolSize}}
           },
           "baseFilter": {
-            "sum": [80, 210],
-            "oddCount": [1, 5],
+            "sum": [65, 215],
+            "oddCount": [0, 6],
             "lowNumberMax": 22,
-            "lowCount": [1, 5],
+            "lowCount": [0, 6],
             "highNumberMin": 32,
-            "highCountMax": 4,
+            "highCountMax": 5,
             "middleRange": [16, 30],
-            "middleCount": [1, 4],
-            "spread": [18, 42],
-            "variance": [45.0, 230.0],
-            "minimumDecadeBuckets": 3,
+            "middleCount": [0, 5],
+            "spread": [13, 44],
+            "variance": [20.0, 290.0],
+            "minimumDecadeBuckets": 2,
             "maximumSameTailCount": 3,
             "maximumConsecutiveRun": 3,
-            "minimumAcValue": 4
+            "minimumAcValue": 3
           },
           "weightedSelection": {
             "minimumWeight": 0.05,
             "numberFit": {"base": 0.72, "evidenceDivisor": 180.0, "range": [0.72, 1.28]},
-            "gapFit": {"base": 0.86, "evidenceDivisor": 360.0, "range": [0.86, 1.14]},
+            "gapFit": {"inactiveWeight": 1.0, "maximumVerifiedLift": $adaptiveMaximumLift},
             "pairFit": {"base": 0.78, "evidenceDivisor": 230.0, "range": [0.78, 1.22]},
             "diversifiedHighNumberMinimum": 32,
-            "diversifiedHighNumberMultiplier": 1.18
+            "diversifiedHighNumberMultiplier": 1.05
           },
           "evidence": {
             "numberRateCenter": 50.0,
             "numberRateScale": 120.0,
             "pairSmoothing": 2.0,
             "pairLogScale": 28.0,
-            "gapPriorDraws": 20.0,
-            "gapScale": 35.0,
             "transitionPrior": 24.0,
             "transitionLogScale": 18.0,
             "shapeProfiles": ["sortedPosition", "adjacentGapPosition", "consecutivePairCount"]
+          },
+          "adaptiveValidation": {
+            "historyBasis": "MAIN_ONLY",
+            "gapThresholds": [5, 10, 15],
+            "minimumTrainingDraws": $adaptiveMinimumTrainingDraws,
+            "minimumEvaluationRounds": $adaptiveMinimumEvaluationRounds,
+            "minimumOpportunities": $adaptiveMinimumOpportunities,
+            "priorOpportunities": $adaptivePriorOpportunities,
+            "segmentCount": $adaptiveSegmentCount,
+            "significanceZ": $adaptiveSignificanceZ,
+            "sum": {
+              "recentWindow": $recentSumWindow,
+              "fixedAverage": $theoreticalSumAverage,
+              "minimumImprovementRate": $minimumSumImprovementRate,
+              "inactiveBehavior": "STRUCTURAL_ONLY"
+            }
           },
           "scoreComposition": {
             "data": {"number": 0.55, "pair": 0.30, "gap": 0.15},
@@ -261,11 +290,11 @@ object LottoNumberGenerator {
             "diversifiedMaximumPairwiseOverlap": 2
           },
           "balanced": {
-            "recentSumTolerance": 42.0,
-            "recentOddTolerance": 2.0,
-            "recentLowTolerance": 2.0,
-            "maximumPerDecadeBucket": 2,
-            "variance": [65.0, 190.0],
+            "verifiedRecentSumTolerance": 42.0,
+            "recentOddTolerance": 2.5,
+            "recentLowTolerance": 2.5,
+            "maximumPerDecadeBucket": 3,
+            "variance": [35.0, 263.0],
             "selectionOverlapWeight": 1.0,
             "repeatedNumberPenalty": 0.7,
             "repeatedPairPenalty": 1.3,
@@ -280,8 +309,9 @@ object LottoNumberGenerator {
             "minimumHighCount": 2,
             "minimumSpread": 27,
             "minimumDecadeBuckets": 4,
-            "maximumSameTailCount": 2,
-            "minimumAcValue": 6,
+            "maximumSameTailCount": 3,
+            "minimumAcValue": 5,
+            "distributionScoring": "HISTORY_FIT",
             "selectionOverlapWeight": 1.45,
             "repeatedNumberPenalty": 1.15,
             "repeatedPairPenalty": 2.25,
@@ -319,11 +349,13 @@ object LottoNumberGenerator {
         includeBacktest: Boolean = true,
         backtestStrategy: CoverageStrategy,
     ): TrendProfile {
-        val recentWindow = history.take(minOf(30, history.size)).ifEmpty { history }
+        val recentWindow = history.take(minOf(recentSumWindow, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
         val longPairFrequency = buildPairFrequencyMap(history)
         val historyAnalysis = buildHistoryAnalysisProfile(history)
         val lastSeenGap = buildLastSeenGap(history)
+        val gapValidationProfile = buildGapValidationProfile(history)
+        val sumValidationProfile = buildSumValidationProfile(history)
         val backtestProfile = if (includeBacktest) {
             buildBacktestProfile(history, backtestStrategy)
         } else {
@@ -337,7 +369,11 @@ object LottoNumberGenerator {
             recentBucketAverage = recentWindow.map(::decadeBucketCount).average(),
             numberEvidence = buildNumberEvidence(history),
             pairEvidence = buildPairEvidence(history, longFrequency, longPairFrequency),
-            gapEvidence = buildGapEvidence(history, lastSeenGap),
+            currentGaps = lastSeenGap,
+            gapEvidence = buildGapEvidence(lastSeenGap, gapValidationProfile),
+            gapWeight = buildGapWeight(lastSeenGap, gapValidationProfile),
+            gapValidationProfile = gapValidationProfile,
+            sumValidationProfile = sumValidationProfile,
             transitionProfile = buildTransitionProfile(history),
             historyAnalysis = historyAnalysis,
             backtestProfile = backtestProfile,
@@ -408,9 +444,9 @@ object LottoNumberGenerator {
         strategy: CoverageStrategy,
     ): Double {
         val numberFit = (0.72 + trendProfile.numberEvidence.getValue(number) / 180.0).coerceIn(0.72, 1.28)
-        val gapFit = (0.86 + trendProfile.gapEvidence.getValue(number) / 360.0).coerceIn(0.86, 1.14)
+        val gapFit = trendProfile.gapWeight.getValue(number)
         val highNumberFit = when {
-            number >= 32 && strategy == CoverageStrategy.DIVERSIFIED -> 1.18
+            number >= 32 && strategy == CoverageStrategy.DIVERSIFIED -> 1.05
             else -> 1.0
         }
 
@@ -434,23 +470,19 @@ object LottoNumberGenerator {
     private fun isBaseCoverageCandidate(numbers: List<Int>): Boolean {
         if (numbers.size != pickCount || numbers.distinct().size != pickCount) return false
         val sum = numbers.sum()
-        if (sum !in 80..210) return false
-        val oddCount = numbers.count { it % 2 != 0 }
-        if (oddCount !in 1..5) return false
-        val lowCount = numbers.count { it <= 22 }
-        if (lowCount !in 1..5) return false
+        if (sum !in 65..215) return false
         val highCount = numbers.count { it >= 32 }
-        if (highCount > 4) return false
+        if (highCount > 5) return false
         val middleCount = numbers.count { it in 16..30 }
-        if (middleCount !in 1..4) return false
+        if (middleCount > 5) return false
         val spread = numbers.last() - numbers.first()
-        if (spread !in 18..42) return false
-        if (numberVariance(numbers) !in 45.0..230.0) return false
-        if (decadeBucketCount(numbers) < 3) return false
+        if (spread !in 13..44) return false
+        if (numberVariance(numbers) !in 20.0..290.0) return false
+        if (decadeBucketCount(numbers) < 2) return false
         val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
         if (tailDuplicates > 3) return false
         if (maxConsecutiveRun(numbers) > 3) return false
-        return acValue(numbers) >= 4
+        return acValue(numbers) >= 3
     }
 
     private fun isBalancedCandidate(numbers: List<Int>, trendProfile: TrendProfile): Boolean {
@@ -461,13 +493,17 @@ object LottoNumberGenerator {
         val highCount = numbers.count { it >= 32 }
         val bucketCounts = decadeBucketCounts(numbers)
 
-        if (abs(sum - trendProfile.recentSumAverage) > 42.0) return false
-        if (abs(oddCount - trendProfile.recentOddAverage) > 2.0) return false
-        if (abs(lowCount - trendProfile.recentLowAverage) > 2.0) return false
-        if (lowCount !in 1..5) return false
-        if (highCount !in 0..4) return false
-        if (bucketCounts.values.any { it > 2 }) return false
-        return numberVariance(numbers) in 65.0..190.0
+        if (
+            trendProfile.sumValidationProfile.applied &&
+            abs(sum - trendProfile.recentSumAverage) > 42.0
+        ) {
+            return false
+        }
+        if (abs(oddCount - trendProfile.recentOddAverage) > 2.5) return false
+        if (abs(lowCount - trendProfile.recentLowAverage) > 2.5) return false
+        if (highCount !in 0..5) return false
+        if (bucketCounts.values.any { it > 3 }) return false
+        return numberVariance(numbers) in 35.0..263.0
     }
 
     private fun isDiversifiedCandidate(numbers: List<Int>): Boolean {
@@ -478,8 +514,8 @@ object LottoNumberGenerator {
         if (highCount < 2) return false
         if (numbers.last() - numbers.first() < 27) return false
         if (decadeBucketCount(numbers) < 4) return false
-        if (tailDuplicates > 2) return false
-        return acValue(numbers) >= 6
+        if (tailDuplicates > 3) return false
+        return acValue(numbers) >= 5
     }
 
     private fun generateRankedTickets(
@@ -517,6 +553,7 @@ object LottoNumberGenerator {
                 score = candidate.score.toAnalysisScore(),
                 generationMode = mode.name,
                 generationSeed = generationSeed,
+                featureSnapshotJson = candidate.score.featureSnapshotJson,
             )
         }
     }
@@ -582,6 +619,7 @@ object LottoNumberGenerator {
         trendProfile: TrendProfile,
         lastDraw: List<Int>,
         strategy: CoverageStrategy,
+        captureFeatureSnapshot: Boolean = true,
     ): CandidateScore {
         val pairs = drawPairs(numbers)
         val numberScore = numbers.map { trendProfile.numberEvidence.getValue(it) }.average()
@@ -601,6 +639,20 @@ object LottoNumberGenerator {
                 patternScore * weights.pattern +
                 distributionScore * weights.distribution
             ).coerceIn(0.0, 100.0)
+        val featureSnapshotJson = if (captureFeatureSnapshot) {
+            buildFeatureSnapshotJson(
+                numbers = numbers,
+                lastDraw = lastDraw,
+                trendProfile = trendProfile,
+                numberScore = numberScore,
+                pairScore = pairScore,
+                gapScore = gapScore,
+                historyPatternScore = historyPatternScore,
+                transitionScore = transitionScore,
+            )
+        } else {
+            null
+        }
 
         return CandidateScore(
             totalScore = totalScore,
@@ -609,8 +661,94 @@ object LottoNumberGenerator {
             distributionScore = distributionScore,
             avoidanceScore = avoidanceScore,
             validationScore = trendProfile.backtestProfile.averagePercentile,
+            featureSnapshotJson = featureSnapshotJson,
         )
     }
+
+    private fun buildFeatureSnapshotJson(
+        numbers: List<Int>,
+        lastDraw: List<Int>,
+        trendProfile: TrendProfile,
+        numberScore: Double,
+        pairScore: Double,
+        gapScore: Double,
+        historyPatternScore: Double,
+        transitionScore: Double,
+    ): String {
+        val candidateGaps = numbers.map { number -> trendProfile.currentGaps.getValue(number) }
+        val candidateVariance = numberVariance(numbers)
+        val maximumDecadeBucketCount = decadeBucketCounts(numbers).values.maxOrNull() ?: 0
+        val maximumTailCount = numbers.groupingBy { number -> number % 10 }.eachCount().values.maxOrNull() ?: 0
+        val gapEvidenceJson = gapThresholds.joinToString(separator = ",") { threshold ->
+            val evidence = trendProfile.gapValidationProfile.evidenceByThreshold[threshold]
+            "\"$threshold\":" + if (evidence == null) {
+                "null"
+            } else {
+                buildString {
+                    append("{")
+                    append("\"roundCount\":").append(evidence.roundCount).append(",")
+                    append("\"opportunityCount\":").append(evidence.opportunityCount).append(",")
+                    append("\"actualHitCount\":").append(evidence.actualHitCount).append(",")
+                    append("\"expectedHitCount\":").append(evidence.expectedHitCount.toJsonNumber()).append(",")
+                    append("\"observedRate\":").append(evidence.observedRate.toJsonNumber()).append(",")
+                    append("\"smoothedLift\":").append(evidence.smoothedLift.toJsonNumber()).append(",")
+                    append("\"zScore\":").append(evidence.zScore.toJsonNumber()).append(",")
+                    append("\"stableDirection\":").append(evidence.stableDirection).append(",")
+                    append("\"applied\":").append(evidence.applied).append(",")
+                    append("\"appliedLift\":").append(evidence.appliedLift.toJsonNumber())
+                    append("}")
+                }
+            }
+        }
+        val sumValidation = trendProfile.sumValidationProfile
+
+        return buildString {
+            append("{")
+            append("\"schemaVersion\":").append(CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION).append(",")
+            append("\"historyBasis\":\"MAIN_ONLY\",")
+            append("\"candidate\":{")
+            append("\"sum\":").append(numbers.sum()).append(",")
+            append("\"oddCount\":").append(numbers.count { it % 2 != 0 }).append(",")
+            append("\"lowCount\":").append(numbers.count { it <= 22 }).append(",")
+            append("\"highCount\":").append(numbers.count { it >= 32 }).append(",")
+            append("\"spread\":").append(numbers.last() - numbers.first()).append(",")
+            append("\"variance\":").append(candidateVariance.toJsonNumber()).append(",")
+            append("\"decadeBucketCount\":").append(decadeBucketCount(numbers)).append(",")
+            append("\"maximumDecadeBucketCount\":").append(maximumDecadeBucketCount).append(",")
+            append("\"maximumTailCount\":").append(maximumTailCount).append(",")
+            append("\"consecutivePairCount\":").append(consecutivePairCount(numbers)).append(",")
+            append("\"acValue\":").append(acValue(numbers)).append(",")
+            append("\"carryCount\":").append(numbers.count(lastDraw::contains)).append(",")
+            append("\"recentSumAverage\":").append(trendProfile.recentSumAverage.toJsonNumber()).append(",")
+            append("\"recentSumDeviation\":")
+                .append(abs(numbers.sum() - trendProfile.recentSumAverage).toJsonNumber()).append(",")
+            append("\"gap5Count\":").append(candidateGaps.count { it >= 5 }).append(",")
+            append("\"gap10Count\":").append(candidateGaps.count { it >= 10 }).append(",")
+            append("\"gap15Count\":").append(candidateGaps.count { it >= 15 })
+            append("},")
+            append("\"componentScores\":{")
+            append("\"number\":").append(numberScore.toJsonNumber()).append(",")
+            append("\"pair\":").append(pairScore.toJsonNumber()).append(",")
+            append("\"gap\":").append(gapScore.toJsonNumber()).append(",")
+            append("\"historyPattern\":").append(historyPatternScore.toJsonNumber()).append(",")
+            append("\"transition\":").append(transitionScore.toJsonNumber())
+            append("},")
+            append("\"gapValidation\":{").append(gapEvidenceJson).append("},")
+            append("\"sumValidation\":{")
+            append("\"sampleCount\":").append(sumValidation.sampleCount).append(",")
+            append("\"recentMeanAbsoluteError\":")
+                .append(sumValidation.recentMeanAbsoluteError.toJsonNumber()).append(",")
+            append("\"fixedMeanAbsoluteError\":")
+                .append(sumValidation.fixedMeanAbsoluteError.toJsonNumber()).append(",")
+            append("\"improvementRate\":").append(sumValidation.improvementRate.toJsonNumber()).append(",")
+            append("\"stableImprovement\":").append(sumValidation.stableImprovement).append(",")
+            append("\"applied\":").append(sumValidation.applied)
+            append("}")
+            append("}")
+        }
+    }
+
+    private fun Double.toJsonNumber(): String = if (isFinite()) toString() else "null"
 
     private fun calibratedScoreWeights(
         strategy: CoverageStrategy,
@@ -708,31 +846,126 @@ object LottoNumberGenerator {
     }
 
     private fun buildGapEvidence(
-        history: List<List<Int>>,
         currentGaps: Map<Int, Int>,
-    ): Map<Int, Double> {
-        val intervalCounts = mutableMapOf<Int, Int>()
-        val lastIndexes = mutableMapOf<Int, Int>()
-        history.asReversed().forEachIndexed { index, draw ->
-            draw.forEach { number ->
-                lastIndexes[number]?.let { previousIndex ->
-                    val interval = index - previousIndex
-                    intervalCounts[interval] = intervalCounts.getOrDefault(interval, 0) + 1
+        validationProfile: GapValidationProfile,
+    ): Map<Int, Double> = (1..maxNumber).associateWith { number ->
+        val evidence = validationProfile.evidenceForGap(currentGaps.getValue(number))
+        val appliedLift = evidence?.appliedLift ?: 0.0
+        (50.0 + appliedLift * 100.0).coerceIn(0.0, 100.0)
+    }
+
+    private fun buildGapWeight(
+        currentGaps: Map<Int, Int>,
+        validationProfile: GapValidationProfile,
+    ): Map<Int, Double> = (1..maxNumber).associateWith { number ->
+        1.0 + (validationProfile.evidenceForGap(currentGaps.getValue(number))?.appliedLift ?: 0.0)
+    }
+
+    private fun buildGapValidationProfile(history: List<List<Int>>): GapValidationProfile {
+        // 특정 미출현 구간의 우연한 단기 상승을 예측력으로 오인하지 않도록 시간 구간별 방향까지 확인한다.
+        val chronologicalHistory = history.asReversed()
+        val evaluationRoundCount = chronologicalHistory.size - adaptiveMinimumTrainingDraws
+        if (evaluationRoundCount <= 0) return GapValidationProfile()
+
+        val currentGaps = (1..maxNumber).associateWith { 0 }.toMutableMap()
+        val seenNumbers = mutableSetOf<Int>()
+        val totals = gapThresholds.associateWith { GapEvidenceAccumulator() }
+        val segments = gapThresholds.associateWith {
+            List(adaptiveSegmentCount) { GapEvidenceAccumulator() }
+        }
+
+        chronologicalHistory.forEachIndexed { index, draw ->
+            if (index >= adaptiveMinimumTrainingDraws) {
+                val segmentIndex = (
+                    (index - adaptiveMinimumTrainingDraws) * adaptiveSegmentCount /
+                        evaluationRoundCount
+                    ).coerceIn(0, adaptiveSegmentCount - 1)
+                val winningNumbers = draw.toSet()
+                gapThresholds.forEach { threshold ->
+                    val candidateCount = seenNumbers.count { number -> currentGaps.getValue(number) >= threshold }
+                    val hitCount = winningNumbers.count { number ->
+                        number in seenNumbers && currentGaps.getValue(number) >= threshold
+                    }
+                    totals.getValue(threshold).record(candidateCount, hitCount)
+                    segments.getValue(threshold)[segmentIndex].record(candidateCount, hitCount)
                 }
-                lastIndexes[number] = index
+            }
+
+            for (number in 1..maxNumber) {
+                if (number in draw) {
+                    currentGaps[number] = 0
+                    seenNumbers += number
+                } else if (number in seenNumbers) {
+                    currentGaps[number] = currentGaps.getValue(number) + 1
+                }
             }
         }
-        val intervals = intervalCounts.entries.flatMap { (interval, count) -> List(count) { interval } }
 
-        return (1..maxNumber).associateWith { number ->
-            val targetInterval = currentGaps.getValue(number) + 1
-            val events = intervalCounts.getOrDefault(targetInterval, 0)
-            val survived =
-                intervals.count { it >= targetInterval } +
-                    currentGaps.values.count { currentGap -> currentGap + 1 >= targetInterval }
-            val estimatedHazard = (events + 20.0 * baseAppearanceRate) / (survived + 20.0)
-            (50.0 + (estimatedHazard / baseAppearanceRate - 1.0) * 35.0).coerceIn(0.0, 100.0)
+        return GapValidationProfile(
+            evidenceByThreshold = gapThresholds.associateWith { threshold ->
+                totals.getValue(threshold).toEvidence(
+                    threshold = threshold,
+                    segmentAccumulators = segments.getValue(threshold),
+                )
+            },
+        )
+    }
+
+    private fun buildSumValidationProfile(history: List<List<Int>>): SumValidationProfile {
+        // 최근 합 평균은 고정 이론 평균보다 지속적으로 오차가 작을 때만 생성 조건에 사용한다.
+        val chronologicalHistory = history.asReversed()
+        val evaluationRoundCount = chronologicalHistory.size - recentSumWindow
+        if (evaluationRoundCount <= 0) return SumValidationProfile()
+
+        var recentAbsoluteErrorTotal = 0.0
+        var fixedAbsoluteErrorTotal = 0.0
+        val segmentRecentErrors = DoubleArray(adaptiveSegmentCount)
+        val segmentFixedErrors = DoubleArray(adaptiveSegmentCount)
+        val segmentSamples = IntArray(adaptiveSegmentCount)
+
+        for (targetIndex in recentSumWindow until chronologicalHistory.size) {
+            val recentAverage = chronologicalHistory
+                .subList(targetIndex - recentSumWindow, targetIndex)
+                .map(List<Int>::sum)
+                .average()
+            val actualSum = chronologicalHistory[targetIndex].sum().toDouble()
+            val recentError = abs(actualSum - recentAverage)
+            val fixedError = abs(actualSum - theoreticalSumAverage)
+            val segmentIndex = (
+                (targetIndex - recentSumWindow) * adaptiveSegmentCount /
+                    evaluationRoundCount
+                ).coerceIn(0, adaptiveSegmentCount - 1)
+
+            recentAbsoluteErrorTotal += recentError
+            fixedAbsoluteErrorTotal += fixedError
+            segmentRecentErrors[segmentIndex] += recentError
+            segmentFixedErrors[segmentIndex] += fixedError
+            segmentSamples[segmentIndex]++
         }
+
+        val recentMeanAbsoluteError = recentAbsoluteErrorTotal / evaluationRoundCount
+        val fixedMeanAbsoluteError = fixedAbsoluteErrorTotal / evaluationRoundCount
+        val improvementRate = if (fixedMeanAbsoluteError > 0.0) {
+            (fixedMeanAbsoluteError - recentMeanAbsoluteError) / fixedMeanAbsoluteError
+        } else {
+            0.0
+        }
+        val stableImprovement = segmentSamples.indices.all { index ->
+            segmentSamples[index] > 0 &&
+                segmentRecentErrors[index] / segmentSamples[index] <
+                segmentFixedErrors[index] / segmentSamples[index]
+        }
+
+        return SumValidationProfile(
+            sampleCount = evaluationRoundCount,
+            recentMeanAbsoluteError = recentMeanAbsoluteError,
+            fixedMeanAbsoluteError = fixedMeanAbsoluteError,
+            improvementRate = improvementRate,
+            stableImprovement = stableImprovement,
+            applied = evaluationRoundCount >= adaptiveMinimumEvaluationRounds &&
+                improvementRate >= minimumSumImprovementRate &&
+                stableImprovement,
+        )
     }
 
     private fun buildTransitionProfile(history: List<List<Int>>): TransitionProfile {
@@ -847,6 +1080,7 @@ object LottoNumberGenerator {
                 trendProfile = trainingProfile,
                 lastDraw = lastTrainingDraw,
                 strategy = strategy,
+                captureFeatureSnapshot = false,
             )
             val actualScore = actualCandidateScore.dataScore * 0.60 + actualCandidateScore.patternScore * 0.40
             val baselineRandom = Random(seed = targetIndex * 10_007 + history[targetIndex].sum() * 97)
@@ -866,6 +1100,7 @@ object LottoNumberGenerator {
                     trendProfile = trainingProfile,
                     lastDraw = lastTrainingDraw,
                     strategy = strategy,
+                    captureFeatureSnapshot = false,
                 )
                 randomScores += randomCandidateScore
             }
@@ -1018,8 +1253,13 @@ object LottoNumberGenerator {
         return when (strategy) {
             CoverageStrategy.BALANCED -> {
                 val profile = trendProfile.historyAnalysis
+                val verifiedRecentSumScore = if (trendProfile.sumValidationProfile.applied) {
+                    fitScore(numbers.sum().toDouble(), trendProfile.recentSumAverage, 52.0)
+                } else {
+                    50.0
+                }
                 listOf(
-                    fitScore(numbers.sum().toDouble(), trendProfile.recentSumAverage, 52.0),
+                    verifiedRecentSumScore,
                     fitScore(spread.toDouble(), profile.spreadAverage, 18.0),
                     fitScore(variance, profile.varianceAverage, 95.0),
                     fitScore(oddCount.toDouble(), trendProfile.recentOddAverage, 3.0),
@@ -1030,13 +1270,14 @@ object LottoNumberGenerator {
             }
             CoverageStrategy.DIVERSIFIED -> {
                 val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
+                val profile = trendProfile.historyAnalysis
                 listOf(
-                    ((spread - 18.0) / 24.0 * 100.0).coerceIn(0.0, 100.0),
-                    ((variance - 60.0) / 150.0 * 100.0).coerceIn(0.0, 100.0),
-                    ((bucketCount - 2.0) / 3.0 * 100.0).coerceIn(0.0, 100.0),
-                    ((acValue(numbers) - 3.0) / 7.0 * 100.0).coerceIn(0.0, 100.0),
-                    (numbers.count { it >= 32 } / 3.0 * 100.0).coerceIn(0.0, 100.0),
-                    (100.0 - maxOf(0, tailDuplicates - 1) * 35.0).coerceIn(0.0, 100.0),
+                    fitScore(spread.toDouble(), profile.spreadAverage, 20.0),
+                    fitScore(variance, profile.varianceAverage, 120.0),
+                    fitScore(bucketCount.toDouble(), profile.bucketAverage, 2.0),
+                    fitScore(acValue(numbers).toDouble(), profile.acAverage, 5.0),
+                    fitScore(numbers.count { it >= 32 }.toDouble(), profile.highAverage, 3.0),
+                    fitScore(tailDuplicates.toDouble(), 1.9, 3.0),
                 ).average()
             }
         }
@@ -1142,7 +1383,11 @@ object LottoNumberGenerator {
         val recentBucketAverage: Double,
         val numberEvidence: Map<Int, Double>,
         val pairEvidence: Map<Pair<Int, Int>, Double>,
+        val currentGaps: Map<Int, Int>,
         val gapEvidence: Map<Int, Double>,
+        val gapWeight: Map<Int, Double>,
+        val gapValidationProfile: GapValidationProfile,
+        val sumValidationProfile: SumValidationProfile,
         val transitionProfile: TransitionProfile,
         val historyAnalysis: HistoryAnalysisProfile,
         val backtestProfile: BacktestProfile,
@@ -1215,6 +1460,116 @@ object LottoNumberGenerator {
         val distributionAveragePercentile: Double = 50.0,
     )
 
+    private data class GapValidationProfile(
+        val evidenceByThreshold: Map<Int, GapThresholdEvidence> = emptyMap(),
+    ) {
+        fun evidenceForGap(gap: Int): GapThresholdEvidence? =
+            evidenceByThreshold.entries
+                .sortedByDescending { entry -> entry.key }
+                .firstOrNull { (threshold, evidence) -> gap >= threshold && evidence.applied }
+                ?.value
+    }
+
+    private data class GapThresholdEvidence(
+        val threshold: Int,
+        val roundCount: Int,
+        val opportunityCount: Int,
+        val actualHitCount: Int,
+        val expectedHitCount: Double,
+        val observedRate: Double,
+        val smoothedLift: Double,
+        val zScore: Double,
+        val stableDirection: Boolean,
+        val applied: Boolean,
+    ) {
+        val appliedLift: Double
+            get() = if (applied) {
+                smoothedLift.coerceIn(
+                    -LottoNumberGenerator.adaptiveMaximumLift,
+                    LottoNumberGenerator.adaptiveMaximumLift,
+                )
+            } else {
+                0.0
+            }
+    }
+
+    private class GapEvidenceAccumulator {
+        var roundCount: Int = 0
+            private set
+        var opportunityCount: Int = 0
+            private set
+        var actualHitCount: Int = 0
+            private set
+        var expectedHitCount: Double = 0.0
+            private set
+        var varianceTotal: Double = 0.0
+            private set
+
+        fun record(candidateCount: Int, hitCount: Int) {
+            roundCount++
+            opportunityCount += candidateCount
+            actualHitCount += hitCount
+            expectedHitCount += candidateCount * LottoNumberGenerator.baseAppearanceRate
+            val candidateRate = candidateCount.toDouble() / LottoNumberGenerator.maxNumber
+            varianceTotal +=
+                LottoNumberGenerator.pickCount * candidateRate * (1.0 - candidateRate) *
+                    (LottoNumberGenerator.maxNumber - LottoNumberGenerator.pickCount).toDouble() /
+                    (LottoNumberGenerator.maxNumber - 1)
+        }
+
+        fun toEvidence(
+            threshold: Int,
+            segmentAccumulators: List<GapEvidenceAccumulator>,
+        ): GapThresholdEvidence {
+            val observedRate = if (opportunityCount > 0) {
+                actualHitCount.toDouble() / opportunityCount
+            } else {
+                LottoNumberGenerator.baseAppearanceRate
+            }
+            val smoothedRate =
+                (actualHitCount +
+                    LottoNumberGenerator.adaptivePriorOpportunities * LottoNumberGenerator.baseAppearanceRate) /
+                    (opportunityCount + LottoNumberGenerator.adaptivePriorOpportunities)
+            val smoothedLift = smoothedRate / LottoNumberGenerator.baseAppearanceRate - 1.0
+            val zScore = if (varianceTotal > 0.0) {
+                (actualHitCount - expectedHitCount) / sqrt(varianceTotal)
+            } else {
+                0.0
+            }
+            val direction = zScore.compareTo(0.0)
+            val stableDirection = direction != 0 && segmentAccumulators.all { segment ->
+                segment.opportunityCount > 0 &&
+                    (segment.actualHitCount - segment.expectedHitCount).compareTo(0.0) == direction
+            }
+            val applied = roundCount >= LottoNumberGenerator.adaptiveMinimumEvaluationRounds &&
+                opportunityCount >= LottoNumberGenerator.adaptiveMinimumOpportunities &&
+                abs(zScore) >= LottoNumberGenerator.adaptiveSignificanceZ &&
+                stableDirection
+
+            return GapThresholdEvidence(
+                threshold = threshold,
+                roundCount = roundCount,
+                opportunityCount = opportunityCount,
+                actualHitCount = actualHitCount,
+                expectedHitCount = expectedHitCount,
+                observedRate = observedRate,
+                smoothedLift = smoothedLift,
+                zScore = zScore,
+                stableDirection = stableDirection,
+                applied = applied,
+            )
+        }
+    }
+
+    private data class SumValidationProfile(
+        val sampleCount: Int = 0,
+        val recentMeanAbsoluteError: Double = 0.0,
+        val fixedMeanAbsoluteError: Double = 0.0,
+        val improvementRate: Double = 0.0,
+        val stableImprovement: Boolean = false,
+        val applied: Boolean = false,
+    )
+
     private data class ScoreWeights(
         val data: Double,
         val pattern: Double,
@@ -1228,6 +1583,7 @@ object LottoNumberGenerator {
         val distributionScore: Double,
         val avoidanceScore: Double,
         val validationScore: Double,
+        val featureSnapshotJson: String?,
     ) {
         fun toAnalysisScore(): LottoAnalysisScore = LottoAnalysisScore(
             totalScore = totalScore,

@@ -59,7 +59,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
     }
 
     LaunchedEffect(uiState.isConfigSaved) {
-        if (uiState.isConfigSaved) viewModel.loadOwnedStocks(force = true)
+        if (uiState.isConfigSaved) viewModel.loadReferenceStocks(force = true)
     }
 
     LaunchedEffect(uiState.isConfigSaved, uiState.safetyConfig.monitoringEnabled) {
@@ -83,8 +83,8 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
             StockHeroCard(
                 icon = "🛡",
                 eyebrow = "STOCK · AUTOMATION",
-                title = "자동 매도·알림",
-                description = "정규장과 NXT 애프터마켓에서 켜진 규칙을 감시하며, 전역 스위치가 켜져야 자동 매도합니다.",
+                title = "자동 매매·알림",
+                description = "정규장과 NXT 애프터마켓에서 켜진 규칙을 감시하며, 전역 스위치가 켜져야 자동 주문합니다.",
             )
         }
         item {
@@ -101,7 +101,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    AppSupportText("누르면 직접 주문·자동 매도·리밸런싱 주문을 즉시 차단합니다.")
+                    AppSupportText("누르면 직접 주문·자동 매수·매도·리밸런싱 주문을 즉시 차단합니다.")
                     AppPrimaryButton(
                         text = "전체 주문 긴급 차단",
                         onClick = { viewModel.setGlobalOrderBlock(true) },
@@ -116,7 +116,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 AppStatusText(
                     if (uiState.safetyConfig.monitoringEnabled) "모니터링 사용 중" else "모니터링 중지됨",
                 )
-                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30과 NXT 애프터마켓 15:40~20:00에 활성 규칙 종목의 실시간 체결가를 감시합니다.")
+                AppSupportText("Android 상시 알림을 유지하고, KIS 개장일 정규장 09:00~15:30과 NXT 애프터마켓 15:40~20:00에 활성 규칙 종목의 실시간 체결가와 당일 등락률을 감시합니다.")
                 AppSupportText("조건 충족 알림에는 종목·시장 구분·현재가·평균가·수익률·보유수량·발동 조건·주문 결과가 표시됩니다.")
                 if (notificationPermissionDenied) {
                     Text(
@@ -165,14 +165,31 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
         }
         item {
             AppSectionCard {
-                StockSectionTitle("매도·알림 규칙 추가")
+                StockSectionTitle("매매·알림 규칙 추가")
+                val usesBuyableQuantity =
+                    uiState.ruleType == StockExitRuleType.INTRADAY_RISE &&
+                        uiState.ruleAction == StockRuleAction.AUTO_BUY
                 StockProductDropdown(
-                    label = "보유 종목",
+                    label = if (usesBuyableQuantity) "매수 종목" else "보유 종목",
                     selectedCode = uiState.ruleProductCode,
-                    options = uiState.ownedProductOptions(),
-                    enabled = !uiState.isLoadingOwnedStocks,
+                    options = if (usesBuyableQuantity) uiState.buyProductOptions() else uiState.ownedProductOptions(),
+                    enabled = !uiState.isLoadingOwnedStocks && !uiState.isLoadingMarketCapStocks,
                     onSelect = { viewModel.selectRuleProduct(it.code, it.name) },
                 )
+                if (usesBuyableQuantity) {
+                    AppTextField(
+                        value = uiState.ruleProductCode,
+                        onValueChange = viewModel::updateRuleProductCode,
+                        label = "종목코드 직접 입력 (6자리, ETN 7자리)",
+                        singleLine = true,
+                    )
+                    AppTextField(
+                        value = uiState.ruleProductName,
+                        onValueChange = viewModel::updateRuleProductName,
+                        label = "종목명",
+                        singleLine = true,
+                    )
+                }
                 Text("규칙 유형", style = MaterialTheme.typography.labelLarge)
                 StockExitRuleType.values().forEach { type ->
                     AppSelectableChip(
@@ -198,7 +215,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     },
                     singleLine = true,
                 )
-                if (uiState.ruleType != StockExitRuleType.TIME_EXIT) {
+                if (uiState.ruleType !in setOf(StockExitRuleType.TIME_EXIT, StockExitRuleType.INTRADAY_RISE)) {
                     AppTextField(
                         value = uiState.ruleTriggerPrice,
                         onValueChange = viewModel::updateRuleTriggerPrice,
@@ -211,20 +228,24 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
                 ) {
-                    StockRuleAction.values().forEach { action ->
-                        AppSelectableChip(
-                            label = action.label,
-                            selected = uiState.ruleAction == action,
-                            onClick = { viewModel.selectRuleAction(action) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                    StockRuleAction.values()
+                        .filter { action ->
+                            action != StockRuleAction.AUTO_BUY || uiState.ruleType == StockExitRuleType.INTRADAY_RISE
+                        }
+                        .forEach { action ->
+                            AppSelectableChip(
+                                label = action.label,
+                                selected = uiState.ruleAction == action,
+                                onClick = { viewModel.selectRuleAction(action) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                 }
-                if (uiState.ruleAction == StockRuleAction.AUTO_SELL) {
+                if (uiState.ruleAction != StockRuleAction.NOTIFY_ONLY) {
                     AppTextField(
                         value = uiState.ruleSellPercent,
                         onValueChange = viewModel::updateRuleSellPercent,
-                        label = "매도 비율 (%)",
+                        label = "${if (uiState.ruleAction == StockRuleAction.AUTO_BUY) "매수" else "매도"} 가능 수량 대비 비율 (%)",
                         singleLine = true,
                     )
                     Row(
@@ -246,7 +267,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     }
                     if (uiState.ruleOrderDivisionCode == "01") {
                         Text(
-                            "시장가 자동 매도는 급격한 가격 변동 시 예상보다 낮은 가격에 체결될 수 있습니다.",
+                            "시장가 자동 주문은 급격한 가격 변동 시 표시 가격과 다르게 체결될 수 있습니다.",
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -255,19 +276,19 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 val hasValidPercentTrigger =
                     uiState.ruleTriggerValue.toDoubleOrNull()?.let { it > 0.0 } == true
                 val hasValidPriceTrigger =
-                    uiState.ruleType != StockExitRuleType.TIME_EXIT &&
+                    uiState.ruleType !in setOf(StockExitRuleType.TIME_EXIT, StockExitRuleType.INTRADAY_RISE) &&
                         uiState.ruleTriggerPrice.toLongOrNull()?.let { it > 0L } == true
                 val hasValidTrigger = hasValidPercentTrigger || hasValidPriceTrigger
                 AppPrimaryButton(
                     text = "규칙 저장",
                     onClick = viewModel::saveExitRule,
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.ruleProductCode.isNotBlank() &&
+                    enabled = uiState.ruleProductCode.length in 6..7 &&
                         hasValidTrigger &&
                         (uiState.ruleAction == StockRuleAction.NOTIFY_ONLY ||
-                            uiState.ruleSellPercent.toDoubleOrNull()?.let { it > 0.0 } == true),
+                            uiState.ruleSellPercent.toDoubleOrNull()?.let { it > 0.0 && it <= 100.0 } == true),
                 )
-                AppSupportText("익절 규칙을 여러 개 추가하면 분할 매도 단계로 사용할 수 있습니다. 자동 주문은 한 종목당 한 단계씩 처리합니다.")
+                AppSupportText("당일 상승은 전일 종가 대비 등락률입니다. 자동 주문은 실제 가능 수량의 입력 비율로 계산하고, 체결 접수 후 규칙을 중지합니다.")
             }
         }
         item {
@@ -282,7 +303,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
             }
         }
         if (uiState.exitRules.isEmpty()) {
-            item { AppSectionCard { AppSupportText("저장된 자동 매도 규칙이 없습니다.") } }
+            item { AppSectionCard { AppSupportText("저장된 자동화 규칙이 없습니다.") } }
         }
         items(uiState.exitRules.size) { index ->
             val rule = uiState.exitRules[index]
@@ -304,7 +325,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     (rule.referenceHighPrice ?: currentPrice)
                         ?.times(1.0 - rule.triggerValue / 100.0)
                         ?.let { floor(it).toLong().toStockTickDown() }
-                StockExitRuleType.TIME_EXIT, null -> null
+                StockExitRuleType.TIME_EXIT,
+                StockExitRuleType.INTRADAY_RISE,
+                null -> null
             }
             val holdingQuantity = balance?.quantity?.toLongOrNull()
             val currentValuationAmount = if (holdingQuantity != null && currentPrice != null) {
@@ -335,7 +358,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                         append(type?.label ?: rule.ruleType)
                         rule.triggerPrice?.let { append(" ${it.toWon()}") }
                             ?: append(" ${rule.triggerValue}${type?.unit.orEmpty()}")
-                        if (action == StockRuleAction.AUTO_SELL) append(" · ${rule.sellQuantityPercent}% 매도")
+                        if (action != null && action != StockRuleAction.NOTIFY_ONLY) {
+                            append(" · ${rule.sellQuantityPercent}% ${if (action == StockRuleAction.AUTO_BUY) "매수" else "매도"}")
+                        }
                         append(" · ${action?.label ?: rule.actionMode}")
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -358,6 +383,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                         },
                     )
                     StockExitRuleType.TIME_EXIT -> AppSupportText("금액 기준 없이 ${rule.triggerValue.toLong()}일 보유 시 발동합니다.")
+                    StockExitRuleType.INTRADAY_RISE -> AppSupportText("전일 종가 대비 +${rule.triggerValue}% 이상이면 발동합니다.")
                     null -> Unit
                 }
                 if (
@@ -376,6 +402,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     if (type == StockExitRuleType.TIME_EXIT) {
                         AppSupportText("예상 매도금액은 현재가 기준이며 실제 체결가와 다를 수 있습니다.")
                     }
+                    AppSupportText("실제 주문 시점의 KIS 매도 가능 수량을 다시 조회해 비율을 적용합니다.")
+                } else if (action == StockRuleAction.AUTO_BUY) {
+                    AppSupportText("발동 시 KIS 매수 가능 수량과 1회·일일 안전 한도를 다시 확인한 후 ${rule.sellQuantityPercent}%를 매수합니다.")
                 }
                 AppStatusText(
                     when {
@@ -413,6 +442,8 @@ private fun StockExitRuleType.featureSummary(): String = when (this) {
         "고점 대비 입력한 비율만큼 하락하거나 직접 입력한 가격 이하로 내려가면 발동합니다."
     StockExitRuleType.TIME_EXIT ->
         "남아 있는 매수분 중 가장 오래된 매수일부터 입력한 일수가 지나면 발동합니다."
+    StockExitRuleType.INTRADAY_RISE ->
+        "전일 종가 대비 당일 상승률이 기준에 도달하면 알림, 일부 매도 또는 일부 매수합니다."
 }
 
 private fun Long.toStockTickDown(): Long {

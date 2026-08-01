@@ -26,6 +26,10 @@ data class LottoDrawEntity(
     val bonusNumber: Int? = null,
     @ColumnInfo(name = "data_source", defaultValue = "'LEGACY'")
     val dataSource: String = "MANUAL",
+    @ColumnInfo(name = "source_reference")
+    val sourceReference: String? = null,
+    @ColumnInfo(name = "source_content_hash")
+    val sourceContentHash: String? = null,
     @ColumnInfo(name = "saved_at")
     val savedAt: LocalDateTime = LocalDateTime.now(),
 ) {
@@ -37,6 +41,8 @@ data class LottoDrawEntity(
             numbers: List<Int>,
             bonusNumber: Int? = null,
             dataSource: String = "MANUAL",
+            sourceReference: String? = null,
+            sourceContentHash: String? = null,
         ): LottoDrawEntity {
             require(roundNo > 0) { "로또 회차는 1 이상이어야 합니다." }
             require(numbers.size == 6) { "로또 번호는 6개여야 합니다." }
@@ -45,6 +51,11 @@ data class LottoDrawEntity(
             require(bonusNumber == null || bonusNumber in 1..45) { "보너스 번호는 1부터 45 사이여야 합니다." }
             require(bonusNumber == null || bonusNumber !in numbers) { "보너스 번호는 당첨 번호와 중복될 수 없습니다." }
             require(dataSource.isNotBlank()) { "추첨 데이터 출처가 필요합니다." }
+            val sanitizedSourceReference = sourceReference?.trim()?.takeIf(String::isNotEmpty)
+            val sanitizedSourceContentHash = sourceContentHash?.trim()?.takeIf(String::isNotEmpty)
+            require((sanitizedSourceReference == null) == (sanitizedSourceContentHash == null)) {
+                "원본 출처와 해시값은 함께 저장해야 합니다."
+            }
             val sortedNumbers = numbers.sorted()
             return LottoDrawEntity(
                 roundNo = roundNo,
@@ -56,6 +67,8 @@ data class LottoDrawEntity(
                 number6 = sortedNumbers[5],
                 bonusNumber = bonusNumber,
                 dataSource = dataSource,
+                sourceReference = sanitizedSourceReference,
+                sourceContentHash = sanitizedSourceContentHash,
             )
         }
     }

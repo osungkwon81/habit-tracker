@@ -175,7 +175,7 @@ class StockAutomationService : Service() {
             return
         }
         if (snapshot.positions.isEmpty()) {
-            updateForegroundNotification("실시간 감시 대기 중 · 활성 규칙이 있는 보유 종목이 없습니다.")
+            updateForegroundNotification("실시간 감시 대기 중 · 감시할 활성 규칙 종목이 없습니다.")
             delay(refreshIntervalMillis.coerceAtMost(idlePollMillis))
             return
         }
@@ -183,7 +183,7 @@ class StockAutomationService : Service() {
         val productCodes = snapshot.positions.map(StockRealtimePosition::productCode).toSet()
         val approvalKey = getRealtimeApprovalKey()
         val signalChannel = Channel<RealtimeSessionSignal>(Channel.UNLIMITED)
-        val pendingPrices = ConcurrentHashMap<String, Long>()
+        val pendingPrices = ConcurrentHashMap<String, KisRealtimePrice>()
         val priceSignalPending = AtomicBoolean(false)
         val ignoredRuleIds = mutableSetOf<Long>()
         val referenceHighPrices = mutableMapOf<Long, Long>()
@@ -193,11 +193,12 @@ class StockAutomationService : Service() {
             .atTime(marketWindow.closeTime ?: marketCloseTime)
             .atZone(koreaZone)
 
-        suspend fun evaluatePrice(productCode: String, currentPrice: Long) {
+        suspend fun evaluatePrice(productCode: String, currentPrice: Long, changeRatePercent: Double?) {
             val position = positionsByCode[productCode] ?: return
             val result = repository.runStockAutomationRealtimeTick(
                 position = position,
                 currentPrice = currentPrice,
+                changeRatePercent = changeRatePercent,
                 market = market,
                 ignoredRuleIds = ignoredRuleIds,
                 referenceHighPrices = referenceHighPrices,
@@ -210,7 +211,9 @@ class StockAutomationService : Service() {
         }
 
         snapshot.positions.forEach { position ->
-            position.initialPrice?.let { price -> evaluatePrice(position.productCode, price) }
+            position.initialPrice?.let { price ->
+                evaluatePrice(position.productCode, price, null)
+            }
         }
 
         val connection = realtimeClient.connect(
@@ -220,7 +223,7 @@ class StockAutomationService : Service() {
         ) { event ->
             when (event) {
                 is KisRealtimeEvent.Price -> {
-                    pendingPrices[event.value.productCode] = event.value.currentPrice
+                    pendingPrices[event.value.productCode] = event.value
                     if (priceSignalPending.compareAndSet(false, true)) {
                         signalChannel.trySend(RealtimeSessionSignal.PricesAvailable)
                     }
@@ -260,9 +263,9 @@ class StockAutomationService : Service() {
                     RealtimeSessionSignal.PricesAvailable -> {
                         priceSignalPending.set(false)
                         val prices = pendingPrices.entries.associate { it.key to it.value }
-                        prices.forEach { (productCode, currentPrice) ->
-                            pendingPrices.remove(productCode, currentPrice)
-                            evaluatePrice(productCode, currentPrice)
+                        prices.forEach { (productCode, price) ->
+                            pendingPrices.remove(productCode, price)
+                            evaluatePrice(productCode, price.currentPrice, price.changeRatePercent)
                         }
                         delay(realtimeEvaluationCooldownMillis)
                     }

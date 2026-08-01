@@ -66,6 +66,10 @@ data class LottoTicketEntity(
     val avoidanceScore: Double? = null,
     @ColumnInfo(name = "validation_score")
     val validationScore: Double? = null,
+    @ColumnInfo(name = "feature_schema_version")
+    val featureSchemaVersion: Int? = null,
+    @ColumnInfo(name = "feature_snapshot_json")
+    val featureSnapshotJson: String? = null,
     @ColumnInfo(name = "generation_mode")
     val generationMode: String? = null,
     @ColumnInfo(name = "recommendation_rank")
@@ -93,6 +97,8 @@ data class LottoTicketEntity(
             distributionScore: Double? = null,
             avoidanceScore: Double? = null,
             validationScore: Double? = null,
+            featureSchemaVersion: Int? = null,
+            featureSnapshotJson: String? = null,
             generationMode: String? = null,
             recommendationRank: Int? = null,
         ): LottoTicketEntity {
@@ -102,6 +108,15 @@ data class LottoTicketEntity(
             require(roundNo == null || roundNo > 0) { "로또 회차는 1 이상이어야 합니다." }
             require(setNo == null || setNo > 0) { "로또 세트 번호는 1 이상이어야 합니다." }
             require(historyThroughRound == null || historyThroughRound > 0) { "분석 기준 회차는 1 이상이어야 합니다." }
+            require((featureSchemaVersion == null) == (featureSnapshotJson == null)) {
+                "분석 피처 버전과 스냅샷은 함께 저장해야 합니다."
+            }
+            require(featureSchemaVersion == null || featureSchemaVersion > 0) {
+                "분석 피처 버전은 1 이상이어야 합니다."
+            }
+            require(featureSnapshotJson == null || featureSnapshotJson.isNotBlank()) {
+                "분석 피처 스냅샷은 비어 있을 수 없습니다."
+            }
             val sortedNumbers = numbers.sorted()
             return LottoTicketEntity(
                 sourceLabel = sourceLabel,
@@ -125,6 +140,8 @@ data class LottoTicketEntity(
                 distributionScore = distributionScore,
                 avoidanceScore = avoidanceScore,
                 validationScore = validationScore,
+                featureSchemaVersion = featureSchemaVersion,
+                featureSnapshotJson = featureSnapshotJson,
                 generationMode = generationMode,
                 recommendationRank = recommendationRank,
             )

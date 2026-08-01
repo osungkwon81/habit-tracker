@@ -43,6 +43,7 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                 Text(
                     "${uiState.productName} (${uiState.productCode})\n" +
                         "${uiState.orderQuantity}주 · ${if (uiState.orderDivisionCode == "01") "시장가" else "${uiState.orderUnitPrice.toLongOrNull().toWon()} 지정가"}\n\n" +
+                        "조회된 ${uiState.orderSide.label} 가능 수량 ${uiState.orderAvailability?.availableQuantity ?: 0L}주\n" +
                         "실제 계좌에 주문이 전송됩니다. 계속하시겠습니까?",
                 )
             },
@@ -165,6 +166,40 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                val holdingQuantity = uiState.orderAvailability?.holdingQuantity
+                    ?: uiState.ownedStocks
+                        .firstOrNull { it.productCode == uiState.productCode }
+                        ?.quantity
+                        ?.toLongOrNull()
+                    ?: 0L
+                AppSupportText("현재 보유 ${holdingQuantity}주")
+                AppSecondaryButton(
+                    text = if (uiState.isLoadingOrderAvailability) "가능 수량 조회 중" else "${uiState.orderSide.label} 가능 수량 조회",
+                    onClick = viewModel::loadOrderAvailability,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = uiState.isConfigSaved &&
+                        !uiState.isLoadingOrderAvailability &&
+                        uiState.productCode.length in 6..7 &&
+                        (uiState.orderDivisionCode == "01" ||
+                            uiState.orderUnitPrice.toLongOrNull()?.let { it > 0L } == true),
+                )
+                uiState.orderAvailability?.let { availability ->
+                    Text(
+                        "${uiState.orderSide.label} 가능 ${availability.availableQuantity}주 · " +
+                            "가능 금액 ${availability.availableAmount.toWon()} · " +
+                            "현재가 ${availability.currentPrice.toWon()}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    val requestedQuantity = uiState.orderQuantity.toLongOrNull()
+                    if (requestedQuantity != null && requestedQuantity > availability.availableQuantity) {
+                        Text(
+                            "입력한 수량이 ${uiState.orderSide.label} 가능 수량을 초과합니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
                 AppPrimaryButton(
                     text = if (uiState.isSubmittingOrder) "주문 전송 중" else "실전 ${uiState.orderSide.label} 주문 확인",
                     onClick = { showConfirmation = true },
@@ -173,7 +208,10 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                         !uiState.safetyConfig.globalOrderBlocked &&
                         !uiState.isSubmittingOrder &&
                         uiState.productCode.length in 6..7 &&
-                        uiState.orderQuantity.toLongOrNull()?.let { it > 0L } == true &&
+                        uiState.orderQuantity.toLongOrNull()?.let { quantity ->
+                            quantity > 0L && quantity <= (uiState.orderAvailability?.availableQuantity ?: 0L)
+                        } == true &&
+                        uiState.orderAvailability?.side == uiState.orderSide &&
                         (if (uiState.orderDivisionCode == "01") {
                             uiState.orderUnitPrice == "0"
                         } else {

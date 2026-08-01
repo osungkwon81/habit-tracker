@@ -20,6 +20,7 @@ import com.habittracker.data.stock.StockBuyLotRow
 import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockJournalAnalysis
 import com.habittracker.data.stock.StockOrderSource
+import com.habittracker.data.stock.StockOrderAvailability
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +44,7 @@ class StockViewModel(
     val uiState: StateFlow<StockUiState> = _uiState.asStateFlow()
     private val automationEventLimit = MutableStateFlow(stockAutomationEventPageSize)
     private var safetyFormInitialized = false
+    private var orderAvailabilityRequestId = 0L
 
     init {
         observeTradingData()
@@ -198,27 +200,109 @@ class StockViewModel(
     }
 
     fun selectOrderSide(side: KisOrderSide) {
-        _uiState.update { it.copy(orderSide = side, productCode = "", productName = "", statusMessage = null) }
+        _uiState.update {
+            it.copy(
+                orderSide = side,
+                productCode = "",
+                productName = "",
+                orderAvailability = null,
+                isLoadingOrderAvailability = false,
+                statusMessage = null,
+            )
+        }
         if (side == KisOrderSide.SELL) loadOwnedStocks() else loadMarketCapStocks()
     }
 
     fun selectOrderProduct(productCode: String, productName: String) =
-        _uiState.update { it.copy(productCode = productCode, productName = productName) }
+        _uiState.update {
+            it.copy(productCode = productCode, productName = productName, orderAvailability = null)
+        }
     fun updateOrderProductCode(value: String) {
         val productCode = value.filter(Char::isLetterOrDigit).uppercase().take(7)
-        _uiState.update { it.copy(productCode = productCode, productName = productCode) }
+        _uiState.update {
+            it.copy(productCode = productCode, productName = productCode, orderAvailability = null)
+        }
     }
     fun updateOrderDivisionCode(value: String) =
-        _uiState.update { it.copy(orderDivisionCode = value.filter(Char::isDigit).take(2)) }
+        _uiState.update {
+            it.copy(orderDivisionCode = value.filter(Char::isDigit).take(2), orderAvailability = null)
+        }
     fun updateOrderQuantity(value: String) = _uiState.update { it.copy(orderQuantity = value.filter(Char::isDigit)) }
-    fun updateOrderUnitPrice(value: String) = _uiState.update { it.copy(orderUnitPrice = value.filter(Char::isDigit)) }
+    fun updateOrderUnitPrice(value: String) =
+        _uiState.update { it.copy(orderUnitPrice = value.filter(Char::isDigit), orderAvailability = null) }
     fun updateExchangeIdDivisionCode(value: String) =
         _uiState.update { it.copy(exchangeIdDivisionCode = value.filter(Char::isLetter).uppercase().take(3)) }
     fun updateSellType(value: String) = _uiState.update { it.copy(sellType = value.filter(Char::isDigit).take(2)) }
     fun updateConditionPrice(value: String) = _uiState.update { it.copy(conditionPrice = value.filter(Char::isDigit)) }
 
+    fun loadOrderAvailability() {
+        val state = _uiState.value
+        if (state.isLoadingOrderAvailability) return
+        val requestId = ++orderAvailabilityRequestId
+        _uiState.update { it.copy(isLoadingOrderAvailability = true, orderAvailability = null) }
+        viewModelScope.launch {
+            runCatching {
+                repository.getStockOrderAvailability(
+                    state.toCashOrderDraft().copy(
+                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
+                    ),
+                )
+            }.onSuccess { availability ->
+                if (requestId != orderAvailabilityRequestId) return@onSuccess
+                _uiState.update { current ->
+                    if (
+                        current.orderSide == state.orderSide &&
+                        current.productCode == state.productCode &&
+                        current.orderDivisionCode == state.orderDivisionCode &&
+                        current.orderUnitPrice == state.orderUnitPrice
+                    ) {
+                        current.copy(isLoadingOrderAvailability = false, orderAvailability = availability)
+                    } else {
+                        current.copy(isLoadingOrderAvailability = false)
+                    }
+                }
+            }.onFailure { error ->
+                if (requestId != orderAvailabilityRequestId) return@onFailure
+                val current = _uiState.value
+                val requestIsCurrent =
+                    current.orderSide == state.orderSide &&
+                        current.productCode == state.productCode &&
+                        current.orderDivisionCode == state.orderDivisionCode &&
+                        current.orderUnitPrice == state.orderUnitPrice
+                if (!requestIsCurrent) {
+                    _uiState.update { it.copy(isLoadingOrderAvailability = false) }
+                    return@onFailure
+                }
+                recordStockError(
+                    eventType = "ORDER_AVAILABILITY_QUERY_FAILED",
+                    title = "주문 가능 수량 조회 실패",
+                    error = error,
+                    fallbackMessage = "주문 가능 수량을 조회하지 못했습니다.",
+                )
+                _uiState.update {
+                    it.copy(
+                        isLoadingOrderAvailability = false,
+                        statusMessage = error.message ?: "주문 가능 수량 조회에 실패했습니다.",
+                    )
+                }
+            }
+        }
+    }
+
     fun submitCashOrder() {
         val state = _uiState.value
+        val requestedQuantity = state.orderQuantity.toLongOrNull()
+        val availability = state.orderAvailability
+        if (availability == null || availability.side != state.orderSide) {
+            _uiState.update { it.copy(statusMessage = "주문 가능 수량을 먼저 조회해 주세요.") }
+            return
+        }
+        if (requestedQuantity == null || requestedQuantity !in 1L..availability.availableQuantity) {
+            _uiState.update {
+                it.copy(statusMessage = "${state.orderSide.label} 수량은 1주 이상 ${availability.availableQuantity}주 이하로 입력해 주세요.")
+            }
+            return
+        }
         _uiState.update { it.copy(isSubmittingOrder = true) }
         viewModelScope.launch {
             runCatching {
@@ -234,6 +318,7 @@ class StockViewModel(
                     it.copy(
                         isSubmittingOrder = false,
                         orderQuantity = "",
+                        orderAvailability = null,
                         statusMessage = "${order.productName} ${state.orderSide.label} 주문이 접수되었습니다. 주문번호 ${order.orderNumber}",
                     )
                 }
@@ -573,9 +658,35 @@ class StockViewModel(
 
     fun selectRuleProduct(code: String, name: String) =
         _uiState.update { it.copy(ruleProductCode = code, ruleProductName = name) }
+    fun updateRuleProductCode(value: String) {
+        val code = value.filter(Char::isLetterOrDigit).uppercase().take(7)
+        _uiState.update { it.copy(ruleProductCode = code, ruleProductName = code) }
+    }
+    fun updateRuleProductName(value: String) =
+        _uiState.update { it.copy(ruleProductName = value.take(40)) }
     fun selectRuleType(type: StockExitRuleType) =
-        _uiState.update { it.copy(ruleType = type, ruleTriggerValue = "", ruleTriggerPrice = "") }
-    fun selectRuleAction(action: StockRuleAction) = _uiState.update { it.copy(ruleAction = action) }
+        _uiState.update {
+            it.copy(
+                ruleType = type,
+                ruleTriggerValue = "",
+                ruleTriggerPrice = "",
+                ruleAction = if (type != StockExitRuleType.INTRADAY_RISE && it.ruleAction == StockRuleAction.AUTO_BUY) {
+                    StockRuleAction.NOTIFY_ONLY
+                } else {
+                    it.ruleAction
+                },
+                ruleProductCode = "",
+                ruleProductName = "",
+            )
+        }
+    fun selectRuleAction(action: StockRuleAction) =
+        _uiState.update {
+            it.copy(
+                ruleAction = action,
+                ruleProductCode = "",
+                ruleProductName = "",
+            )
+        }
     fun updateRuleTriggerValue(value: String) =
         _uiState.update {
             val filtered = value.filter { char -> char.isDigit() || char == '.' }
@@ -592,7 +703,7 @@ class StockViewModel(
 
     fun saveExitRule() {
         val state = _uiState.value
-        launchAction("자동 매도 규칙 저장에 실패했습니다.") {
+        launchAction("자동화 규칙 저장에 실패했습니다.") {
             repository.saveStockExitRule(
                 ruleId = null,
                 productCode = state.ruleProductCode,
@@ -600,9 +711,9 @@ class StockViewModel(
                 ruleType = state.ruleType,
                 triggerValue = state.ruleTriggerValue.toDoubleOrNull(),
                 triggerPrice = state.ruleTriggerPrice.toLongOrNull(),
-                sellQuantityPercent = if (state.ruleAction == StockRuleAction.AUTO_SELL) {
+                sellQuantityPercent = if (state.ruleAction != StockRuleAction.NOTIFY_ONLY) {
                     state.ruleSellPercent.toDoubleOrNull()
-                        ?: throw IllegalArgumentException("매도 비율을 입력해 주세요.")
+                        ?: throw IllegalArgumentException("주문 비율을 입력해 주세요.")
                 } else {
                     0.0
                 },
@@ -815,6 +926,8 @@ data class StockUiState(
     val sellType: String = "01",
     val conditionPrice: String = "",
     val isSubmittingOrder: Boolean = false,
+    val orderAvailability: StockOrderAvailability? = null,
+    val isLoadingOrderAvailability: Boolean = false,
     val orders: List<StockOrderEntity> = emptyList(),
     val sellAllocations: List<StockSellAllocationEntity> = emptyList(),
     val buyLotRows: List<StockBuyLotRow> = emptyList(),

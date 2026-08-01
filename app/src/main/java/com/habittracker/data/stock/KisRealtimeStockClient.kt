@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal data class KisRealtimePrice(
     val productCode: String,
     val currentPrice: Long,
+    val changeRatePercent: Double?,
 )
 
 internal sealed interface KisRealtimeEvent {
@@ -202,8 +203,11 @@ internal class KisRealtimeStockClient : Closeable {
                         ?.replace(",", "")
                         ?.toLongOrNull()
                         ?.takeIf { it > 0L }
+                    val changeRatePercent = fields.getOrNull(offset + 5)
+                        ?.replace(",", "")
+                        ?.toDoubleOrNull()
                     if (productCode.isNotBlank() && currentPrice != null) {
-                        add(KisRealtimePrice(productCode, currentPrice))
+                        add(KisRealtimePrice(productCode, currentPrice, changeRatePercent))
                     }
                 }
             }

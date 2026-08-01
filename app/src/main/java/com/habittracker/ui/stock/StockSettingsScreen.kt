@@ -91,7 +91,7 @@ fun StockSettingsScreen(viewModel: StockViewModel) {
             AppSectionCard {
                 StockSectionTitle("자동 주문 허용")
                 SettingSwitchRow(
-                    title = "자동 매도 주문",
+                    title = "자동 매수·매도 주문",
                     description = "꺼져 있으면 자동 규칙은 알림만 남기고 주문하지 않습니다.",
                     checked = uiState.automaticOrderEnabled,
                     onCheckedChange = viewModel::setAutomaticOrderEnabled,
