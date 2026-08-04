@@ -36,8 +36,8 @@ enum class LottoGenerationMode(
 
 object LottoNumberGenerator {
     // 사용자에게 노출하는 생성기 버전이다. 세부 설정 차이는 저장된 config hash로 구분한다.
-    const val CURRENT_GENERATION_VERSION = "2026-07-13-v2"
-    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 2
+    const val CURRENT_GENERATION_VERSION = "2026-08-04-v3"
+    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 3
 
     private const val maxNumber = 45
     private const val pickCount = 6
@@ -45,7 +45,10 @@ object LottoNumberGenerator {
     private const val minimumBacktestTrainingDraws = 36
     private const val minimumBacktestSamples = 24
     private const val backtestRandomCandidateCount = 48
+    private const val backtestStrategyCandidateCount = 48
     private const val backtestSampleCount = 60
+    private const val minimumBacktestWeightTrainingSamples = 12
+    private const val minimumBacktestHoldoutSamples = 12
     private const val adaptiveMinimumTrainingDraws = 45
     private const val adaptiveMinimumEvaluationRounds = 240
     private const val adaptiveMinimumOpportunities = 600
@@ -206,6 +209,7 @@ object LottoNumberGenerator {
             "minimumBacktestTrainingDraws": $minimumBacktestTrainingDraws,
             "minimumBacktestSamples": $minimumBacktestSamples,
             "backtestRandomCandidateCount": $backtestRandomCandidateCount,
+            "backtestStrategyCandidateCount": $backtestStrategyCandidateCount,
             "backtestSampleCount": $backtestSampleCount,
             "historyAnalysisMaximumScore": $historyAnalysisMaximumScore,
             "evidenceWindows": [
@@ -278,8 +282,12 @@ object LottoNumberGenerator {
             "backtestWeightCalibration": {
               "components": ["data", "pattern", "distribution"],
               "minimumSamples": $minimumBacktestSamples,
+              "minimumWeightTrainingSamples": $minimumBacktestWeightTrainingSamples,
+              "minimumHoldoutSamples": $minimumBacktestHoldoutSamples,
               "maximumAdjustment": $maximumBacktestWeightAdjustment,
-              "normalized": true
+              "normalized": true,
+              "walkForwardGamesPerGroup": $defaultGameCount,
+              "applyRule": "holdout_not_worse_than_base_and_control"
             },
             "avoidanceCenter": 50.0,
             "avoidanceScale": 5.0
@@ -743,6 +751,19 @@ object LottoNumberGenerator {
             append("\"improvementRate\":").append(sumValidation.improvementRate.toJsonNumber()).append(",")
             append("\"stableImprovement\":").append(sumValidation.stableImprovement).append(",")
             append("\"applied\":").append(sumValidation.applied)
+            append("},")
+            append("\"scoreCalibration\":{")
+            append("\"dataWeight\":").append(trendProfile.scoreWeights.data.toJsonNumber()).append(",")
+            append("\"patternWeight\":").append(trendProfile.scoreWeights.pattern.toJsonNumber()).append(",")
+            append("\"distributionWeight\":").append(trendProfile.scoreWeights.distribution.toJsonNumber()).append(",")
+            append("\"walkForwardSamples\":").append(trendProfile.backtestProfile.simulationSampleCount).append(",")
+            append("\"strategyAverageMatchCount\":")
+                .append(trendProfile.backtestProfile.strategyAverageMatchCount.toJsonNumber()).append(",")
+            append("\"controlAverageMatchCount\":")
+                .append(trendProfile.backtestProfile.controlAverageMatchCount.toJsonNumber()).append(",")
+            append("\"averageMatchDifference\":")
+                .append(trendProfile.backtestProfile.averageMatchDifference.toJsonNumber()).append(",")
+            append("\"learnedWeightsApplied\":").append(trendProfile.backtestProfile.learnedScoreWeights != null)
             append("}")
             append("}")
         }
@@ -753,17 +774,25 @@ object LottoNumberGenerator {
     private fun calibratedScoreWeights(
         strategy: CoverageStrategy,
         backtestProfile: BacktestProfile,
-    ): ScoreWeights {
-        val baseWeights = ScoreWeights(
+    ): ScoreWeights = backtestProfile.learnedScoreWeights ?: baseScoreWeights(strategy)
+
+    private fun baseScoreWeights(strategy: CoverageStrategy): ScoreWeights =
+        ScoreWeights(
             data = strategy.dataWeight,
             pattern = strategy.patternWeight,
             distribution = strategy.distributionWeight,
         )
-        if (backtestProfile.sampleCount < minimumBacktestSamples) return baseWeights
+
+    private fun proposeBacktestScoreWeights(
+        strategy: CoverageStrategy,
+        backtestProfile: BacktestProfile,
+    ): ScoreWeights {
+        val baseWeights = baseScoreWeights(strategy)
+        if (backtestProfile.sampleCount < minimumBacktestWeightTrainingSamples) return baseWeights
 
         val reliability =
-            (backtestProfile.sampleCount - minimumBacktestSamples + 1).toDouble() /
-                (backtestSampleCount - minimumBacktestSamples + 1).toDouble()
+            (backtestProfile.sampleCount - minimumBacktestWeightTrainingSamples + 1).toDouble() /
+                (backtestSampleCount - minimumBacktestHoldoutSamples - minimumBacktestWeightTrainingSamples + 1).toDouble()
 
         fun adjustment(percentile: Double): Double =
             1.0 + ((percentile - 50.0) / 50.0) * maximumBacktestWeightAdjustment * reliability.coerceIn(0.0, 1.0)
@@ -1047,10 +1076,7 @@ object LottoNumberGenerator {
         history: List<List<Int>>,
         strategy: CoverageStrategy,
     ): BacktestProfile {
-        val percentiles = mutableListOf<Double>()
-        val dataPercentiles = mutableListOf<Double>()
-        val patternPercentiles = mutableListOf<Double>()
-        val distributionPercentiles = mutableListOf<Double>()
+        val roundEvidence = mutableListOf<BacktestRoundEvidence>()
         val maxSamples = minOf(backtestSampleCount, history.size - minimumBacktestTrainingDraws)
         if (maxSamples <= 0) return BacktestProfile()
 
@@ -1064,73 +1090,199 @@ object LottoNumberGenerator {
             )
             val lastTrainingDraw = trainingHistory.first()
             val actualNumbers = history[targetIndex]
-            val actualEligible = when (strategy) {
-                CoverageStrategy.BALANCED -> isBalancedCandidate(actualNumbers, trainingProfile)
-                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(actualNumbers)
-            } && !isHistoricalDuplicate(actualNumbers, trainingHistory)
-            if (!actualEligible) {
-                percentiles += 0.0
-                dataPercentiles += 0.0
-                patternPercentiles += 0.0
-                distributionPercentiles += 0.0
-                continue
-            }
-            val actualCandidateScore = scoreCandidate(
-                numbers = actualNumbers,
-                trendProfile = trainingProfile,
-                lastDraw = lastTrainingDraw,
-                strategy = strategy,
-                captureFeatureSnapshot = false,
-            )
-            val actualScore = actualCandidateScore.dataScore * 0.60 + actualCandidateScore.patternScore * 0.40
-            val baselineRandom = Random(seed = targetIndex * 10_007 + history[targetIndex].sum() * 97)
+            val baselineSeed = targetIndex * 10_007 + actualNumbers.sum() * 97
+            val baselineRandom = Random(seed = baselineSeed)
             val randomScores = mutableListOf<CandidateScore>()
-            var attempt = 0
-            val maximumAttempts = backtestRandomCandidateCount * 200
-            while (randomScores.size < backtestRandomCandidateCount && attempt < maximumAttempts) {
-                attempt++
+            var randomAttempt = 0
+            val maximumRandomAttempts = backtestRandomCandidateCount * 200
+            while (randomScores.size < backtestRandomCandidateCount && randomAttempt < maximumRandomAttempts) {
+                randomAttempt++
                 val randomNumbers = generateRandomCombination(baselineRandom)
                 val randomEligible = when (strategy) {
                     CoverageStrategy.BALANCED -> isBalancedCandidate(randomNumbers, trainingProfile)
                     CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(randomNumbers)
                 } && !isHistoricalDuplicate(randomNumbers, trainingHistory)
                 if (!randomEligible) continue
-                val randomCandidateScore = scoreCandidate(
+                randomScores += scoreCandidate(
                     numbers = randomNumbers,
                     trendProfile = trainingProfile,
                     lastDraw = lastTrainingDraw,
                     strategy = strategy,
                     captureFeatureSnapshot = false,
                 )
-                randomScores += randomCandidateScore
             }
             if (randomScores.isEmpty()) continue
-            percentiles += scorePercentile(
-                actualScore = actualScore,
-                baselineScores = randomScores.map { it.dataScore * 0.60 + it.patternScore * 0.40 },
+
+            val actualEligible = when (strategy) {
+                CoverageStrategy.BALANCED -> isBalancedCandidate(actualNumbers, trainingProfile)
+                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(actualNumbers)
+            } && !isHistoricalDuplicate(actualNumbers, trainingHistory)
+            val actualCandidateScore = actualNumbers.takeIf { actualEligible }?.let { numbers ->
+                scoreCandidate(
+                    numbers = numbers,
+                    trendProfile = trainingProfile,
+                    lastDraw = lastTrainingDraw,
+                    strategy = strategy,
+                    captureFeatureSnapshot = false,
+                )
+            }
+            val strategyCandidates = generateBacktestStrategyCandidates(
+                trainingHistory = trainingHistory,
+                trainingProfile = trainingProfile,
+                lastTrainingDraw = lastTrainingDraw,
+                strategy = strategy,
+                randomSource = Random(seed = baselineSeed xor ((strategy.ordinal + 1) * 0x1F123BB5)),
             )
-            dataPercentiles += scorePercentile(
-                actualScore = actualCandidateScore.dataScore,
-                baselineScores = randomScores.map(CandidateScore::dataScore),
+            val controlTickets = generateBacktestControlTickets(
+                randomSource = Random(seed = baselineSeed xor 0x5F3759DF),
             )
-            patternPercentiles += scorePercentile(
-                actualScore = actualCandidateScore.patternScore,
-                baselineScores = randomScores.map(CandidateScore::patternScore),
-            )
-            distributionPercentiles += scorePercentile(
-                actualScore = actualCandidateScore.distributionScore,
-                baselineScores = randomScores.map(CandidateScore::distributionScore),
+            roundEvidence += BacktestRoundEvidence(
+                actualNumbers = actualNumbers,
+                totalPercentile = actualCandidateScore?.let { score ->
+                    scorePercentile(
+                        actualScore = score.dataScore * 0.60 + score.patternScore * 0.40,
+                        baselineScores = randomScores.map { it.dataScore * 0.60 + it.patternScore * 0.40 },
+                    )
+                } ?: 0.0,
+                dataPercentile = actualCandidateScore?.let { score ->
+                    scorePercentile(score.dataScore, randomScores.map(CandidateScore::dataScore))
+                } ?: 0.0,
+                patternPercentile = actualCandidateScore?.let { score ->
+                    scorePercentile(score.patternScore, randomScores.map(CandidateScore::patternScore))
+                } ?: 0.0,
+                distributionPercentile = actualCandidateScore?.let { score ->
+                    scorePercentile(score.distributionScore, randomScores.map(CandidateScore::distributionScore))
+                } ?: 0.0,
+                strategyCandidates = strategyCandidates,
+                controlTickets = controlTickets,
             )
         }
 
-        if (percentiles.size < minimumBacktestSamples) return BacktestProfile(sampleCount = percentiles.size)
+        if (roundEvidence.size < minimumBacktestSamples) {
+            return BacktestProfile(sampleCount = roundEvidence.size)
+        }
+
+        val holdoutCount = maxOf(minimumBacktestHoldoutSamples, roundEvidence.size / 3)
+            .coerceAtMost(roundEvidence.size - minimumBacktestWeightTrainingSamples)
+        val holdoutEvidence = roundEvidence.take(holdoutCount)
+        val weightTrainingEvidence = roundEvidence.drop(holdoutCount)
+        val weightTrainingProfile = buildBacktestPercentileProfile(weightTrainingEvidence)
+        val baseWeights = baseScoreWeights(strategy)
+        val proposedWeights = proposeBacktestScoreWeights(strategy, weightTrainingProfile)
+        val baseEvaluation = evaluateBacktestWeights(holdoutEvidence, strategy, baseWeights)
+        val proposedEvaluation = evaluateBacktestWeights(holdoutEvidence, strategy, proposedWeights)
+        val learnedWeights = proposedWeights.takeIf {
+            proposedWeights != baseWeights &&
+                proposedEvaluation.sampleCount >= minimumBacktestHoldoutSamples &&
+                proposedEvaluation.strategyAverageMatchCount >= baseEvaluation.strategyAverageMatchCount &&
+                proposedEvaluation.strategyAverageMatchCount >= proposedEvaluation.controlAverageMatchCount
+        }
+        val selectedEvaluation = if (learnedWeights != null) proposedEvaluation else baseEvaluation
+        val percentileProfile = buildBacktestPercentileProfile(roundEvidence)
+
+        return percentileProfile.copy(
+            simulationSampleCount = selectedEvaluation.sampleCount,
+            strategyAverageMatchCount = selectedEvaluation.strategyAverageMatchCount,
+            controlAverageMatchCount = selectedEvaluation.controlAverageMatchCount,
+            averageMatchDifference =
+                selectedEvaluation.strategyAverageMatchCount - selectedEvaluation.controlAverageMatchCount,
+            learnedScoreWeights = learnedWeights,
+        )
+    }
+
+    private fun generateBacktestStrategyCandidates(
+        trainingHistory: List<List<Int>>,
+        trainingProfile: TrendProfile,
+        lastTrainingDraw: List<Int>,
+        strategy: CoverageStrategy,
+        randomSource: Random,
+    ): List<ScoredCandidate> {
+        val candidates = linkedSetOf<List<Int>>()
+        val maximumAttempts = backtestStrategyCandidateCount * 200
+        var attempt = 0
+        while (candidates.size < backtestStrategyCandidateCount && attempt < maximumAttempts) {
+            attempt++
+            val numbers = generatePredictedCombination(
+                trendProfile = trainingProfile,
+                strategy = strategy,
+                randomSource = randomSource,
+            )
+            val eligible = when (strategy) {
+                CoverageStrategy.BALANCED -> isBalancedCandidate(numbers, trainingProfile)
+                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(numbers)
+            } && !isHistoricalDuplicate(numbers, trainingHistory)
+            if (eligible) candidates += numbers
+        }
+        return candidates.map { numbers ->
+            ScoredCandidate(
+                numbers = numbers,
+                score = scoreCandidate(
+                    numbers = numbers,
+                    trendProfile = trainingProfile,
+                    lastDraw = lastTrainingDraw,
+                    strategy = strategy,
+                    captureFeatureSnapshot = false,
+                ),
+            )
+        }
+    }
+
+    private fun generateBacktestControlTickets(randomSource: Random): List<List<Int>> {
+        val tickets = linkedSetOf<List<Int>>()
+        while (tickets.size < defaultGameCount) {
+            tickets += generateRandomCombination(randomSource)
+        }
+        return tickets.toList()
+    }
+
+    private fun buildBacktestPercentileProfile(evidence: List<BacktestRoundEvidence>): BacktestProfile {
+        if (evidence.isEmpty()) return BacktestProfile()
         return BacktestProfile(
-            sampleCount = percentiles.size,
-            averagePercentile = percentiles.average(),
-            aboveRandomRate = percentiles.count { it > 50.0 }.toDouble() / percentiles.size * 100.0,
-            dataAveragePercentile = dataPercentiles.average(),
-            patternAveragePercentile = patternPercentiles.average(),
-            distributionAveragePercentile = distributionPercentiles.average(),
+            sampleCount = evidence.size,
+            averagePercentile = evidence.map(BacktestRoundEvidence::totalPercentile).average(),
+            aboveRandomRate = evidence.count { it.totalPercentile > 50.0 }.toDouble() / evidence.size * 100.0,
+            dataAveragePercentile = evidence.map(BacktestRoundEvidence::dataPercentile).average(),
+            patternAveragePercentile = evidence.map(BacktestRoundEvidence::patternPercentile).average(),
+            distributionAveragePercentile = evidence.map(BacktestRoundEvidence::distributionPercentile).average(),
+        )
+    }
+
+    private fun evaluateBacktestWeights(
+        evidence: List<BacktestRoundEvidence>,
+        strategy: CoverageStrategy,
+        weights: ScoreWeights,
+    ): BacktestEvaluation {
+        val roundResults = evidence.mapNotNull { round ->
+            val reweightedCandidates = round.strategyCandidates
+                .map { candidate ->
+                    candidate.copy(
+                        score = candidate.score.copy(
+                            totalScore = (
+                                candidate.score.dataScore * weights.data +
+                                    candidate.score.patternScore * weights.pattern +
+                                    candidate.score.distributionScore * weights.distribution
+                                ).coerceIn(0.0, 100.0),
+                        ),
+                    )
+                }
+                .sortedByDescending { candidate -> candidate.score.totalScore }
+            val strategyTickets = pickDiverseTopGames(reweightedCandidates, defaultGameCount, strategy)
+            if (strategyTickets.size < defaultGameCount || round.controlTickets.size < defaultGameCount) {
+                return@mapNotNull null
+            }
+            val strategyAverage = strategyTickets
+                .map { ticket -> ticket.numbers.count(round.actualNumbers::contains) }
+                .average()
+            val controlAverage = round.controlTickets
+                .map { numbers -> numbers.count(round.actualNumbers::contains) }
+                .average()
+            strategyAverage to controlAverage
+        }
+        if (roundResults.isEmpty()) return BacktestEvaluation()
+        return BacktestEvaluation(
+            sampleCount = roundResults.size,
+            strategyAverageMatchCount = roundResults.map { result -> result.first }.average(),
+            controlAverageMatchCount = roundResults.map { result -> result.second }.average(),
         )
     }
 
@@ -1200,7 +1352,10 @@ object LottoNumberGenerator {
             profile.averagePercentile >= 47.0 -> "기준유사"
             else -> "기준미달"
         }
-        return "$level ${formatScore(profile.averagePercentile)} · 기준 50 · 우위 ${formatScore(profile.aboveRandomRate)}%"
+        val calibration = if (profile.learnedScoreWeights != null) "보정적용" else "기본유지"
+        return "$level ${formatScore(profile.averagePercentile)} · " +
+            "모의 ${formatScore(profile.strategyAverageMatchCount)}/무작위 ${formatScore(profile.controlAverageMatchCount)} · " +
+            calibration
     }
 
     private fun formatScore(score: Double): String = "%.1f".format(score)
@@ -1458,6 +1613,27 @@ object LottoNumberGenerator {
         val dataAveragePercentile: Double = 50.0,
         val patternAveragePercentile: Double = 50.0,
         val distributionAveragePercentile: Double = 50.0,
+        val simulationSampleCount: Int = 0,
+        val strategyAverageMatchCount: Double = 0.0,
+        val controlAverageMatchCount: Double = 0.0,
+        val averageMatchDifference: Double = 0.0,
+        val learnedScoreWeights: ScoreWeights? = null,
+    )
+
+    private data class BacktestRoundEvidence(
+        val actualNumbers: List<Int>,
+        val totalPercentile: Double,
+        val dataPercentile: Double,
+        val patternPercentile: Double,
+        val distributionPercentile: Double,
+        val strategyCandidates: List<ScoredCandidate>,
+        val controlTickets: List<List<Int>>,
+    )
+
+    private data class BacktestEvaluation(
+        val sampleCount: Int = 0,
+        val strategyAverageMatchCount: Double = 0.0,
+        val controlAverageMatchCount: Double = 0.0,
     )
 
     private data class GapValidationProfile(

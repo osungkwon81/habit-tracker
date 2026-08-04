@@ -24,6 +24,8 @@ import com.habittracker.data.stock.StockOrderAvailability
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +38,7 @@ import java.time.LocalDateTime
 
 private const val stockAutomationEventPageSize = 50
 private const val stockViewModelLogTag = "StockViewModel"
+private const val orderInputAutomationDelayMillis = 600L
 
 class StockViewModel(
     private val repository: HabitRepository,
@@ -45,6 +48,8 @@ class StockViewModel(
     private val automationEventLimit = MutableStateFlow(stockAutomationEventPageSize)
     private var safetyFormInitialized = false
     private var orderAvailabilityRequestId = 0L
+    private var orderPriceRequestId = 0L
+    private var orderInputAutomationJob: Job? = null
 
     init {
         observeTradingData()
@@ -200,12 +205,19 @@ class StockViewModel(
     }
 
     fun selectOrderSide(side: KisOrderSide) {
+        cancelOrderInputAutomation()
         _uiState.update {
             it.copy(
                 orderSide = side,
                 productCode = "",
                 productName = "",
+                orderQuantity = "",
+                orderUnitPrice = if (it.orderDivisionCode == "01") "0" else "",
+                orderCalculationAmount = "",
+                orderQuantityPercent = null,
+                orderCurrentPrice = null,
                 orderAvailability = null,
+                isLoadingOrderPrice = false,
                 isLoadingOrderAvailability = false,
                 statusMessage = null,
             )
@@ -213,23 +225,200 @@ class StockViewModel(
         if (side == KisOrderSide.SELL) loadOwnedStocks() else loadMarketCapStocks()
     }
 
-    fun selectOrderProduct(productCode: String, productName: String) =
+    fun selectOrderProduct(productCode: String, productName: String) {
+        cancelOrderInputAutomation()
         _uiState.update {
-            it.copy(productCode = productCode, productName = productName, orderAvailability = null)
+            it.copy(
+                productCode = productCode,
+                productName = productName,
+                orderQuantity = "",
+                orderUnitPrice = if (it.orderDivisionCode == "01") "0" else "",
+                orderCalculationAmount = "",
+                orderQuantityPercent = null,
+                orderCurrentPrice = null,
+                orderAvailability = null,
+                isLoadingOrderPrice = false,
+                isLoadingOrderAvailability = false,
+            )
         }
+        loadCurrentOrderPrice()
+    }
+
     fun updateOrderProductCode(value: String) {
         val productCode = value.filter(Char::isLetterOrDigit).uppercase().take(7)
+        cancelOrderInputAutomation()
         _uiState.update {
-            it.copy(productCode = productCode, productName = productCode, orderAvailability = null)
+            it.copy(
+                productCode = productCode,
+                productName = productCode,
+                orderQuantity = "",
+                orderUnitPrice = if (it.orderDivisionCode == "01") "0" else "",
+                orderCalculationAmount = "",
+                orderQuantityPercent = null,
+                orderCurrentPrice = null,
+                orderAvailability = null,
+                isLoadingOrderPrice = false,
+                isLoadingOrderAvailability = false,
+            )
+        }
+        if (productCode.length in 6..7) scheduleCurrentOrderPriceLoad(productCode)
+    }
+
+    fun updateOrderDivisionCode(value: String) {
+        val orderDivisionCode = value.filter(Char::isDigit).take(2)
+        cancelOrderInputAutomation()
+        _uiState.update {
+            it.copy(
+                orderDivisionCode = orderDivisionCode,
+                orderQuantity = "",
+                orderUnitPrice = if (orderDivisionCode == "01") "0" else it.orderCurrentPrice?.toString().orEmpty(),
+                orderCalculationAmount = "",
+                orderQuantityPercent = null,
+                orderAvailability = null,
+                isLoadingOrderPrice = false,
+                isLoadingOrderAvailability = false,
+            )
+        }
+        val state = _uiState.value
+        if (state.productCode.length in 6..7) {
+            if (state.orderCurrentPrice != null) loadOrderAvailability() else loadCurrentOrderPrice()
         }
     }
-    fun updateOrderDivisionCode(value: String) =
+
+    fun updateOrderQuantity(value: String) = _uiState.update {
+        it.copy(
+            orderQuantity = value.filter(Char::isDigit),
+            orderCalculationAmount = "",
+            orderQuantityPercent = null,
+        )
+    }
+
+    fun updateOrderUnitPrice(value: String) {
+        val orderUnitPrice = value.filter(Char::isDigit)
+        cancelOrderInputAutomation()
         _uiState.update {
-            it.copy(orderDivisionCode = value.filter(Char::isDigit).take(2), orderAvailability = null)
+            it.copy(
+                orderUnitPrice = orderUnitPrice,
+                orderQuantity = "",
+                orderCalculationAmount = "",
+                orderQuantityPercent = null,
+                orderAvailability = null,
+                isLoadingOrderPrice = false,
+                isLoadingOrderAvailability = false,
+            )
         }
-    fun updateOrderQuantity(value: String) = _uiState.update { it.copy(orderQuantity = value.filter(Char::isDigit)) }
-    fun updateOrderUnitPrice(value: String) =
-        _uiState.update { it.copy(orderUnitPrice = value.filter(Char::isDigit), orderAvailability = null) }
+        if (orderUnitPrice.toLongOrNull()?.let { it > 0L } == true) scheduleOrderAvailabilityLoad()
+    }
+
+    fun loadCurrentOrderPrice() {
+        orderInputAutomationJob?.cancel()
+        loadCurrentOrderPriceNow()
+    }
+
+    private fun loadCurrentOrderPriceNow() {
+        val state = _uiState.value
+        if (!state.isConfigSaved || state.productCode.length !in 6..7) return
+        val productCode = state.productCode
+        val requestId = ++orderPriceRequestId
+        orderAvailabilityRequestId += 1
+        _uiState.update {
+            it.copy(
+                isLoadingOrderPrice = true,
+                isLoadingOrderAvailability = false,
+                orderAvailability = null,
+            )
+        }
+        viewModelScope.launch {
+            runCatching { repository.getKisCurrentStockPrice(productCode) }
+                .onSuccess { currentPrice ->
+                    if (requestId != orderPriceRequestId) return@onSuccess
+                    val current = _uiState.value
+                    if (current.productCode != productCode) return@onSuccess
+                    _uiState.update {
+                        it.copy(
+                            orderCurrentPrice = currentPrice,
+                            orderUnitPrice = if (it.orderDivisionCode == "01") "0" else currentPrice.toString(),
+                            isLoadingOrderPrice = false,
+                        )
+                    }
+                    loadOrderAvailability()
+                }
+                .onFailure { error ->
+                    if (requestId != orderPriceRequestId) return@onFailure
+                    recordStockError(
+                        eventType = "ORDER_CURRENT_PRICE_QUERY_FAILED",
+                        title = "주문 현재가 조회 실패",
+                        error = error,
+                        fallbackMessage = "주문 현재가를 조회하지 못했습니다.",
+                    )
+                    _uiState.update {
+                        it.copy(
+                            isLoadingOrderPrice = false,
+                            statusMessage = error.message ?: "현재가 조회에 실패했습니다.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun updateOrderCalculationAmount(value: String) {
+        val calculationAmount = value.filter(Char::isDigit)
+        _uiState.update { state ->
+            val amount = calculationAmount.toLongOrNull()
+            val unitPrice = state.orderCalculationUnitPrice()
+            val availableQuantity = state.orderAvailability?.availableQuantity ?: 0L
+            val calculatedQuantity = if (amount != null && unitPrice != null && unitPrice > 0L) {
+                (amount / unitPrice).coerceAtMost(availableQuantity)
+            } else {
+                0L
+            }
+            state.copy(
+                orderCalculationAmount = calculationAmount,
+                orderQuantity = calculatedQuantity.takeIf { it > 0L }?.toString().orEmpty(),
+                orderQuantityPercent = null,
+            )
+        }
+    }
+
+    fun applyOrderQuantityPercent(percent: Int) {
+        require(percent in 1..100) { "주문 비율은 1~100% 범위여야 합니다." }
+        _uiState.update { state ->
+            val availableQuantity = state.orderAvailability?.availableQuantity ?: 0L
+            val calculatedQuantity = when {
+                availableQuantity <= 0L -> 0L
+                percent == 100 -> availableQuantity
+                else -> (availableQuantity * percent / 100L).coerceAtLeast(1L)
+            }
+            val calculatedAmount = state.orderCalculationUnitPrice()?.let { unitPrice ->
+                runCatching { Math.multiplyExact(calculatedQuantity, unitPrice) }.getOrNull()
+            }
+            state.copy(
+                orderQuantity = calculatedQuantity.takeIf { it > 0L }?.toString().orEmpty(),
+                orderCalculationAmount = calculatedAmount?.toString().orEmpty(),
+                orderQuantityPercent = percent,
+            )
+        }
+    }
+
+    private fun scheduleCurrentOrderPriceLoad(productCode: String) {
+        orderInputAutomationJob = viewModelScope.launch {
+            delay(orderInputAutomationDelayMillis)
+            if (_uiState.value.productCode == productCode) loadCurrentOrderPriceNow()
+        }
+    }
+
+    private fun scheduleOrderAvailabilityLoad() {
+        orderInputAutomationJob = viewModelScope.launch {
+            delay(orderInputAutomationDelayMillis)
+            loadOrderAvailability()
+        }
+    }
+
+    private fun cancelOrderInputAutomation() {
+        orderInputAutomationJob?.cancel()
+        orderPriceRequestId += 1
+        orderAvailabilityRequestId += 1
+    }
     fun updateExchangeIdDivisionCode(value: String) =
         _uiState.update { it.copy(exchangeIdDivisionCode = value.filter(Char::isLetter).uppercase().take(3)) }
     fun updateSellType(value: String) = _uiState.update { it.copy(sellType = value.filter(Char::isDigit).take(2)) }
@@ -246,6 +435,7 @@ class StockViewModel(
                     state.toCashOrderDraft().copy(
                         exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
                     ),
+                    verifiedCurrentPrice = state.orderCurrentPrice,
                 )
             }.onSuccess { availability ->
                 if (requestId != orderAvailabilityRequestId) return@onSuccess
@@ -256,7 +446,11 @@ class StockViewModel(
                         current.orderDivisionCode == state.orderDivisionCode &&
                         current.orderUnitPrice == state.orderUnitPrice
                     ) {
-                        current.copy(isLoadingOrderAvailability = false, orderAvailability = availability)
+                        current.copy(
+                            orderCurrentPrice = availability.currentPrice,
+                            isLoadingOrderAvailability = false,
+                            orderAvailability = availability,
+                        )
                     } else {
                         current.copy(isLoadingOrderAvailability = false)
                     }
@@ -318,6 +512,8 @@ class StockViewModel(
                     it.copy(
                         isSubmittingOrder = false,
                         orderQuantity = "",
+                        orderCalculationAmount = "",
+                        orderQuantityPercent = null,
                         orderAvailability = null,
                         statusMessage = "${order.productName} ${state.orderSide.label} 주문이 접수되었습니다. 주문번호 ${order.orderNumber}",
                     )
@@ -922,11 +1118,15 @@ data class StockUiState(
     val orderDivisionCode: String = "00",
     val orderQuantity: String = "",
     val orderUnitPrice: String = "",
+    val orderCalculationAmount: String = "",
+    val orderQuantityPercent: Int? = null,
+    val orderCurrentPrice: Long? = null,
     val exchangeIdDivisionCode: String = "KRX",
     val sellType: String = "01",
     val conditionPrice: String = "",
     val isSubmittingOrder: Boolean = false,
     val orderAvailability: StockOrderAvailability? = null,
+    val isLoadingOrderPrice: Boolean = false,
     val isLoadingOrderAvailability: Boolean = false,
     val orders: List<StockOrderEntity> = emptyList(),
     val sellAllocations: List<StockSellAllocationEntity> = emptyList(),
@@ -980,4 +1180,11 @@ data class StockUiState(
         sellType = sellType,
         conditionPrice = conditionPrice,
     )
+
+}
+
+private fun StockUiState.orderCalculationUnitPrice(): Long? = if (orderDivisionCode == "01") {
+    orderCurrentPrice ?: orderAvailability?.currentPrice
+} else {
+    orderUnitPrice.toLongOrNull()
 }

@@ -324,6 +324,19 @@ class HabitRepository(
         }
     }
 
+    suspend fun getKisCurrentStockPrice(productCode: String): Long = withContext(Dispatchers.IO) {
+        require(productCode.length in 6..7) { "종목코드를 확인해 주세요." }
+        val market = currentStockMarket()
+        val (config, accessToken) = getKisConfigAndAccessToken()
+        val currentPrice = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, productCode, market)
+        }.currentPrice.toLongOrNull()
+        require(currentPrice != null && currentPrice > 0L) {
+            "현재가를 확인하지 못했습니다. (종목=$productCode)"
+        }
+        currentPrice
+    }
+
     suspend fun getStockOrderAvailability(
         draft: KisCashOrderDraft,
         verifiedCurrentPrice: Long? = null,

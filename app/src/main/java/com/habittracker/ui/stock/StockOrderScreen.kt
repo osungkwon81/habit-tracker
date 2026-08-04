@@ -1,10 +1,14 @@
 package com.habittracker.ui.stock
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -14,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import com.habittracker.data.stock.KisOrderSide
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
@@ -139,29 +145,33 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                     AppSelectableChip(
                         label = "시장가",
                         selected = uiState.orderDivisionCode == "01",
-                        onClick = {
-                            viewModel.updateOrderDivisionCode("01")
-                            viewModel.updateOrderUnitPrice("0")
-                        },
+                        onClick = { viewModel.updateOrderDivisionCode("01") },
                         modifier = Modifier.weight(1f),
                     )
                 }
                 AppTextField(
-                    value = uiState.orderQuantity,
-                    onValueChange = viewModel::updateOrderQuantity,
-                    label = "${uiState.orderSide.label} 수량",
-                    singleLine = true,
-                )
-                AppTextField(
                     value = uiState.orderUnitPrice,
                     onValueChange = viewModel::updateOrderUnitPrice,
-                    label = if (uiState.orderDivisionCode == "01") "시장가 주문단가" else "지정가",
+                    label = when {
+                        uiState.orderDivisionCode == "01" -> "시장가 주문단가"
+                        uiState.isLoadingOrderPrice -> "지정가 (현재가 조회 중)"
+                        else -> "지정가"
+                    },
                     enabled = uiState.orderDivisionCode != "01",
                     singleLine = true,
                 )
-                if (uiState.orderDivisionCode == "01") {
+                if (uiState.orderDivisionCode == "00") {
+                    AppSecondaryButton(
+                        text = if (uiState.isLoadingOrderPrice) "현재가 조회 중" else "현재가로 다시 입력",
+                        onClick = viewModel::loadCurrentOrderPrice,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = uiState.isConfigSaved &&
+                            !uiState.isLoadingOrderPrice &&
+                            uiState.productCode.length in 6..7,
+                    )
+                } else {
                     Text(
-                        "시장가 주문은 체결 가격이 주문 시점의 표시 가격과 달라질 수 있습니다.",
+                        "시장가는 주문단가 0원이 자동 적용됩니다. 수량 계산은 현재가 기준 추정치입니다.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -174,10 +184,16 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                     ?: 0L
                 AppSupportText("현재 보유 ${holdingQuantity}주")
                 AppSecondaryButton(
-                    text = if (uiState.isLoadingOrderAvailability) "가능 수량 조회 중" else "${uiState.orderSide.label} 가능 수량 조회",
+                    text = when {
+                        uiState.isLoadingOrderPrice -> "현재가 조회 중"
+                        uiState.isLoadingOrderAvailability -> "가능 수량 조회 중"
+                        uiState.orderAvailability != null -> "${uiState.orderSide.label} 가능 수량 다시 조회"
+                        else -> "${uiState.orderSide.label} 가능 수량 조회"
+                    },
                     onClick = viewModel::loadOrderAvailability,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.isConfigSaved &&
+                        !uiState.isLoadingOrderPrice &&
                         !uiState.isLoadingOrderAvailability &&
                         uiState.productCode.length in 6..7 &&
                         (uiState.orderDivisionCode == "01" ||
@@ -191,14 +207,26 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    val requestedQuantity = uiState.orderQuantity.toLongOrNull()
-                    if (requestedQuantity != null && requestedQuantity > availability.availableQuantity) {
-                        Text(
-                            "입력한 수량이 ${uiState.orderSide.label} 가능 수량을 초과합니다.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                    StockOrderQuantityCalculator(
+                        uiState = uiState,
+                        onAmountChange = viewModel::updateOrderCalculationAmount,
+                        onApplyPercent = viewModel::applyOrderQuantityPercent,
+                    )
+                }
+                AppTextField(
+                    value = uiState.orderQuantity,
+                    onValueChange = viewModel::updateOrderQuantity,
+                    label = "${uiState.orderSide.label} 수량",
+                    singleLine = true,
+                )
+                val requestedQuantity = uiState.orderQuantity.toLongOrNull()
+                val availableQuantity = uiState.orderAvailability?.availableQuantity
+                if (requestedQuantity != null && availableQuantity != null && requestedQuantity > availableQuantity) {
+                    Text(
+                        "입력한 수량이 ${uiState.orderSide.label} 가능 수량을 초과합니다.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 AppPrimaryButton(
                     text = if (uiState.isSubmittingOrder) "주문 전송 중" else "실전 ${uiState.orderSide.label} 주문 확인",
@@ -237,6 +265,85 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                     )
                 }
                 if (uiState.orders.isEmpty()) AppSupportText("저장된 주문·체결 기록이 없습니다.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockOrderQuantityCalculator(
+    uiState: StockUiState,
+    onAmountChange: (String) -> Unit,
+    onApplyPercent: (Int) -> Unit,
+) {
+    val availability = uiState.orderAvailability ?: return
+    val calculationUnitPrice = if (uiState.orderDivisionCode == "01") {
+        availability.currentPrice
+    } else {
+        uiState.orderUnitPrice.toLongOrNull() ?: availability.currentPrice
+    }
+    val calculatedQuantity = uiState.orderQuantity.toLongOrNull() ?: 0L
+    val estimatedOrderAmount = runCatching {
+        Math.multiplyExact(calculatedQuantity, calculationUnitPrice)
+    }.getOrNull()
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            modifier = Modifier.padding(AppSpacing.sm),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+        ) {
+            Text(
+                text = "수량 계산기",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "주문가능 ${availability.availableQuantity}주 · 계산단가 ${calculationUnitPrice.toWon()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            AppTextField(
+                value = uiState.orderCalculationAmount,
+                onValueChange = onAmountChange,
+                label = "주문 금액으로 수량 계산",
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+            ) {
+                listOf(10 to "10%", 25 to "25%", 50 to "50%", 100 to "최대").forEach { (percent, label) ->
+                    AppSelectableChip(
+                        label = label,
+                        selected = uiState.orderQuantityPercent == percent,
+                        onClick = { onApplyPercent(percent) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            Text(
+                text = if (calculatedQuantity > 0L) {
+                    "적용 수량 ${calculatedQuantity}주 · 예상 주문금액 ${estimatedOrderAmount.toWon()}"
+                } else {
+                    "금액을 입력하거나 비율을 선택하면 주문 수량에 자동 적용됩니다."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (calculatedQuantity > 0L) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            if (uiState.orderDivisionCode == "01") {
+                Text(
+                    text = "시장가 예상 주문금액은 실제 체결금액과 다를 수 있습니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
