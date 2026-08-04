@@ -37,7 +37,7 @@ enum class LottoGenerationMode(
 object LottoNumberGenerator {
     // 사용자에게 노출하는 생성기 버전이다. 세부 설정 차이는 저장된 config hash로 구분한다.
     const val CURRENT_GENERATION_VERSION = "2026-08-04-v3"
-    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 3
+    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 4
 
     private const val maxNumber = 45
     private const val pickCount = 6
@@ -63,6 +63,10 @@ object LottoNumberGenerator {
     private val gapThresholds = listOf(5, 10, 15)
     private const val historyAnalysisMaximumScore = 27.4
     private const val maximumBacktestWeightAdjustment = 0.10
+    private const val previousDrawTwoMatchPenalty = 4.0
+    private const val previousDrawThreeMatchPenalty = 12.0
+    private const val previousDrawFourPlusMatchPenalty = 20.0
+    private const val maximumPreviousDrawTwoPlusGamesPerBatch = 1
     private val random = Random.Default
 
     fun generateBalanced(
@@ -108,6 +112,7 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
+            lastDraw = lastDraw,
             generationSeed = seed,
         )
     }
@@ -156,6 +161,7 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.DIVERSIFIED,
+            lastDraw = lastDraw,
             generationSeed = seed,
         )
     }
@@ -295,7 +301,13 @@ object LottoNumberGenerator {
           "finalSelection": {
             "overlapPenalties": {"two": 1.5, "three": 5.0, "fourOrMore": 10.0},
             "multipleUsePenaltyMultiplier": 2.4,
-            "diversifiedMaximumPairwiseOverlap": 2
+            "diversifiedMaximumPairwiseOverlap": 2,
+            "previousDrawOverlap": {
+              "twoMatchPenalty": $previousDrawTwoMatchPenalty,
+              "threeMatchPenalty": $previousDrawThreeMatchPenalty,
+              "fourPlusMatchPenalty": $previousDrawFourPlusMatchPenalty,
+              "maximumTwoPlusGamesPerBatch": $maximumPreviousDrawTwoPlusGamesPerBatch
+            }
           },
           "balanced": {
             "verifiedRecentSumTolerance": 42.0,
@@ -535,6 +547,7 @@ object LottoNumberGenerator {
         commentBuilder: (List<Int>, CandidateScore) -> String,
         mode: LottoGenerationMode,
         strategy: CoverageStrategy,
+        lastDraw: List<Int>,
         generationSeed: Long,
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
@@ -554,7 +567,7 @@ object LottoNumberGenerator {
             .sortedByDescending { candidate -> candidate.score.totalScore }
             .take(mode.finalistPoolSize)
 
-        return pickDiverseTopGames(scored, gameCount, strategy).map { candidate ->
+        return pickDiverseTopGames(scored, gameCount, strategy, lastDraw).map { candidate ->
             LottoGeneratedTicket(
                 numbers = candidate.numbers,
                 comment = commentBuilder(candidate.numbers, candidate.score),
@@ -570,6 +583,7 @@ object LottoNumberGenerator {
         candidates: List<ScoredCandidate>,
         gameCount: Int,
         strategy: CoverageStrategy,
+        lastDraw: List<Int>,
     ): List<ScoredCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
@@ -579,13 +593,21 @@ object LottoNumberGenerator {
         selected += remaining.removeFirst()
 
         while (selected.size < gameCount && remaining.isNotEmpty()) {
-            val selectable = strategy.maximumPairwiseOverlap?.let { maximumOverlap ->
+            val pairwiseSelectable = strategy.maximumPairwiseOverlap?.let { maximumOverlap ->
                 remaining.filter { candidate ->
                     selected.all { picked ->
                         candidate.numbers.intersect(picked.numbers.toSet()).size <= maximumOverlap
                     }
                 }
             } ?: remaining
+            val selectedTwoPlusCount = selected.count { candidate ->
+                candidate.numbers.count(lastDraw::contains) >= 2
+            }
+            val selectable = if (selectedTwoPlusCount >= maximumPreviousDrawTwoPlusGamesPerBatch) {
+                pairwiseSelectable.filter { candidate -> candidate.numbers.count(lastDraw::contains) < 2 }
+            } else {
+                pairwiseSelectable
+            }
             if (selectable.isEmpty()) break
 
             val coverage = selected.flatMap { it.numbers }.toSet()
@@ -641,11 +663,13 @@ object LottoNumberGenerator {
         val patternScore = (historyPatternScore * 0.65 + transitionScore * 0.35).coerceIn(0.0, 100.0)
         val distributionScore = scoreDistribution(numbers, trendProfile, strategy)
         val avoidanceScore = (50.0 + publicPickAvoidanceScore(numbers) * 5.0).coerceIn(0.0, 100.0)
+        val previousDrawOverlapPenalty = previousDrawOverlapPenalty(numbers.count(lastDraw::contains))
         val weights = trendProfile.scoreWeights
         val totalScore = (
             dataScore * weights.data +
                 patternScore * weights.pattern +
-                distributionScore * weights.distribution
+                distributionScore * weights.distribution -
+                previousDrawOverlapPenalty
             ).coerceIn(0.0, 100.0)
         val featureSnapshotJson = if (captureFeatureSnapshot) {
             buildFeatureSnapshotJson(
@@ -668,9 +692,17 @@ object LottoNumberGenerator {
             patternScore = patternScore,
             distributionScore = distributionScore,
             avoidanceScore = avoidanceScore,
+            previousDrawOverlapPenalty = previousDrawOverlapPenalty,
             validationScore = trendProfile.backtestProfile.averagePercentile,
             featureSnapshotJson = featureSnapshotJson,
         )
+    }
+
+    private fun previousDrawOverlapPenalty(overlapCount: Int): Double = when {
+        overlapCount >= 4 -> previousDrawFourPlusMatchPenalty
+        overlapCount == 3 -> previousDrawThreeMatchPenalty
+        overlapCount == 2 -> previousDrawTwoMatchPenalty
+        else -> 0.0
     }
 
     private fun buildFeatureSnapshotJson(
@@ -726,7 +758,9 @@ object LottoNumberGenerator {
             append("\"maximumTailCount\":").append(maximumTailCount).append(",")
             append("\"consecutivePairCount\":").append(consecutivePairCount(numbers)).append(",")
             append("\"acValue\":").append(acValue(numbers)).append(",")
-            append("\"carryCount\":").append(numbers.count(lastDraw::contains)).append(",")
+            val carryCount = numbers.count(lastDraw::contains)
+            append("\"carryCount\":").append(carryCount).append(",")
+            append("\"carryPenalty\":").append(previousDrawOverlapPenalty(carryCount).toJsonNumber()).append(",")
             append("\"recentSumAverage\":").append(trendProfile.recentSumAverage.toJsonNumber()).append(",")
             append("\"recentSumDeviation\":")
                 .append(abs(numbers.sum() - trendProfile.recentSumAverage).toJsonNumber()).append(",")
@@ -1138,6 +1172,7 @@ object LottoNumberGenerator {
             )
             roundEvidence += BacktestRoundEvidence(
                 actualNumbers = actualNumbers,
+                previousDraw = lastTrainingDraw,
                 totalPercentile = actualCandidateScore?.let { score ->
                     scorePercentile(
                         actualScore = score.dataScore * 0.60 + score.patternScore * 0.40,
@@ -1260,13 +1295,19 @@ object LottoNumberGenerator {
                             totalScore = (
                                 candidate.score.dataScore * weights.data +
                                     candidate.score.patternScore * weights.pattern +
-                                    candidate.score.distributionScore * weights.distribution
+                                    candidate.score.distributionScore * weights.distribution -
+                                    candidate.score.previousDrawOverlapPenalty
                                 ).coerceIn(0.0, 100.0),
                         ),
                     )
                 }
                 .sortedByDescending { candidate -> candidate.score.totalScore }
-            val strategyTickets = pickDiverseTopGames(reweightedCandidates, defaultGameCount, strategy)
+            val strategyTickets = pickDiverseTopGames(
+                candidates = reweightedCandidates,
+                gameCount = defaultGameCount,
+                strategy = strategy,
+                lastDraw = round.previousDraw,
+            )
             if (strategyTickets.size < defaultGameCount || round.controlTickets.size < defaultGameCount) {
                 return@mapNotNull null
             }
@@ -1622,6 +1663,7 @@ object LottoNumberGenerator {
 
     private data class BacktestRoundEvidence(
         val actualNumbers: List<Int>,
+        val previousDraw: List<Int>,
         val totalPercentile: Double,
         val dataPercentile: Double,
         val patternPercentile: Double,
@@ -1758,6 +1800,7 @@ object LottoNumberGenerator {
         val patternScore: Double,
         val distributionScore: Double,
         val avoidanceScore: Double,
+        val previousDrawOverlapPenalty: Double,
         val validationScore: Double,
         val featureSnapshotJson: String?,
     ) {
