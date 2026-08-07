@@ -124,10 +124,16 @@ class LottoViewModel(
             if (tab == winningTab) repository.observeLottoWinnings(limit) else flowOf(emptyList())
         }
     private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == statsTab) repository.observeTotalLottoPurchaseAmount() else flowOf(0L)
+        if (tab == statsTab) repository.observeTotalLottoPurchaseAmount("로또") else flowOf(0L)
     }
     private val totalWinningAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == statsTab) repository.observeTotalLottoWinningAmount() else flowOf(0L)
+        if (tab == statsTab) repository.observeTotalLottoWinningAmount("로또") else flowOf(0L)
+    }
+    private val pensionPurchaseAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeTotalLottoPurchaseAmount("연금") else flowOf(0L)
+    }
+    private val pensionWinningAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == statsTab) repository.observeTotalLottoWinningAmount("연금") else flowOf(0L)
     }
     private val weeklyStats = selectedTab.flatMapLatest { tab ->
         if (tab == statsTab) repository.observeLottoWeeklyStats(limit = 12) else flowOf(emptyList())
@@ -148,8 +154,10 @@ class LottoViewModel(
         purchases,
         winnings,
         totalPurchaseAmount,
-        weeklyStats,
         totalWinningAmount,
+        pensionPurchaseAmount,
+        pensionWinningAmount,
+        weeklyStats,
         monthlyStats,
         yearlyStats,
         selectedStatsRange,
@@ -179,28 +187,30 @@ class LottoViewModel(
         val purchases = values[5] as List<LottoPurchaseEntity>
         val winnings = values[6] as List<LottoWinningEntity>
         val totalPurchaseAmount = values[7] as Long
-        val weeklyStats = values[8] as List<LottoPeriodStatRow>
-        val totalWinningAmount = values[9] as Long
-        val monthlyStats = values[10] as List<LottoPeriodStatRow>
-        val yearlyStats = values[11] as List<LottoPeriodStatRow>
-        val statsRange = values[12] as LottoStatsRange
-        val round = values[13] as String
-        val query = values[14] as String
-        val savedRoundQuery = values[15] as String
-        val numbers = values[16] as List<String>
-        val bonusNumber = values[17] as String
-        val mode = values[18] as LottoGenerationMode
-        val generating = values[19] as Boolean
-        val historyLoading = values[20] as Boolean
-        val message = values[21] as String?
-        val chatGpt = values[22] as List<LottoGeneratedTicket>
-        val gemini = values[23] as List<LottoGeneratedTicket>
-        val latestRound = values[24] as Int?
-        val pendingDeleteState = values[25] as PendingLottoDelete?
-        val recentSource = values[26] as String?
-        val winningStats = values[27] as List<LottoWinningStatEntity>
-        val performanceStats = values[28] as List<LottoScorePerformance>
-        val controlStats = values[29] as List<LottoControlComparison>
+        val totalWinningAmount = values[8] as Long
+        val pensionPurchaseAmount = values[9] as Long
+        val pensionWinningAmount = values[10] as Long
+        val weeklyStats = values[11] as List<LottoPeriodStatRow>
+        val monthlyStats = values[12] as List<LottoPeriodStatRow>
+        val yearlyStats = values[13] as List<LottoPeriodStatRow>
+        val statsRange = values[14] as LottoStatsRange
+        val round = values[15] as String
+        val query = values[16] as String
+        val savedRoundQuery = values[17] as String
+        val numbers = values[18] as List<String>
+        val bonusNumber = values[19] as String
+        val mode = values[20] as LottoGenerationMode
+        val generating = values[21] as Boolean
+        val historyLoading = values[22] as Boolean
+        val message = values[23] as String?
+        val chatGpt = values[24] as List<LottoGeneratedTicket>
+        val gemini = values[25] as List<LottoGeneratedTicket>
+        val latestRound = values[26] as Int?
+        val pendingDeleteState = values[27] as PendingLottoDelete?
+        val recentSource = values[28] as String?
+        val winningStats = values[29] as List<LottoWinningStatEntity>
+        val performanceStats = values[30] as List<LottoScorePerformance>
+        val controlStats = values[31] as List<LottoControlComparison>
 
         val activeStats = when (statsRange) {
             LottoStatsRange.WEEKLY -> weeklyStats
@@ -231,6 +241,8 @@ class LottoViewModel(
             canLoadMoreWinnings = winnings.size >= winningHistoryLimit.value,
             totalPurchaseAmount = totalPurchaseAmount,
             totalWinningAmount = totalWinningAmount,
+            pensionPurchaseAmount = pensionPurchaseAmount,
+            pensionWinningAmount = pensionWinningAmount,
             selectedStatsRange = statsRange,
             stats = activeStats,
             latestSavedRoundNo = latestRound,
@@ -547,9 +559,9 @@ class LottoViewModel(
     }
 
     fun saveWinning(
+        lottoType: String,
         roundNo: String,
         amount: String,
-        sourceLabel: String,
         memo: String,
         onSuccess: (() -> Unit)? = null,
     ) {
@@ -557,8 +569,8 @@ class LottoViewModel(
             runCatching {
                 repository.saveLottoWinning(
                     roundNo = roundNo.toIntOrNull() ?: 0,
+                    lottoType = lottoType,
                     amount = amount.filter(Char::isDigit).toLongOrNull() ?: 0L,
-                    sourceLabel = sourceLabel,
                     memo = memo,
                 )
             }.onSuccess {
@@ -620,6 +632,8 @@ data class LottoUiState(
     val canLoadMoreWinnings: Boolean = false,
     val totalPurchaseAmount: Long = 0L,
     val totalWinningAmount: Long = 0L,
+    val pensionPurchaseAmount: Long = 0L,
+    val pensionWinningAmount: Long = 0L,
     val selectedStatsRange: LottoStatsRange = LottoStatsRange.WEEKLY,
     val stats: List<LottoPeriodStatRow> = emptyList(),
     val latestSavedRoundNo: Int? = null,

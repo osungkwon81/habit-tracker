@@ -177,11 +177,11 @@ interface HabitDao {
     @Query("DELETE FROM lotto_winning WHERE id = :winningId")
     suspend fun deleteLottoWinningById(winningId: Long)
 
-    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase WHERE lotto_type = '로또'")
-    fun observeTotalLottoPurchaseAmount(): Flow<Long>
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase WHERE lotto_type = :lottoType")
+    fun observeTotalLottoPurchaseAmount(lottoType: String): Flow<Long>
 
-    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_winning WHERE lotto_type = '로또'")
-    fun observeTotalLottoWinningAmount(): Flow<Long>
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_winning WHERE lotto_type = :lottoType")
+    fun observeTotalLottoWinningAmount(lottoType: String): Flow<Long>
 
     @Query(
         """
@@ -192,14 +192,23 @@ interface HabitDao {
             ) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
-            WHERE lotto_type = '로또'
             GROUP BY period
         ),
-        winnings AS (
-            SELECT date('2002-12-07', printf('+%d days', (round_no - 1) * 7)) AS period,
-                   SUM(amount) AS amount
+        winning_dates AS (
+            SELECT CASE lotto_type
+                       WHEN '연금' THEN date('2020-05-07', printf('+%d days', (round_no - 1) * 7))
+                       ELSE date('2002-12-07', printf('+%d days', (round_no - 1) * 7))
+                   END AS winning_date,
+                   amount
             FROM lotto_winning
-            WHERE lotto_type = '로또'
+        ),
+        winnings AS (
+            SELECT date(
+                winning_date,
+                printf('+%d days', (6 - CAST(strftime('%w', winning_date) AS INTEGER) + 7) % 7)
+            ) AS period,
+                   SUM(amount) AS amount
+            FROM winning_dates
             GROUP BY period
         ),
         periods AS (
@@ -225,14 +234,20 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 7) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
-            WHERE lotto_type = '로또'
             GROUP BY period
         ),
-        winnings AS (
-            SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 7) AS period,
-                   SUM(amount) AS amount
+        winning_dates AS (
+            SELECT CASE lotto_type
+                       WHEN '연금' THEN date('2020-05-07', printf('+%d days', (round_no - 1) * 7))
+                       ELSE date('2002-12-07', printf('+%d days', (round_no - 1) * 7))
+                   END AS winning_date,
+                   amount
             FROM lotto_winning
-            WHERE lotto_type = '로또'
+        ),
+        winnings AS (
+            SELECT substr(winning_date, 1, 7) AS period,
+                   SUM(amount) AS amount
+            FROM winning_dates
             GROUP BY period
         ),
         periods AS (
@@ -258,14 +273,20 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 4) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
-            WHERE lotto_type = '로또'
             GROUP BY period
         ),
-        winnings AS (
-            SELECT substr(date('2002-12-07', printf('+%d days', (round_no - 1) * 7)), 1, 4) AS period,
-                   SUM(amount) AS amount
+        winning_dates AS (
+            SELECT CASE lotto_type
+                       WHEN '연금' THEN date('2020-05-07', printf('+%d days', (round_no - 1) * 7))
+                       ELSE date('2002-12-07', printf('+%d days', (round_no - 1) * 7))
+                   END AS winning_date,
+                   amount
             FROM lotto_winning
-            WHERE lotto_type = '로또'
+        ),
+        winnings AS (
+            SELECT substr(winning_date, 1, 4) AS period,
+                   SUM(amount) AS amount
+            FROM winning_dates
             GROUP BY period
         ),
         periods AS (

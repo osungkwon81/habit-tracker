@@ -213,11 +213,11 @@ class HabitRepository(
     fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>> =
         habitDao.observeLottoWinnings(limit)
 
-    fun observeTotalLottoPurchaseAmount(): Flow<Long> =
-        habitDao.observeTotalLottoPurchaseAmount()
+    fun observeTotalLottoPurchaseAmount(lottoType: String): Flow<Long> =
+        habitDao.observeTotalLottoPurchaseAmount(lottoType)
 
-    fun observeTotalLottoWinningAmount(): Flow<Long> =
-        habitDao.observeTotalLottoWinningAmount()
+    fun observeTotalLottoWinningAmount(lottoType: String): Flow<Long> =
+        habitDao.observeTotalLottoWinningAmount(lottoType)
 
     fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>> =
         habitDao.observeLottoWinningStats()
@@ -2164,22 +2164,21 @@ class HabitRepository(
     }
 
     suspend fun saveLottoWinning(roundNo: Int, amount: Long, memo: String?) {
-        saveLottoWinning(roundNo = roundNo, amount = amount, sourceLabel = "기타", memo = memo)
+        saveLottoWinning(roundNo = roundNo, lottoType = "로또", amount = amount, memo = memo)
     }
 
-    suspend fun saveLottoWinning(roundNo: Int, amount: Long, sourceLabel: String, memo: String?) {
+    suspend fun saveLottoWinning(roundNo: Int, lottoType: String, amount: Long, memo: String?) {
         require(roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(amount > 0L) { "당첨 금액을 입력해 주세요." }
-        val safeSourceLabel = sourceLabel.trim().ifBlank { "기타" }
-        require(safeSourceLabel == "기타" || safeSourceLabel in generatedLottoSources) {
-            "지원하지 않는 당첨 번호 출처입니다."
-        }
+        val safeType = lottoType.trim().ifEmpty { "로또" }
+        require(safeType in listOf("로또", "연금")) { "로또 형태는 로또 또는 연금 중 선택해 주세요." }
         persistChange {
             habitDao.insertLottoWinning(
                 LottoWinningEntity(
                     roundNo = roundNo,
+                    lottoType = safeType,
                     amount = amount,
-                    sourceLabel = safeSourceLabel,
+                    sourceLabel = "기타",
                     memo = memo?.trim()?.takeIf(String::isNotEmpty),
                 ),
             )
