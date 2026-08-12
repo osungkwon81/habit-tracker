@@ -238,18 +238,39 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                     style = MaterialTheme.typography.bodyLarge,
                 )
                 Text(
-                    "체결단가 ${(order.filledAveragePrice ?: order.referencePrice).toWon()} · 현재가 ${row.currentPrice.toWon()}",
+                    if (order.remainingQuantity > 0L) {
+                        "매수 체결가 ${(order.filledAveragePrice ?: order.referencePrice).toWon()} · 현재가 ${row.currentPrice.toWon()}"
+                    } else {
+                        "매수 체결가 ${(order.filledAveragePrice ?: order.referencePrice).toWon()}"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Text(
-                    "수익률 ${row.estimatedReturnPercent?.toPercent() ?: "-"}",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = when {
-                        (row.estimatedReturnPercent ?: 0.0) > 0.0 -> MaterialTheme.colorScheme.primary
-                        (row.estimatedReturnPercent ?: 0.0) < 0.0 -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.onSurface
-                    },
-                )
+                if (order.remainingQuantity > 0L) {
+                    Text(
+                        "잔여 수익률 ${row.estimatedReturnPercent?.toPercent() ?: "-"}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = when {
+                            (row.estimatedReturnPercent ?: 0.0) > 0.0 -> MaterialTheme.colorScheme.primary
+                            (row.estimatedReturnPercent ?: 0.0) < 0.0 -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
+                if (row.soldQuantity > 0L) {
+                    Text(
+                        "매도 완료 ${row.soldQuantity}주 · 평균 체결가 ${row.realizedAverageSellPrice.toWon()}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "실현손익 ${row.realizedProfit.toWon()} · 실현 수익률 ${row.realizedReturnPercent?.toPercent() ?: "-"}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = when {
+                            (row.realizedProfit ?: 0L) > 0L -> MaterialTheme.colorScheme.primary
+                            (row.realizedProfit ?: 0L) < 0L -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
                 AppSecondaryButton(
                     text = when {
                         order.remainingQuantity <= 0L -> "매도할 잔여 수량 없음"
@@ -269,7 +290,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
             }
         }
         item {
-            AppSupportText("표시 수익률은 체결단가와 현재가 기준이며 세금·수수료를 반영하지 않은 추정치입니다.")
+            AppSupportText("잔여 수익률은 현재가 기준이고, 매도 완료분은 실제 매도 체결가로 고정됩니다. 세금·수수료는 반영하지 않습니다.")
         }
     }
 }

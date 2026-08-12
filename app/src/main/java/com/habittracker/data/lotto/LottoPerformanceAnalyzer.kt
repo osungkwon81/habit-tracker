@@ -81,7 +81,11 @@ object LottoPerformanceAnalyzer {
                 },
             )
         }
-        .sortedWith(compareBy<LottoScorePerformance> { sourceOrder(it.sourceLabel) }.thenByDescending { it.generationVersion })
+        .sortedWith(
+            compareBy<LottoScorePerformance> { if (it.generationVersion == "legacy") 1 else 0 }
+                .thenByDescending { it.generationVersion }
+                .thenBy { sourceOrder(it.sourceLabel) },
+        )
 
     private fun buildScoreBands(samples: List<LottoPerformanceSample>): List<LottoScoreBandPerformance> = samples
         .groupBy { sample -> scoreBand(sample.totalScore) }

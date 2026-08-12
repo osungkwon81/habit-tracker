@@ -141,11 +141,12 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_winning_stat
-        ORDER BY CASE source_label
+        ORDER BY CASE WHEN generation_version = 'legacy' THEN 1 ELSE 0 END,
+        generation_version DESC, CASE source_label
             WHEN '균형형' THEN 0
             WHEN '분산형' THEN 1
             ELSE 2
-        END, generation_version DESC
+        END
         """,
     )
     fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>>
@@ -588,6 +589,9 @@ interface HabitDao {
 
     @Query("SELECT * FROM stock_sell_allocation ORDER BY created_at ASC, id ASC")
     fun observeStockSellAllocations(): Flow<List<StockSellAllocationEntity>>
+
+    @Query("SELECT * FROM stock_sell_allocation ORDER BY created_at ASC, id ASC")
+    suspend fun getStockSellAllocations(): List<StockSellAllocationEntity>
 
     @Query(
         """

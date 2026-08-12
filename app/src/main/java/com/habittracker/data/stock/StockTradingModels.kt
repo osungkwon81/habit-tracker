@@ -91,6 +91,10 @@ data class StockBuyLotRow(
     val order: StockOrderEntity,
     val currentPrice: Long?,
     val estimatedReturnPercent: Double?,
+    val soldQuantity: Long,
+    val realizedAverageSellPrice: Long?,
+    val realizedProfit: Long?,
+    val realizedReturnPercent: Double?,
 )
 
 data class StockBulkSellFailure(

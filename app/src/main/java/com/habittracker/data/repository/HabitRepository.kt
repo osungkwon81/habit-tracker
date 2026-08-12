@@ -94,6 +94,7 @@ import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 class HabitRepository(
@@ -1121,15 +1122,33 @@ class HabitRepository(
     suspend fun getStockBuyLotRows(balanceStocks: List<KisBalanceStock>): List<StockBuyLotRow> = withContext(Dispatchers.IO) {
         val orders = habitDao.getFilledStockBuyOrders()
         if (orders.isEmpty()) return@withContext emptyList()
+        val allocationsByBuyOrder = habitDao.getStockSellAllocations().groupBy { it.buyOrderId }
         val currentPrices = balanceStocks.associate { balance ->
             balance.productCode to balance.currentPrice.toLongOrNull()
         }
         orders.map { order ->
             val buyPrice = order.filledAveragePrice ?: order.referencePrice
-            val currentPrice = currentPrices[order.productCode]
+            val currentPrice = currentPrices[order.productCode].takeIf { order.remainingQuantity > 0L }
             val returnPercent = currentPrice?.takeIf { buyPrice > 0L }
                 ?.let { (it - buyPrice).toDouble() / buyPrice.toDouble() * 100.0 }
-            StockBuyLotRow(order, currentPrice, returnPercent)
+            val allocations = allocationsByBuyOrder[order.id].orEmpty()
+            val soldQuantity = allocations.sumOf { it.quantity }
+            val realizedSellAmount = allocations.sumOf { it.sellUnitPrice * it.quantity }
+            val realizedBuyAmount = allocations.sumOf { it.buyUnitPrice * it.quantity }
+            val realizedProfit = allocations.takeIf { it.isNotEmpty() }?.sumOf { it.realizedProfit }
+            val realizedAverageSellPrice = soldQuantity.takeIf { it > 0L }
+                ?.let { (realizedSellAmount.toDouble() / it.toDouble()).roundToLong() }
+            val realizedReturnPercent = realizedProfit?.takeIf { realizedBuyAmount > 0L }
+                ?.let { it.toDouble() / realizedBuyAmount.toDouble() * 100.0 }
+            StockBuyLotRow(
+                order = order,
+                currentPrice = currentPrice,
+                estimatedReturnPercent = returnPercent,
+                soldQuantity = soldQuantity,
+                realizedAverageSellPrice = realizedAverageSellPrice,
+                realizedProfit = realizedProfit,
+                realizedReturnPercent = realizedReturnPercent,
+            )
         }
     }
 
@@ -3068,8 +3087,11 @@ class HabitRepository(
             }
             .sortedWith(
                 compareBy<LottoControlComparison> { comparison ->
-                    if (comparison.sourceLabel == "균형형") 0 else 1
-                }.thenByDescending(LottoControlComparison::generationVersion),
+                    if (comparison.generationVersion == "legacy") 1 else 0
+                }.thenByDescending(LottoControlComparison::generationVersion)
+                    .thenBy { comparison ->
+                        if (comparison.sourceLabel == "균형형") 0 else 1
+                    },
             )
     }
 
