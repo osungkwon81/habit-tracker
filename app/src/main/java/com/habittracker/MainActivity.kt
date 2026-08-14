@@ -44,6 +44,8 @@ import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
 import com.habittracker.ui.lotto.LottoScreen
 import com.habittracker.ui.lotto.LottoViewModel
+import com.habittracker.ui.lotto.PensionLotteryScreen
+import com.habittracker.ui.lotto.PensionLotteryViewModel
 import com.habittracker.ui.memo.MemoScreen
 import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.navigation.AppDestination
@@ -217,7 +219,17 @@ private fun HabitTrackerApp() {
             }
             composable(AppDestination.LOTTO.route) {
                 val viewModel: LottoViewModel = viewModel(factory = AppViewModelFactory())
-                LottoScreen(viewModel = viewModel)
+                LottoScreen(
+                    viewModel = viewModel,
+                    onOpenPensionLottery = { navController.navigate(AppDestination.PENSION_LOTTO.route) },
+                )
+            }
+            composable(AppDestination.PENSION_LOTTO.route) {
+                val viewModel: PensionLotteryViewModel = viewModel(factory = AppViewModelFactory())
+                PensionLotteryScreen(
+                    viewModel = viewModel,
+                    onBackToLotto = { navController.popBackStack() },
+                )
             }
             composable(AppDestination.CARD.route) {
                 val viewModel: CardHistoryViewModel = viewModel(factory = AppViewModelFactory())

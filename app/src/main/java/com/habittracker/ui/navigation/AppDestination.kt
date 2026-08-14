@@ -20,5 +20,6 @@ enum class AppDestination(
     CARD("card", "카드", "💳"),
     ADMIN("admin", "관리", "⚙️"),
     LOTTO("lotto", "로또", "🎯"),
+    PENSION_LOTTO("lotto/pension", "연금720+", "🎟️"),
     PLANT("plant", "화분", "🪴"),
 }

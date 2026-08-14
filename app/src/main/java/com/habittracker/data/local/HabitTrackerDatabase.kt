@@ -5,6 +5,8 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.habittracker.data.lotto.PensionLotterySeedData
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemAttachmentEntity
@@ -20,6 +22,7 @@ import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
@@ -56,8 +59,9 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         StockSafetyConfigEntity::class,
         StockSellAllocationEntity::class,
         StockAutomationEventEntity::class,
+        PensionLotteryDrawEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -66,7 +70,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 27
+        const val DB_VERSION = 28
 
         fun builder(context: Context) =
             Room.databaseBuilder(
@@ -74,6 +78,13 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
                 HabitTrackerDatabase::class.java,
                 DB_NAME,
             ).addMigrations(*HabitTrackerMigrations.all)
+                .addCallback(
+                    object : RoomDatabase.Callback() {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            PensionLotterySeedData.insertInto(db)
+                        }
+                    },
+                )
 
         fun create(context: Context): HabitTrackerDatabase =
             builder(context).build()

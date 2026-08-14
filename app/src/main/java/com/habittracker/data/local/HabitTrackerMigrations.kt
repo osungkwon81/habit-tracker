@@ -2,6 +2,7 @@ package com.habittracker.data.local
 
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.habittracker.data.lotto.PensionLotterySeedData
 
 object HabitTrackerMigrations {
     private val MIGRATION_2_3 = object : Migration(2, 3) {
@@ -790,6 +791,22 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_27_28 = object : Migration(27, 28) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `pension_lottery_draw` (
+                    `round_no` INTEGER NOT NULL,
+                    `group_no` INTEGER NOT NULL,
+                    `winning_number` TEXT NOT NULL,
+                    PRIMARY KEY(`round_no`)
+                )
+                """.trimIndent(),
+            )
+            PensionLotterySeedData.insertInto(database)
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -813,6 +830,7 @@ object HabitTrackerMigrations {
         MIGRATION_24_25,
         MIGRATION_25_26,
         MIGRATION_26_27,
+        MIGRATION_27_28,
     )
 }
 

@@ -21,6 +21,7 @@ import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
@@ -42,6 +43,21 @@ import java.time.LocalDateTime
 
 @Dao
 interface HabitDao {
+    @Query(
+        """
+        SELECT * FROM pension_lottery_draw
+        ORDER BY round_no DESC
+        LIMIT :limit
+        """,
+    )
+    fun observePensionLotteryDraws(limit: Int): Flow<List<PensionLotteryDrawEntity>>
+
+    @Query("SELECT * FROM pension_lottery_draw ORDER BY round_no DESC")
+    fun observeAllPensionLotteryDraws(): Flow<List<PensionLotteryDrawEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPensionLotteryDraw(draw: PensionLotteryDrawEntity)
+
     @Query(
         """
         SELECT * FROM card_history

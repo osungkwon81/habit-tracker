@@ -84,9 +84,14 @@ private val LottoTextStrongColor = Color(0xFF171C19)
 private val LottoTextMutedColor = Color(0xFF5C6661)
 private val ChatGptAccent = Color(0xFF256A52)
 private val GeminiAccent = Color(0xFFD6DDDA)
+private val PensionLotteryAccent = Color(0xFFFFD65A)
+private val PensionLotteryText = Color(0xFF3B2A00)
 
 @Composable
-fun LottoScreen(viewModel: LottoViewModel) {
+fun LottoScreen(
+    viewModel: LottoViewModel,
+    onOpenPensionLottery: () -> Unit,
+) {
     val uiState by viewModel.uiState.collectAsState()
     var noticeMessage by remember { mutableStateOf<String?>(null) }
 
@@ -130,6 +135,24 @@ fun LottoScreen(viewModel: LottoViewModel) {
                 AppSelectableChip(label = "저장번호", selected = uiState.selectedTab == "saved", onClick = viewModel::selectSavedTab)
                 AppSelectableChip(label = "당첨 이력", selected = uiState.selectedTab == "winning", onClick = viewModel::selectWinningTab)
                 AppSelectableChip(label = "통계", selected = uiState.selectedTab == "stats", onClick = viewModel::selectStatsTab)
+            }
+        }
+        item {
+            Button(
+                onClick = onOpenPensionLottery,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(18.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = PensionLotteryAccent,
+                    contentColor = PensionLotteryText,
+                ),
+                elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(defaultElevation = 1.dp),
+            ) {
+                Text(
+                    text = "🎟️ 연금720+ 분석",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
         item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }

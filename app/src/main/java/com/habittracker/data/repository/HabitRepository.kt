@@ -22,6 +22,7 @@ import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
@@ -170,6 +171,24 @@ class HabitRepository(
 
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
         habitDao.observeLottoDraws(roundNo, limit)
+
+    fun observePensionLotteryDraws(limit: Int): Flow<List<PensionLotteryDrawEntity>> =
+        habitDao.observePensionLotteryDraws(limit)
+
+    fun observeAllPensionLotteryDraws(): Flow<List<PensionLotteryDrawEntity>> =
+        habitDao.observeAllPensionLotteryDraws()
+
+    suspend fun savePensionLotteryDraw(roundNo: Int, groupNo: Int, winningNumber: String) {
+        persistChange {
+            habitDao.upsertPensionLotteryDraw(
+                PensionLotteryDrawEntity(
+                    roundNo = roundNo,
+                    groupNo = groupNo,
+                    winningNumber = winningNumber,
+                ),
+            )
+        }
+    }
 
     fun observeCardHistories(): Flow<List<CardHistoryEntity>> =
         habitDao.observeCardHistories()
