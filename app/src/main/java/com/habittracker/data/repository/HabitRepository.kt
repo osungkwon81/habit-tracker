@@ -23,6 +23,7 @@ import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
+import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
@@ -187,6 +188,23 @@ class HabitRepository(
                     winningNumber = winningNumber,
                 ),
             )
+        }
+    }
+
+    fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>> =
+        habitDao.observePensionLotteryGeneratedNumbers()
+
+    suspend fun savePensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>) {
+        require(numbers.isNotEmpty()) { "저장할 연금 생성번호가 없습니다." }
+        persistChange {
+            habitDao.insertPensionLotteryGeneratedNumbers(numbers)
+        }
+    }
+
+    suspend fun deletePensionLotteryGeneration(generationId: String) {
+        require(generationId.isNotBlank()) { "삭제할 연금번호 생성 배치 ID가 필요합니다." }
+        persistChange {
+            habitDao.deletePensionLotteryGeneration(generationId)
         }
     }
 

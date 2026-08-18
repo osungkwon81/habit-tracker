@@ -22,6 +22,7 @@ import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
+import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
@@ -57,6 +58,20 @@ interface HabitDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPensionLotteryDraw(draw: PensionLotteryDrawEntity)
+
+    @Query(
+        """
+        SELECT * FROM pension_lottery_generated_number
+        ORDER BY generated_at DESC, id ASC
+        """,
+    )
+    fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertPensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>)
+
+    @Query("DELETE FROM pension_lottery_generated_number WHERE generation_id = :generationId")
+    suspend fun deletePensionLotteryGeneration(generationId: String)
 
     @Query(
         """

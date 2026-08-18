@@ -36,6 +36,7 @@ class PensionLotteryViewModel(
     private val roundInput = MutableStateFlow("")
     private val groupInput = MutableStateFlow("")
     private val numberInputs = MutableStateFlow(List(6) { "" })
+    private val recentDrawLimit = MutableStateFlow(RECENT_DRAW_PAGE_SIZE)
     private val matchNumberInput = MutableStateFlow("")
     private val statusMessage = MutableStateFlow<String?>(null)
 
@@ -53,6 +54,7 @@ class PensionLotteryViewModel(
         roundInput,
         groupInput,
         numberInputs,
+        recentDrawLimit,
         matchNumberInput,
         statusMessage,
     ) { values ->
@@ -62,9 +64,12 @@ class PensionLotteryViewModel(
         val round = values[3] as String
         val group = values[4] as String
         val numbers = values[5] as List<String>
-        val matchNumber = values[6] as String
-        val message = values[7] as String?
+        val recentLimit = values[6] as Int
+        val matchNumber = values[7] as String
+        val message = values[8] as String?
         val rangeDraws = savedDraws.take(range.weeks)
+        val recentDraws = savedDraws.take(recentLimit)
+        val sixteenWeekScoreBandSummary = buildSixteenWeekScoreBandSummary(savedDraws)
 
         PensionLotteryUiState(
             selectedTab = tab,
@@ -76,12 +81,18 @@ class PensionLotteryViewModel(
             statusMessage = message,
             latestRoundNo = savedDraws.firstOrNull()?.roundNo,
             totalDrawCount = savedDraws.size,
-            recentDraws = savedDraws.take(12),
-            recentDigitScores = buildRecentDigitScores(savedDraws),
+            recentDraws = recentDraws,
+            hasMoreRecentDraws = recentDraws.size < savedDraws.size,
+            recentDigitScores = buildRecentDigitScores(savedDraws, recentDraws, range.weeks),
+            sixteenWeekScoreBandStats = sixteenWeekScoreBandSummary.stats,
+            sixteenWeekScoreBandDrawCount = sixteenWeekScoreBandSummary.drawCount,
+            sixteenWeekScoreBandsByRound = sixteenWeekScoreBandSummary.bandsByRound,
+            sixteenWeekZeroScoreCountStats = sixteenWeekScoreBandSummary.zeroScoreCountStats,
             matchResults = buildMatchResults(rangeDraws, matchNumber),
             exactMatchRounds = findExactMatchRounds(savedDraws, matchNumber),
-            matchDigitScores = buildNumberScores(rangeDraws, matchNumber),
-            positionStats = buildPositionStats(rangeDraws),
+            matchDigitScores = calculatePensionNumberScores(rangeDraws, matchNumber),
+            duplicateStats = buildDuplicateStats(rangeDraws, savedDraws),
+            positionStats = buildPositionStats(rangeDraws, savedDraws),
             positionScores = buildPositionScores(rangeDraws),
         )
     }.stateIn(
@@ -118,6 +129,10 @@ class PensionLotteryViewModel(
         matchNumberInput.value = value.filter(Char::isDigit).take(6)
     }
 
+    fun loadMoreRecentDraws() {
+        recentDrawLimit.value += RECENT_DRAW_PAGE_SIZE
+    }
+
     fun saveDraw() {
         val roundNo = roundInput.value.toIntOrNull()
         val groupNo = groupInput.value.toIntOrNull()
@@ -137,6 +152,10 @@ class PensionLotteryViewModel(
             }
         }
     }
+
+    private companion object {
+        const val RECENT_DRAW_PAGE_SIZE = 12
+    }
 }
 
 data class PensionLotteryUiState(
@@ -150,10 +169,16 @@ data class PensionLotteryUiState(
     val latestRoundNo: Int? = null,
     val totalDrawCount: Int = 0,
     val recentDraws: List<PensionLotteryDrawEntity> = emptyList(),
+    val hasMoreRecentDraws: Boolean = false,
     val recentDigitScores: Map<Int, List<Int>> = emptyMap(),
+    val sixteenWeekScoreBandStats: List<PensionLotteryScoreBandStat> = emptyList(),
+    val sixteenWeekScoreBandDrawCount: Int = 0,
+    val sixteenWeekScoreBandsByRound: Map<Int, String> = emptyMap(),
+    val sixteenWeekZeroScoreCountStats: List<PensionLotteryZeroScoreCountStat> = emptyList(),
     val matchResults: List<PensionLotteryMatchResult> = emptyList(),
     val exactMatchRounds: List<Int> = emptyList(),
     val matchDigitScores: List<Int> = emptyList(),
+    val duplicateStats: List<PensionLotteryDuplicateStat> = emptyList(),
     val positionStats: List<PensionLotteryPositionStat> = emptyList(),
     val positionScores: List<PensionLotteryPositionScore> = emptyList(),
 )
@@ -168,6 +193,23 @@ data class PensionLotteryMatchResult(
 data class PensionLotteryDigitCount(
     val digit: Int,
     val count: Int,
+    val totalCount: Int,
+)
+
+data class PensionLotteryScoreBandStat(
+    val label: String,
+    val drawCount: Int,
+)
+
+data class PensionLotteryZeroScoreCountStat(
+    val zeroScoreCount: Int,
+    val drawCount: Int,
+)
+
+data class PensionLotteryDuplicateStat(
+    val label: String,
+    val count: Int,
+    val totalCount: Int,
 )
 
 data class PensionLotteryPositionStat(
@@ -209,7 +251,7 @@ private fun findExactMatchRounds(
     emptyList()
 }
 
-private fun buildNumberScores(
+internal fun calculatePensionNumberScores(
     draws: List<PensionLotteryDrawEntity>,
     winningNumber: String,
 ): List<Int> {
@@ -226,7 +268,10 @@ private fun buildNumberScores(
     }
 }
 
-private fun buildPositionStats(draws: List<PensionLotteryDrawEntity>): List<PensionLotteryPositionStat> =
+private fun buildPositionStats(
+    draws: List<PensionLotteryDrawEntity>,
+    allDraws: List<PensionLotteryDrawEntity>,
+): List<PensionLotteryPositionStat> =
     (0 until 6).map { position ->
         PensionLotteryPositionStat(
             position = position,
@@ -234,10 +279,33 @@ private fun buildPositionStats(draws: List<PensionLotteryDrawEntity>): List<Pens
                 PensionLotteryDigitCount(
                     digit = digit,
                     count = draws.count { draw -> draw.winningNumber[position].digitToInt() == digit },
+                    totalCount = allDraws.count { draw -> draw.winningNumber[position].digitToInt() == digit },
                 )
             },
         )
     }
+
+private fun buildDuplicateStats(
+    draws: List<PensionLotteryDrawEntity>,
+    allDraws: List<PensionLotteryDrawEntity>,
+): List<PensionLotteryDuplicateStat> = PENSION_DUPLICATE_LABELS.map { label ->
+    PensionLotteryDuplicateStat(
+        label = label,
+        count = draws.count { draw -> pensionDuplicateLabel(draw.winningNumber) == label },
+        totalCount = allDraws.count { draw -> pensionDuplicateLabel(draw.winningNumber) == label },
+    )
+}
+
+internal fun pensionDuplicateLabel(winningNumber: String): String {
+    val maxDuplicateCount = winningNumber.groupingBy { digit -> digit }.eachCount().values.maxOrNull() ?: 0
+    return when {
+        maxDuplicateCount >= 3 -> "3자리 이상"
+        maxDuplicateCount == 2 -> "2자리"
+        else -> "중복 없음"
+    }
+}
+
+internal val PENSION_DUPLICATE_LABELS = listOf("3자리 이상", "2자리", "중복 없음")
 
 private fun buildPositionScores(draws: List<PensionLotteryDrawEntity>): List<PensionLotteryPositionScore> =
     (0 until 6).map { position ->
@@ -253,9 +321,13 @@ private fun buildPositionScores(draws: List<PensionLotteryDrawEntity>): List<Pen
         )
     }
 
-private fun buildRecentDigitScores(draws: List<PensionLotteryDrawEntity>): Map<Int, List<Int>> {
-    return draws.take(12).mapIndexed { startIndex, draw ->
-        val scoringDraws = draws.drop(startIndex).take(PensionLotteryRange.SIXTEEN.weeks)
+private fun buildRecentDigitScores(
+    draws: List<PensionLotteryDrawEntity>,
+    recentDraws: List<PensionLotteryDrawEntity>,
+    weeks: Int,
+): Map<Int, List<Int>> {
+    return recentDraws.mapIndexed { startIndex, draw ->
+        val scoringDraws = draws.drop(startIndex + 1).take(weeks)
         val scoresByPosition = List(6) { IntArray(10) }
         scoringDraws.forEachIndexed { index, scoringDraw ->
             val weight = scoringDraws.size - index
@@ -268,3 +340,59 @@ private fun buildRecentDigitScores(draws: List<PensionLotteryDrawEntity>): Map<I
         }
     }.toMap()
 }
+
+private fun buildSixteenWeekScoreBandSummary(
+    draws: List<PensionLotteryDrawEntity>,
+): PensionLotteryScoreBandSummary {
+    val scoresByRound = draws.mapIndexedNotNull { startIndex, draw ->
+        val scoringDraws = draws.drop(startIndex + 1).take(PensionLotteryRange.SIXTEEN.weeks)
+        if (scoringDraws.size < PensionLotteryRange.SIXTEEN.weeks) {
+            null
+        } else {
+            draw.roundNo to calculatePensionNumberScores(scoringDraws, draw.winningNumber)
+        }
+    }
+    return PensionLotteryScoreBandSummary(
+        drawCount = scoresByRound.size,
+        stats = PENSION_SCORE_BAND_LABELS.map { label ->
+            PensionLotteryScoreBandStat(
+                label = label,
+                drawCount = scoresByRound.count { (_, scores) -> pensionScoreBandLabel(scores.sum()) == label },
+            )
+        },
+        bandsByRound = scoresByRound.associate { (roundNo, scores) ->
+            roundNo to pensionScoreBandLabel(scores.sum())
+        },
+        zeroScoreCountStats = (0..6).map { zeroScoreCount ->
+            PensionLotteryZeroScoreCountStat(
+                zeroScoreCount = zeroScoreCount,
+                drawCount = scoresByRound.count { (_, scores) ->
+                    scores.count { score -> score == 0 } == zeroScoreCount
+                },
+            )
+        },
+    )
+}
+
+internal fun pensionScoreBandLabel(score: Int): String = when {
+    score <= 50 -> "50점 이하"
+    score <= 70 -> "51~70점"
+    score <= 90 -> "71~90점"
+    score <= 110 -> "91~110점"
+    else -> "111점 이상"
+}
+
+internal val PENSION_SCORE_BAND_LABELS = listOf(
+    "50점 이하",
+    "51~70점",
+    "71~90점",
+    "91~110점",
+    "111점 이상",
+)
+
+private data class PensionLotteryScoreBandSummary(
+    val drawCount: Int,
+    val stats: List<PensionLotteryScoreBandStat>,
+    val bandsByRound: Map<Int, String>,
+    val zeroScoreCountStats: List<PensionLotteryZeroScoreCountStat>,
+)

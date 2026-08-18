@@ -1,17 +1,130 @@
 ﻿# Habit Tracker
 
-Offline-first personal Android habit tracker built with Kotlin, Jetpack Compose, Room, and MVVM.
+개인의 습관, 생활, 소비, 투자, 복권 기록을 한곳에서 관리하는 Android 앱입니다. 생활 기록은 Room DB에 저장되며, 주식의 실시간 조회와 주문 기능은 한국투자증권(KIS) API 연결이 필요합니다.
 
-## Current scope
-- Dynamic task master table with `NUMBER`, `BOOLEAN`, `TEXT`, and `DURATION` value types
-- Daily record root and mapped daily record items
-- Attachment table structure for task masters and daily record items
-- Compose screens for calendar overview, daily entry, and monthly statistics
-- Room repository layer with transactional daily record persistence
+## 주요 기능
 
-## Next implementation steps
-- Add loading/editing of existing records when a date is selected
-- Connect attachment picker using Storage Access Framework
-- Add chart polish and richer monthly comparison views
-- Add DAO and ViewModel tests
-- Generate Gradle wrapper from Android Studio or local Gradle installation
+### 홈
+
+- 달력에서 날짜별 기록 상태 확인
+- 선택한 날짜의 일기, 운동 내역, 기타 생활 기록 요약
+- 일일 기록, 일기, 메모, 통계, 카드, 주식, 로또, 화분 관리 화면 바로가기
+
+### 일일 기록과 항목 관리
+
+- 날짜 및 휴일 여부를 지정하여 생활 기록 저장
+- 카테고리별 기록 항목 필터링
+- 숫자, 체크 여부, 텍스트, 시간, 운동 기록 유형 지원
+- 걷기 거리와 운동 시간 등 운동 수치 기록
+- 기록별 메모와 첨부파일 데이터 구조 지원
+- 관리 화면에서 카테고리, 항목명, 단위, 유형, 표시 색상 등록 및 삭제
+
+### 일기
+
+- 날짜별 일기 작성 및 상세 조회
+- 날씨와 사진을 함께 저장
+- 저장된 일기를 날짜 기준으로 탐색
+
+### 메모
+
+- 일반 메모와 잠금 메모 작성
+- 메모 검색 및 수정
+- 잠금 메모에 4~10자리 숫자 비밀번호 설정
+
+### 생활 통계
+
+- 월간·연간 기간 전환
+- 항목별 완료 횟수, 숫자 합계, 운동 거리와 시간 집계
+- 일별 또는 월별 추이를 차트로 표시
+
+### 카드 사용 이력
+
+- 카드 사용일, 결제 예정 금액, 메모 등록 및 삭제
+- 결제일을 기준으로 월별 결제 예정액 계산
+- 최근 3개월 사용 흐름과 전년도 동일 월 비교
+
+### 화분 관리
+
+- 화분 정보와 사진 등록·수정·삭제
+- 물주기 주기와 다음 예정일 관리
+- 오늘 물주기 완료 처리 및 주기 1일 연장
+- 1개월은 30일 기준으로 다음 물주기 날짜 계산
+
+### 로또 6/45
+
+- 홈과 하단 메뉴의 동행복권 선택 화면에서 로또 6/45·연금복권 720+로 분기
+- 균형형·분산형 추천 번호 생성 및 저장
+- 구입 이력, 추첨 결과, 저장 번호, 당첨 이력 관리
+- 로또·연금복권의 구입액, 당첨액, 손익 집계
+- 생성 방식별 당첨 통계, 패턴 적합 점수, 무작위 대조군 비교
+- 기간별 로또·연금복권 금액 흐름 확인
+
+### 연금복권 720+
+
+- 회차, 조, 6자리 1등 당첨번호 저장
+- 당첨번호 숫자 입력 시 다음 자리로 자동 이동
+- 최근 당첨번호를 최신 회차순으로 표시하고 스크롤 시 12회씩 추가 조회
+- 4주, 8주, 12주, 16주, 24주, 52주 단위 분석
+- 각 회차의 직전 선택 기간을 기준으로 자리별 가중 점수 계산
+- 선택 기간의 최신 회차에 기간 수만큼 점수를 부여하고 과거 회차로 갈수록 1점씩 차감
+- 입력한 6자리 번호와 기간 내 당첨번호의 동일 자리 일치 개수 확인
+- 동일한 1등 번호가 있었는지는 선택 기간과 관계없이 전체 회차에서 확인
+- 자리별 숫자 출현 통계에서 `기간횟수회(전체횟수)` 형식으로 함께 표시
+- 기간 내 최다 출현 숫자는 붉은색, 최소 출현 숫자는 푸른색으로 구분
+- 당첨번호 내부의 동일 숫자를 3자리 이상, 2자리, 중복 없음으로 구분하여 선택 기간과 전체 횟수 표시
+- 직전 16회 데이터가 모두 있는 회차만 대상으로 16주 합계 점수 분포 계산
+- 합계 점수를 50점 이하, 51~70점, 71~90점, 91~110점, 111점 이상으로 구분하여 회차 수와 비율 표시
+- 별도 연금번호 생성 화면에서 출현형과 미출현 혼합형 번호 생성
+- 가장 빈도가 높은 16주 점수 구간과 동일 숫자 유형을 생성 조건으로 적용
+- 출현형은 최근 16주 미출현 숫자를 제외하고, 미출현 혼합형은 과거 16주 0점 자리 수의 최빈값만큼 미출현 숫자를 적용하며 0점이 없으면 최저점 숫자를 1~2자리에 적용
+- 출현형과 미출현 혼합형을 개별 재생성하거나 사용자 확인 후 배치 단위로 DB에 저장하고 최신 추천 번호와 이전 생성 히스토리 표시
+- 출현형·미출현 혼합형의 마지막 숫자를 서로 다르게 생성하고 생성 배치 삭제 지원
+
+### 주식 관리
+
+- 한국투자증권 실전 계좌 연결 및 보유 종목 조회
+- 매수·매도 가능 수량과 안전 한도 확인 후 주문
+- 매수 주문별 수량, 단가, 잔여 수량, 수익률 관리
+- 손절, 익절, 당일 상승 조건 기반 자동 매매 또는 알림
+- 정규장과 NXT 애프터마켓 감시
+- 현재 비중과 목표 비중을 비교한 리밸런싱 주문 수량 계산
+- 주문, 체결, 실현손익, 자동화 이력을 매매일지로 관리
+- 주문 한도, 전역 주문 차단, 시장 급락 차단, 감시 주기 설정
+
+> 주식 주문은 실전 계좌에 영향을 줄 수 있습니다. 자동 주문 전 전역 스위치와 안전 한도 설정을 확인해야 합니다.
+
+## 기술 사양
+
+| 구분 | 사양 |
+| --- | --- |
+| 애플리케이션 ID | `com.habittracker` |
+| 앱 버전 | `1.0.0` (`versionCode 13`) |
+| 최소 Android | API 28 |
+| Target / Compile SDK | API 35 |
+| 언어 / JVM | Kotlin 2.0.21 / Java 17 |
+| UI | Jetpack Compose, Material 3 |
+| 아키텍처 | MVVM, Repository, StateFlow |
+| 로컬 저장소 | Room 2.6.1, DB 버전 29 |
+| 비동기 처리 | Kotlin Coroutines 1.9.0 |
+| 네트워크 | OkHttp 4.12.0 |
+
+## 데이터와 구조
+
+- `Screen`: 화면 구성과 사용자 입력 처리
+- `ViewModel`: 화면 상태, 유효성 검사, 계산 로직 관리
+- `HabitRepository`: 화면과 로컬·외부 데이터 소스 연결
+- `HabitDao`: Room 조회 및 저장
+- Room 스키마와 마이그레이션을 사용하여 앱 업데이트 시 기존 데이터를 유지
+- 생활 기록은 로컬 우선으로 동작하며 KIS 조회·주문만 네트워크 연결 필요
+
+## 개발 환경
+
+- Android Studio
+- JDK 17
+- Android SDK 35
+
+디버그 APK 빌드:
+
+```bash
+./gradlew assembleDebug
+```

@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.habittracker.R
 import com.habittracker.data.local.ValueType
@@ -161,7 +162,7 @@ private fun WorkspaceSection(
             HomeQuickAction(R.drawable.home_quick_record, "기록", "습관·일정 한 번에 기록", Color(0xFF0F6B73), onOpenRecord),
             HomeQuickAction(R.drawable.home_quick_memo, "메모", "빠른 메모·잠금", Color(0xFF6D4C8E), onOpenMemo),
             HomeQuickAction(R.drawable.home_quick_card, "카드 이력", "월별 사용·결제액", Color(0xFF665F55), onOpenCard),
-            HomeQuickAction(R.drawable.home_quick_lotto, "로또", "번호 생성·이력", Color(0xFF315C9A), onOpenLotto),
+            HomeQuickAction(R.drawable.home_quick_lotto, "동행복권", "로또·연금복권", Color(0xFF315C9A), onOpenLotto),
             HomeQuickAction(R.drawable.home_quick_diary, "일기", "사진과 하루 기록", Color(0xFFB36B2C), onOpenDiary),
         )
         actions.chunked(2).forEach { rowItems ->
@@ -202,16 +203,16 @@ private fun QuickActionCard(
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, action.accent.copy(alpha = 0.22f), MaterialTheme.shapes.large)
             .clickable(onClick = action.onClick)
-            .padding(14.dp),
+            .padding(12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(40.dp)
                     .clip(RoundedCornerShape(15.dp))
                     .background(action.accent.copy(alpha = 0.12f)),
             ) {
@@ -228,14 +229,18 @@ private fun QuickActionCard(
             ) {
                 Text(
                     text = action.title,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = action.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Text("›", style = MaterialTheme.typography.titleLarge, color = action.accent)

@@ -807,6 +807,41 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_28_29 = object : Migration(28, 29) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `pension_lottery_generated_number` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `generation_id` TEXT NOT NULL,
+                    `generation_type` TEXT NOT NULL,
+                    `group_no` INTEGER NOT NULL,
+                    `winning_number` TEXT NOT NULL,
+                    `digit_scores` TEXT NOT NULL,
+                    `total_score` INTEGER NOT NULL,
+                    `score_band` TEXT NOT NULL,
+                    `duplicate_label` TEXT NOT NULL,
+                    `cold_positions` TEXT NOT NULL,
+                    `cold_priority_scores` TEXT NOT NULL,
+                    `generated_at` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE INDEX IF NOT EXISTS `index_pension_lottery_generated_number_generation_id`
+                ON `pension_lottery_generated_number` (`generation_id`)
+                """.trimIndent(),
+            )
+            database.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS `index_pension_lottery_generated_number_generation_id_generation_type`
+                ON `pension_lottery_generated_number` (`generation_id`, `generation_type`)
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -831,6 +866,7 @@ object HabitTrackerMigrations {
         MIGRATION_25_26,
         MIGRATION_26_27,
         MIGRATION_27_28,
+        MIGRATION_28_29,
     )
 }
 

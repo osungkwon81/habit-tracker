@@ -12,18 +12,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,6 +43,7 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
+import kotlin.math.roundToInt
 
 private val PensionStatHighBackground = Color(0xFFFFE1D6)
 private val PensionStatHighText = Color(0xFF8A2D13)
@@ -46,7 +53,8 @@ private val PensionStatLowText = Color(0xFF174E80)
 @Composable
 fun PensionLotteryScreen(
     viewModel: PensionLotteryViewModel,
-    onBackToLotto: () -> Unit,
+    onBackToLotteryHome: () -> Unit,
+    onOpenGenerator: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -60,8 +68,8 @@ fun PensionLotteryScreen(
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
                 action = {
                     AppSecondaryButton(
-                        text = "로또 6/45로 돌아가기",
-                        onClick = onBackToLotto,
+                        text = "동행복권 선택으로 돌아가기",
+                        onClick = onBackToLotteryHome,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 },
@@ -71,6 +79,7 @@ fun PensionLotteryScreen(
             PensionLotteryTabSelector(
                 selectedTab = uiState.selectedTab,
                 onSelect = viewModel::selectTab,
+                onOpenGenerator = onOpenGenerator,
             )
         }
 
@@ -91,17 +100,50 @@ fun PensionLotteryScreen(
                 item {
                     AppSectionHeader(
                         title = "최근 당첨번호",
-                        subtitle = "숫자 아래 점수는 각 회차를 기준으로 계산한 이동 16주 가중 점수입니다.",
+                        subtitle = "숫자 아래 점수는 각 회차의 직전 ${uiState.selectedRange.label} 가중 점수입니다.",
                     )
+                }
+                item {
+                    PensionLotteryRangeCard(uiState.selectedRange, viewModel::selectRange)
                 }
                 if (uiState.recentDraws.isEmpty()) {
                     item { AppEmptyCard("저장된 연금복권 당첨번호가 없습니다.") }
                 } else {
+                    item {
+                        PensionLotteryScoreBandStatsCard(
+                            stats = uiState.sixteenWeekScoreBandStats,
+                            totalDrawCount = uiState.sixteenWeekScoreBandDrawCount,
+                        )
+                    }
+                    item {
+                        PensionLotteryZeroScoreCountStatsCard(
+                            stats = uiState.sixteenWeekZeroScoreCountStats,
+                            totalDrawCount = uiState.sixteenWeekScoreBandDrawCount,
+                        )
+                    }
                     items(uiState.recentDraws, key = { draw -> draw.roundNo }) { draw ->
                         PensionLotteryDrawCard(
                             draw = draw,
                             digitScores = uiState.recentDigitScores[draw.roundNo].orEmpty(),
+                            scoreBandLabel = if (uiState.selectedRange == PensionLotteryRange.SIXTEEN) {
+                                uiState.sixteenWeekScoreBandsByRound[draw.roundNo]
+                            } else {
+                                null
+                            },
                         )
+                    }
+                    if (uiState.hasMoreRecentDraws) {
+                        item(key = "recent-draw-page-${uiState.recentDraws.size}") {
+                            LaunchedEffect(uiState.recentDraws.size) {
+                                viewModel.loadMoreRecentDraws()
+                            }
+                            Text(
+                                text = "다음 회차를 불러오는 중입니다.",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -139,6 +181,7 @@ fun PensionLotteryScreen(
 
             PensionLotteryTab.STATS -> {
                 item { PensionLotteryRangeCard(uiState.selectedRange, viewModel::selectRange) }
+                item { PensionLotteryDuplicateStatsCard(uiState.duplicateStats) }
                 items(uiState.positionStats, key = { stat -> stat.position }) { stat ->
                     PensionLotteryPositionStatsCard(stat)
                 }
@@ -166,12 +209,14 @@ fun PensionLotteryScreen(
 private fun PensionLotteryTabSelector(
     selectedTab: PensionLotteryTab,
     onSelect: (PensionLotteryTab) -> Unit,
+    onOpenGenerator: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             PensionLotteryTab.entries.take(2).forEach { tab ->
                 AppSelectableChip(label = tab.label, selected = selectedTab == tab, onClick = { onSelect(tab) })
             }
+            AppSelectableChip(label = "번호 생성", selected = false, onClick = onOpenGenerator)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             PensionLotteryTab.entries.drop(2).forEach { tab ->
@@ -192,6 +237,7 @@ private fun PensionLotteryInputCard(
     onNumberChange: (Int, String) -> Unit,
     onSave: () -> Unit,
 ) {
+    val numberFocusRequesters = remember { List(6) { FocusRequester() } }
     AppSectionCard {
         AppSectionHeader(title = "1등 당첨번호 입력", subtitle = "조는 공식 기록용이며 분석은 6자리 번호만 사용합니다.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -216,10 +262,27 @@ private fun PensionLotteryInputCard(
             numberInputs.forEachIndexed { index, value ->
                 OutlinedTextField(
                     value = value,
-                    onValueChange = { input -> onNumberChange(index, input) },
+                    onValueChange = { input ->
+                        onNumberChange(index, input)
+                        if (input.any(Char::isDigit) && index < numberFocusRequesters.lastIndex) {
+                            numberFocusRequesters[index + 1].requestFocus()
+                        }
+                    },
                     label = { Text("${index + 1}") },
-                    modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(numberFocusRequesters[index]),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = if (index < numberFocusRequesters.lastIndex) ImeAction.Next else ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = {
+                            if (index < numberFocusRequesters.lastIndex) {
+                                numberFocusRequesters[index + 1].requestFocus()
+                            }
+                        },
+                    ),
                     singleLine = true,
                     textStyle = MaterialTheme.typography.titleMedium.copy(textAlign = TextAlign.Center),
                 )
@@ -335,6 +398,7 @@ private fun PensionLotteryMatchScoreCard(
 private fun PensionLotteryDrawCard(
     draw: PensionLotteryDrawEntity,
     digitScores: List<Int>,
+    scoreBandLabel: String?,
 ) {
     AppSectionCard {
         Row(
@@ -347,12 +411,97 @@ private fun PensionLotteryDrawCard(
         }
         PensionLotteryNumberRow(draw.winningNumber, scores = digitScores)
         Text(
-            text = "합계 ${digitScores.sum()}점",
+            text = buildString {
+                append("합계 ${digitScores.sum()}점")
+                scoreBandLabel?.let { label -> append(" · $label 구간") }
+            },
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.End,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
         )
+    }
+}
+
+@Composable
+private fun PensionLotteryScoreBandStatsCard(
+    stats: List<PensionLotteryScoreBandStat>,
+    totalDrawCount: Int,
+) {
+    AppSectionCard {
+        AppSectionHeader(
+            title = "16주 합계 점수 분포",
+            subtitle = if (totalDrawCount > 0) {
+                "각 회차의 직전 16회가 모두 있는 총 ${totalDrawCount}회 기준입니다."
+            } else {
+                "통계를 계산하려면 저장된 당첨번호가 16회 이상 필요합니다."
+            },
+        )
+        if (totalDrawCount > 0) {
+            stats.forEach { stat ->
+                val percentageTenths = (stat.drawCount * 1000.0 / totalDrawCount).roundToInt()
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(stat.label, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "${stat.drawCount}회 (${percentageTenths / 10}.${percentageTenths % 10}%)",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PensionLotteryZeroScoreCountStatsCard(
+    stats: List<PensionLotteryZeroScoreCountStat>,
+    totalDrawCount: Int,
+) {
+    AppSectionCard {
+        AppSectionHeader(
+            title = "16주 0점 자리 수 분포",
+            subtitle = if (totalDrawCount > 0) {
+                "각 회차의 직전 16회 점수에서 0점인 자리 개수 기준입니다."
+            } else {
+                "통계를 계산하려면 저장된 당첨번호가 17회 이상 필요합니다."
+            },
+        )
+        if (totalDrawCount > 0) {
+            stats.forEach { stat ->
+                val percentageTenths = (stat.drawCount * 1000.0 / totalDrawCount).roundToInt()
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("0점 ${stat.zeroScoreCount}개", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "${stat.drawCount}회 (${percentageTenths / 10}.${percentageTenths % 10}%)",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -375,7 +524,7 @@ private fun PensionLotteryMatchCard(result: PensionLotteryMatchResult) {
 }
 
 @Composable
-private fun PensionLotteryNumberRow(
+internal fun PensionLotteryNumberRow(
     winningNumber: String,
     highlightedPositions: Set<Int> = emptySet(),
     scores: List<Int> = emptyList(),
@@ -425,14 +574,14 @@ private fun PensionLotteryPositionStatsCard(stat: PensionLotteryPositionStat) {
     AppSectionCard {
         AppSectionHeader(
             title = "${pensionPositionLabel(stat.position)} 자리 통계",
-            subtitle = "최다 출현은 붉은색, 최소 출현은 푸른색으로 표시합니다.",
+            subtitle = "괄호 안 숫자는 전체 회차 총횟수이며, 최다·최소 출현은 색상으로 구분합니다.",
         )
         stat.digits.chunked(5).forEach { rowDigits ->
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 rowDigits.forEach { digit ->
                     PensionStatisticCell(
                         label = digit.digit.toString(),
-                        value = "${digit.count}회",
+                        value = "${digit.count}회(${digit.totalCount})",
                         highlight = when {
                             !hasCountDifference -> PensionStatisticHighlight.NONE
                             digit.count == maxCount -> PensionStatisticHighlight.HIGH
@@ -442,6 +591,25 @@ private fun PensionLotteryPositionStatsCard(stat: PensionLotteryPositionStat) {
                         modifier = Modifier.weight(1f),
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PensionLotteryDuplicateStatsCard(stats: List<PensionLotteryDuplicateStat>) {
+    AppSectionCard {
+        AppSectionHeader(
+            title = "동일 숫자 통계",
+            subtitle = "선택 기간 횟수(전체 횟수)이며, 2자리에는 여러 쌍도 포함합니다.",
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            stats.forEach { stat ->
+                PensionStatisticCell(
+                    label = stat.label,
+                    value = "${stat.count}회(${stat.totalCount})",
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
@@ -498,7 +666,13 @@ private fun PensionStatisticCell(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Text(label, fontWeight = FontWeight.Bold, color = contentColor)
-        Text(value, style = MaterialTheme.typography.bodySmall, color = contentColor)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

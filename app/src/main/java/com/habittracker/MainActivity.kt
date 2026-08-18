@@ -44,8 +44,11 @@ import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
 import com.habittracker.ui.lotto.LottoScreen
 import com.habittracker.ui.lotto.LottoViewModel
+import com.habittracker.ui.lotto.LotteryHomeScreen
 import com.habittracker.ui.lotto.PensionLotteryScreen
 import com.habittracker.ui.lotto.PensionLotteryViewModel
+import com.habittracker.ui.lotto.PensionLotteryGeneratorScreen
+import com.habittracker.ui.lotto.PensionLotteryGeneratorViewModel
 import com.habittracker.ui.memo.MemoScreen
 import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.navigation.AppDestination
@@ -218,17 +221,31 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.LOTTO.route) {
+                LotteryHomeScreen(
+                    onOpenLotto645 = { navController.navigate(AppDestination.LOTTO_645.route) },
+                    onOpenPensionLottery = { navController.navigate(AppDestination.PENSION_LOTTO.route) },
+                )
+            }
+            composable(AppDestination.LOTTO_645.route) {
                 val viewModel: LottoViewModel = viewModel(factory = AppViewModelFactory())
                 LottoScreen(
                     viewModel = viewModel,
-                    onOpenPensionLottery = { navController.navigate(AppDestination.PENSION_LOTTO.route) },
+                    onBackToLotteryHome = { navController.popBackStack() },
                 )
             }
             composable(AppDestination.PENSION_LOTTO.route) {
                 val viewModel: PensionLotteryViewModel = viewModel(factory = AppViewModelFactory())
                 PensionLotteryScreen(
                     viewModel = viewModel,
-                    onBackToLotto = { navController.popBackStack() },
+                    onBackToLotteryHome = { navController.popBackStack() },
+                    onOpenGenerator = { navController.navigate(AppDestination.PENSION_LOTTO_GENERATOR.route) },
+                )
+            }
+            composable(AppDestination.PENSION_LOTTO_GENERATOR.route) {
+                val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = AppViewModelFactory())
+                PensionLotteryGeneratorScreen(
+                    viewModel = viewModel,
+                    onBack = { navController.popBackStack() },
                 )
             }
             composable(AppDestination.CARD.route) {

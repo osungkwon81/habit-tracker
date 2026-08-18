@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -107,13 +108,37 @@ class LottoViewModel(
             }
         }
     private val winningTypeStats = selectedTab.flatMapLatest { tab ->
-        if (tab == statsTab) repository.observeLottoWinningStats() else flowOf(emptyList())
+        if (tab == statsTab) {
+            repository.observeLottoWinningStats().map { stats ->
+                stats.filter { stat ->
+                    stat.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION
+                }
+            }
+        } else {
+            flowOf(emptyList())
+        }
     }
     private val scorePerformances = selectedTab.flatMapLatest { tab ->
-        if (tab == statsTab) repository.observeLottoScorePerformances() else flowOf(emptyList())
+        if (tab == statsTab) {
+            repository.observeLottoScorePerformances().map { performances ->
+                performances.filter { performance ->
+                    performance.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION
+                }
+            }
+        } else {
+            flowOf(emptyList())
+        }
     }
     private val controlComparisons = selectedTab.flatMapLatest { tab ->
-        if (tab == statsTab) repository.observeLottoControlComparisons() else flowOf(emptyList())
+        if (tab == statsTab) {
+            repository.observeLottoControlComparisons().map { comparisons ->
+                comparisons.filter { comparison ->
+                    comparison.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION
+                }
+            }
+        } else {
+            flowOf(emptyList())
+        }
     }
     private val purchases = combine(selectedTab, purchaseHistoryLimit) { tab, limit -> tab to limit }
         .flatMapLatest { (tab, limit) ->

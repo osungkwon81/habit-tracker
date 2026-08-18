@@ -11,6 +11,7 @@ import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeViewModel
 import com.habittracker.ui.lotto.LottoViewModel
 import com.habittracker.ui.lotto.PensionLotteryViewModel
+import com.habittracker.ui.lotto.PensionLotteryGeneratorViewModel
 import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsViewModel
@@ -30,6 +31,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(DiaryViewModel::class.java) -> DiaryViewModel(repository) as T
             modelClass.isAssignableFrom(LottoViewModel::class.java) -> LottoViewModel(repository) as T
             modelClass.isAssignableFrom(PensionLotteryViewModel::class.java) -> PensionLotteryViewModel(repository) as T
+            modelClass.isAssignableFrom(PensionLotteryGeneratorViewModel::class.java) -> PensionLotteryGeneratorViewModel(repository) as T
             modelClass.isAssignableFrom(CardHistoryViewModel::class.java) -> CardHistoryViewModel(repository) as T
             modelClass.isAssignableFrom(MemoViewModel::class.java) -> MemoViewModel(repository) as T
             modelClass.isAssignableFrom(PlantViewModel::class.java) -> PlantViewModel(repository) as T

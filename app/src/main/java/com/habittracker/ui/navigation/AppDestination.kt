@@ -19,7 +19,9 @@ enum class AppDestination(
     STOCK_SETTINGS("stock/settings", "KIS·안전 설정", "⚙️"),
     CARD("card", "카드", "💳"),
     ADMIN("admin", "관리", "⚙️"),
-    LOTTO("lotto", "로또", "🎯"),
+    LOTTO("lotto", "동행복권", "🎟️"),
+    LOTTO_645("lotto/645", "로또 6/45", "🎯"),
     PENSION_LOTTO("lotto/pension", "연금720+", "🎟️"),
+    PENSION_LOTTO_GENERATOR("lotto/pension/generator", "연금번호 생성", "🎰"),
     PLANT("plant", "화분", "🪴"),
 }
