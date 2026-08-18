@@ -19,8 +19,6 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,17 +30,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.local.ValueType
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppTextField
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 
 @Composable
 fun AdminScreen(viewModel: AdminViewModel) {
@@ -54,31 +51,13 @@ fun AdminScreen(
     viewModel: AdminViewModel,
     onOpenEntry: (() -> Unit)?,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var category by remember { mutableStateOf(TextFieldValue("운동")) }
     var name by remember { mutableStateOf(TextFieldValue("")) }
     var unit by remember { mutableStateOf(TextFieldValue("")) }
     var selectedValueType by remember { mutableStateOf(ValueType.NUMBER) }
     var selectedColorHex by remember { mutableStateOf(viewModel.colorOptions.first()) }
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
-    }
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     AppScreen {
         item {

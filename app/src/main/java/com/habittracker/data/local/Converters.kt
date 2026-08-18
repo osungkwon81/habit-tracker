@@ -4,6 +4,7 @@ import androidx.room.TypeConverter
 import java.time.LocalDate
 import java.time.LocalDateTime
 
+/** Room이 직접 저장할 수 없는 Kotlin/Java 타입을 DB의 문자열과 상호 변환한다. */
 class Converters {
     @TypeConverter
     fun fromLocalDate(value: LocalDate?): String? = value?.toString()

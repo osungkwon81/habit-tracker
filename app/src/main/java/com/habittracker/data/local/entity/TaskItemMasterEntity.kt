@@ -6,6 +6,10 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.habittracker.data.local.ValueType
 
+/**
+ * 사용자가 기록할 수 있는 항목의 정의다.
+ * 실제 날짜별 값과 분리해 두면 항목 이름·단위는 한 번만 저장하고 여러 날짜에서 ID로 참조할 수 있다.
+ */
 @Entity(
     tableName = "task_item_master",
     indices = [

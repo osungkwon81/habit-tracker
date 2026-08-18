@@ -6,6 +6,10 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * 특정 날짜 기록과 항목 정의를 연결하는 값 객체다.
+ * ForeignKey와 복합 unique index가 같은 날짜에 같은 항목이 중복 저장되는 것을 DB에서도 막는다.
+ */
 @Entity(
     tableName = "daily_record_item",
     foreignKeys = [

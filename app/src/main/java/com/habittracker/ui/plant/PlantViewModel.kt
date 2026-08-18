@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -12,8 +13,30 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-private const val plantListMode = "list"
-private const val plantEditorMode = "editor"
+/** 화면 모드를 enum으로 제한하면 문자열 비교와 오타를 제거할 수 있다. */
+enum class PlantScreenMode {
+    LIST,
+    EDITOR,
+}
+
+private data class PlantEditorMainState(
+    val selectedPlantId: Long?,
+    val name: String,
+    val imageUri: String?,
+    val memo: String,
+    val wateringMonths: String,
+)
+
+private data class PlantEditorState(
+    val main: PlantEditorMainState,
+    val wateringDays: String,
+    val lastWateredDate: LocalDate,
+)
+
+private data class PlantFeedbackState(
+    val statusMessage: String?,
+    val screenMode: PlantScreenMode,
+)
 
 class PlantViewModel(
     private val repository: HabitRepository,
@@ -26,44 +49,51 @@ class PlantViewModel(
     private val wateringDays = MutableStateFlow("")
     private val lastWateredDate = MutableStateFlow(LocalDate.now())
     private val statusMessage = MutableStateFlow<String?>(null)
-    private val screenMode = MutableStateFlow(plantListMode)
+    private val screenMode = MutableStateFlow(PlantScreenMode.LIST)
 
-    val uiState: StateFlow<PlantUiState> = combine(
-        repository.observePlants(),
+    private val editorMainState = combine(
         selectedPlantId,
         name,
         imageUri,
         memo,
         wateringMonths,
+    ) { selectedId, name, imageUri, memo, months ->
+        PlantEditorMainState(selectedId, name, imageUri, memo, months)
+    }
+
+    private val editorState = combine(
+        editorMainState,
         wateringDays,
         lastWateredDate,
-        statusMessage,
-        screenMode,
-    ) { values ->
-        val plants = values[0] as List<PlantEntity>
-        val selectedId = values[1] as Long?
-        val nameValue = values[2] as String
-        val imageUriValue = values[3] as String?
-        val memoValue = values[4] as String
-        val monthsValue = values[5] as String
-        val daysValue = values[6] as String
-        val lastWateredValue = values[7] as LocalDate
-        val message = values[8] as String?
-        val mode = values[9] as String
-        val intervalDays = calculateIntervalDays(monthsValue, daysValue)
+    ) { main, days, lastWateredDate ->
+        PlantEditorState(main, days, lastWateredDate)
+    }
+
+    private val feedbackState = combine(statusMessage, screenMode) { message, mode ->
+        PlantFeedbackState(message, mode)
+    }
+
+    val uiState: StateFlow<PlantUiState> = combine(
+        repository.observePlants(),
+        editorState,
+        feedbackState,
+    ) { plants, editor, feedback ->
+        val intervalDays = calculateIntervalDays(editor.main.wateringMonths, editor.wateringDays)
+        val lastWateredDate = editor.lastWateredDate
+
         PlantUiState(
             plants = plants,
             duePlants = plants.filter { it.nextWateringDate <= LocalDate.now() },
-            selectedPlantId = selectedId,
-            name = nameValue,
-            imageUri = imageUriValue,
-            memo = memoValue,
-            wateringMonths = monthsValue,
-            wateringDays = daysValue,
-            lastWateredDate = lastWateredValue,
-            nextWateringDate = lastWateredValue.plusDays(intervalDays.toLong()),
-            statusMessage = message,
-            screenMode = mode,
+            selectedPlantId = editor.main.selectedPlantId,
+            name = editor.main.name,
+            imageUri = editor.main.imageUri,
+            memo = editor.main.memo,
+            wateringMonths = editor.main.wateringMonths,
+            wateringDays = editor.wateringDays,
+            lastWateredDate = lastWateredDate,
+            nextWateringDate = lastWateredDate.plusDays(intervalDays.toLong()),
+            statusMessage = feedback.statusMessage,
+            screenMode = feedback.screenMode,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -72,19 +102,13 @@ class PlantViewModel(
     )
 
     fun startNewPlant() {
-        selectedPlantId.value = null
-        name.value = ""
-        imageUri.value = null
-        memo.value = ""
-        wateringMonths.value = ""
-        wateringDays.value = ""
-        lastWateredDate.value = LocalDate.now()
+        resetEditor()
         statusMessage.value = null
-        screenMode.value = plantEditorMode
+        screenMode.value = PlantScreenMode.EDITOR
     }
 
     fun showList() {
-        screenMode.value = plantListMode
+        screenMode.value = PlantScreenMode.LIST
         statusMessage.value = null
     }
 
@@ -121,7 +145,7 @@ class PlantViewModel(
         wateringDays.value = (plant.wateringIntervalDays % 30).takeIf { it > 0 }?.toString().orEmpty()
         lastWateredDate.value = plant.lastWateredDate
         statusMessage.value = null
-        screenMode.value = plantEditorMode
+        screenMode.value = PlantScreenMode.EDITOR
     }
 
     fun savePlant() {
@@ -137,14 +161,8 @@ class PlantViewModel(
                     lastWateredDate = lastWateredDate.value,
                 )
             }.onSuccess {
-                selectedPlantId.value = null
-                name.value = ""
-                imageUri.value = null
-                memo.value = ""
-                wateringMonths.value = ""
-                wateringDays.value = ""
-                lastWateredDate.value = LocalDate.now()
-                screenMode.value = plantListMode
+                resetEditor()
+                screenMode.value = PlantScreenMode.LIST
                 statusMessage.value = "화분이 저장되었습니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "화분 저장에 실패했습니다."
@@ -182,8 +200,8 @@ class PlantViewModel(
                 repository.deletePlant(plantId)
             }.onSuccess {
                 if (selectedPlantId.value == plantId) {
-                    selectedPlantId.value = null
-                    screenMode.value = plantListMode
+                    resetEditor()
+                    screenMode.value = PlantScreenMode.LIST
                 }
                 statusMessage.value = "화분을 삭제했습니다."
             }.onFailure { error ->
@@ -196,6 +214,16 @@ class PlantViewModel(
         statusMessage.value = null
     }
 
+    private fun resetEditor() {
+        selectedPlantId.value = null
+        name.value = ""
+        imageUri.value = null
+        memo.value = ""
+        wateringMonths.value = ""
+        wateringDays.value = ""
+        lastWateredDate.value = LocalDate.now()
+    }
+
     private fun calculateIntervalDays(monthsValue: String, daysValue: String): Int {
         val months = monthsValue.toIntOrNull() ?: 0
         val days = daysValue.toIntOrNull() ?: 0
@@ -203,9 +231,9 @@ class PlantViewModel(
     }
 
     private fun sanitizeNumericInput(value: String): String {
-        val digitsOnly = value.filter(Char::isDigit)
-        return digitsOnly.trimStart('0').ifEmpty {
-            if (digitsOnly.isEmpty()) "" else "0"
+        val sanitized = value.digitsOnly()
+        return sanitized.trimStart('0').ifEmpty {
+            if (sanitized.isEmpty()) "" else "0"
         }
     }
 }
@@ -222,5 +250,5 @@ data class PlantUiState(
     val lastWateredDate: LocalDate = LocalDate.now(),
     val nextWateringDate: LocalDate = LocalDate.now(),
     val statusMessage: String? = null,
-    val screenMode: String = plantListMode,
+    val screenMode: PlantScreenMode = PlantScreenMode.LIST,
 )

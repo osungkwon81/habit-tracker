@@ -6,13 +6,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,8 +18,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.stock.KisOrderSide
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
@@ -33,7 +33,7 @@ import com.habittracker.ui.components.AppTextField
 
 @Composable
 fun StockOrderScreen(viewModel: StockViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showConfirmation by remember { mutableStateOf(false) }
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
@@ -42,29 +42,18 @@ fun StockOrderScreen(viewModel: StockViewModel) {
     }
 
     if (showConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showConfirmation = false },
-            title = { Text("실전 ${uiState.orderSide.label} 주문 확인") },
-            text = {
-                Text(
-                    "${uiState.productName} (${uiState.productCode})\n" +
-                        "${uiState.orderQuantity}주 · ${if (uiState.orderDivisionCode == "01") "시장가" else "${uiState.orderUnitPrice.toLongOrNull().toWon()} 지정가"}\n\n" +
-                        "조회된 ${uiState.orderSide.label} 가능 수량 ${uiState.orderAvailability?.availableQuantity ?: 0L}주\n" +
-                        "실제 계좌에 주문이 전송됩니다. 계속하시겠습니까?",
-                )
+        AppConfirmDialog(
+            title = "실전 ${uiState.orderSide.label} 주문 확인",
+            message = "${uiState.productName} (${uiState.productCode})\n" +
+                "${uiState.orderQuantity}주 · ${if (uiState.orderDivisionCode == "01") "시장가" else "${uiState.orderUnitPrice.toLongOrNull().toWon()} 지정가"}\n\n" +
+                "조회된 ${uiState.orderSide.label} 가능 수량 ${uiState.orderAvailability?.availableQuantity ?: 0L}주\n" +
+                "실제 계좌에 주문이 전송됩니다. 계속하시겠습니까?",
+            confirmText = "실전 주문 전송",
+            onConfirm = {
+                showConfirmation = false
+                viewModel.submitCashOrder()
             },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "실전 주문 전송",
-                    onClick = {
-                        showConfirmation = false
-                        viewModel.submitCashOrder()
-                    },
-                )
-            },
-            dismissButton = {
-                AppSecondaryButton(text = "취소", onClick = { showConfirmation = false })
-            },
+            onDismiss = { showConfirmation = false },
         )
     }
 

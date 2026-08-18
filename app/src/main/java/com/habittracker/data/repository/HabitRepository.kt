@@ -99,6 +99,10 @@ import kotlin.math.max
 import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
+/**
+ * ViewModel과 로컬 DB·외부 주식 API 사이의 데이터 경계를 담당한다.
+ * 화면은 DAO나 네트워크 구현을 직접 호출하지 않고 이 Repository가 제공하는 유스케이스를 사용한다.
+ */
 class HabitRepository(
     context: Context,
     private val database: HabitTrackerDatabase,
@@ -164,6 +168,10 @@ class HabitRepository(
     private val nxtAfterMarketOpenTime = LocalTime.of(15, 40)
     private val nxtAfterMarketCloseTime = LocalTime.of(20, 0)
 
+    /**
+     * 저장 작업과 암호화 백업 요청을 하나의 공통 흐름으로 묶는다.
+     * 제네릭 [T] 덕분에 insert ID처럼 저장 결과가 있는 작업도 같은 함수를 재사용할 수 있다.
+     */
     private suspend fun <T> persistChange(block: suspend () -> T): T = withContext(NonCancellable + Dispatchers.IO) {
         val result = block()
         databaseProtector.requestBackup(database)

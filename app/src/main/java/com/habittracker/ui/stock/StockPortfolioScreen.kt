@@ -8,14 +8,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.stock.StockBuyLotRow
 import com.habittracker.data.stock.isCrashGuardOrderBlock
+import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppLoadingCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
@@ -27,7 +28,7 @@ import com.habittracker.ui.components.AppTextField
 
 @Composable
 fun StockPortfolioScreen(viewModel: StockViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var pendingSellRow by remember { mutableStateOf<StockBuyLotRow?>(null) }
     var sellQuantity by remember { mutableStateOf("") }
     var showSellAllConfirmation by remember { mutableStateOf(false) }
@@ -99,7 +100,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                     Text("현재가 ${currentPrice.toWon()} 지정가로 주문합니다.")
                     AppTextField(
                         value = sellQuantity,
-                        onValueChange = { sellQuantity = it.filter(Char::isDigit) },
+                        onValueChange = { sellQuantity = it.digitsOnly() },
                         label = "매도 수량 (최대 ${order.remainingQuantity}주)",
                         singleLine = true,
                     )

@@ -20,7 +20,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
 import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.model.DiarySummaryRow
@@ -68,7 +68,8 @@ fun HomeScreen(
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    // 화면이 STARTED 이상일 때만 Flow를 수집해 백그라운드의 불필요한 작업을 막는다.
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val monthDays = buildCalendarDays(uiState.currentMonth)
     val recordedDates = remember(uiState.summaries, uiState.diarySummaries) {
         (uiState.summaries.keys + uiState.diarySummaries.keys).toSet().sortedDescending()

@@ -3,19 +3,19 @@ package com.habittracker.ui.stock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionCard
@@ -26,7 +26,7 @@ import com.habittracker.ui.components.AppTextField
 
 @Composable
 fun StockRebalanceScreen(viewModel: StockViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var confirmationLine by remember { mutableStateOf<StockRebalanceLine?>(null) }
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
@@ -35,28 +35,17 @@ fun StockRebalanceScreen(viewModel: StockViewModel) {
     }
 
     confirmationLine?.let { line ->
-        AlertDialog(
-            onDismissRequest = { confirmationLine = null },
-            title = { Text("실전 리밸런싱 주문") },
-            text = {
-                Text(
-                    "${line.productName} (${line.productCode})\n" +
-                        "${line.orderSide?.label} ${line.orderQuantity}주 · ${line.referencePrice.toWon()} 지정가\n\n" +
-                        "실제 계좌에 주문을 전송합니다.",
-                )
+        AppConfirmDialog(
+            title = "실전 리밸런싱 주문",
+            message = "${line.productName} (${line.productCode})\n" +
+                "${line.orderSide?.label} ${line.orderQuantity}주 · ${line.referencePrice.toWon()} 지정가\n\n" +
+                "실제 계좌에 주문을 전송합니다.",
+            confirmText = "주문 전송",
+            onConfirm = {
+                viewModel.executeRebalanceLine(line)
+                confirmationLine = null
             },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "주문 전송",
-                    onClick = {
-                        viewModel.executeRebalanceLine(line)
-                        confirmationLine = null
-                    },
-                )
-            },
-            dismissButton = {
-                AppSecondaryButton(text = "취소", onClick = { confirmationLine = null })
-            },
+            onDismiss = { confirmationLine = null },
         )
     }
 

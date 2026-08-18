@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +29,20 @@ enum class PensionLotteryRange(val weeks: Int, val label: String) {
     FIFTY_TWO(52, "52주"),
 }
 
+private data class PensionLotteryInputState(
+    val selectedTab: PensionLotteryTab,
+    val selectedRange: PensionLotteryRange,
+    val roundInput: String,
+    val groupInput: String,
+    val numberInputs: List<String>,
+)
+
+private data class PensionLotteryListState(
+    val recentDrawLimit: Int,
+    val matchNumberInput: String,
+    val statusMessage: String?,
+)
+
 class PensionLotteryViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
@@ -47,50 +62,53 @@ class PensionLotteryViewModel(
             }
         }
 
-    val uiState: StateFlow<PensionLotteryUiState> = combine(
-        draws,
+    private val inputState = combine(
         selectedTab,
         selectedRange,
         roundInput,
         groupInput,
         numberInputs,
+    ) { tab, range, round, group, numbers ->
+        PensionLotteryInputState(tab, range, round, group, numbers)
+    }
+
+    private val listState = combine(
         recentDrawLimit,
         matchNumberInput,
         statusMessage,
-    ) { values ->
-        val savedDraws = values[0] as List<PensionLotteryDrawEntity>
-        val tab = values[1] as PensionLotteryTab
-        val range = values[2] as PensionLotteryRange
-        val round = values[3] as String
-        val group = values[4] as String
-        val numbers = values[5] as List<String>
-        val recentLimit = values[6] as Int
-        val matchNumber = values[7] as String
-        val message = values[8] as String?
-        val rangeDraws = savedDraws.take(range.weeks)
-        val recentDraws = savedDraws.take(recentLimit)
+    ) { recentLimit, matchNumber, message ->
+        PensionLotteryListState(recentLimit, matchNumber, message)
+    }
+
+    val uiState: StateFlow<PensionLotteryUiState> = combine(
+        draws,
+        inputState,
+        listState,
+    ) { savedDraws, input, list ->
+        val rangeDraws = savedDraws.take(input.selectedRange.weeks)
+        val recentDraws = savedDraws.take(list.recentDrawLimit)
         val sixteenWeekScoreBandSummary = buildSixteenWeekScoreBandSummary(savedDraws)
 
         PensionLotteryUiState(
-            selectedTab = tab,
-            selectedRange = range,
-            roundInput = round,
-            groupInput = group,
-            numberInputs = numbers,
-            matchNumberInput = matchNumber,
-            statusMessage = message,
+            selectedTab = input.selectedTab,
+            selectedRange = input.selectedRange,
+            roundInput = input.roundInput,
+            groupInput = input.groupInput,
+            numberInputs = input.numberInputs,
+            matchNumberInput = list.matchNumberInput,
+            statusMessage = list.statusMessage,
             latestRoundNo = savedDraws.firstOrNull()?.roundNo,
             totalDrawCount = savedDraws.size,
             recentDraws = recentDraws,
             hasMoreRecentDraws = recentDraws.size < savedDraws.size,
-            recentDigitScores = buildRecentDigitScores(savedDraws, recentDraws, range.weeks),
+            recentDigitScores = buildRecentDigitScores(savedDraws, recentDraws, input.selectedRange.weeks),
             sixteenWeekScoreBandStats = sixteenWeekScoreBandSummary.stats,
             sixteenWeekScoreBandDrawCount = sixteenWeekScoreBandSummary.drawCount,
             sixteenWeekScoreBandsByRound = sixteenWeekScoreBandSummary.bandsByRound,
             sixteenWeekZeroScoreCountStats = sixteenWeekScoreBandSummary.zeroScoreCountStats,
-            matchResults = buildMatchResults(rangeDraws, matchNumber),
-            exactMatchRounds = findExactMatchRounds(savedDraws, matchNumber),
-            matchDigitScores = calculatePensionNumberScores(rangeDraws, matchNumber),
+            matchResults = buildMatchResults(rangeDraws, list.matchNumberInput),
+            exactMatchRounds = findExactMatchRounds(savedDraws, list.matchNumberInput),
+            matchDigitScores = calculatePensionNumberScores(rangeDraws, list.matchNumberInput),
             duplicateStats = buildDuplicateStats(rangeDraws, savedDraws),
             positionStats = buildPositionStats(rangeDraws, savedDraws),
             positionScores = buildPositionScores(rangeDraws),
@@ -111,22 +129,22 @@ class PensionLotteryViewModel(
     }
 
     fun updateRoundInput(value: String) {
-        roundInput.value = value.filter(Char::isDigit)
+        roundInput.value = value.digitsOnly()
     }
 
     fun updateGroupInput(value: String) {
-        groupInput.value = value.filter(Char::isDigit).take(1)
+        groupInput.value = value.digitsOnly().take(1)
     }
 
     fun updateNumberInput(index: Int, value: String) {
         if (index !in 0..5) return
         numberInputs.value = numberInputs.value.toMutableList().also { inputs ->
-            inputs[index] = value.filter(Char::isDigit).takeLast(1)
+            inputs[index] = value.digitsOnly().takeLast(1)
         }
     }
 
     fun updateMatchNumberInput(value: String) {
-        matchNumberInput.value = value.filter(Char::isDigit).take(6)
+        matchNumberInput.value = value.digitsOnly().take(6)
     }
 
     fun loadMoreRecentDraws() {

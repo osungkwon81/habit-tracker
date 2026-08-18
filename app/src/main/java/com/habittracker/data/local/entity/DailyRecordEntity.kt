@@ -7,6 +7,7 @@ import androidx.room.PrimaryKey
 import java.time.LocalDate
 import java.time.LocalDateTime
 
+/** 하루에 하나만 존재하는 기록의 머리글이며, 세부 습관 값은 DailyRecordItemEntity에 저장된다. */
 @Entity(
     tableName = "daily_record",
     indices = [Index(value = ["record_date"], unique = true)],

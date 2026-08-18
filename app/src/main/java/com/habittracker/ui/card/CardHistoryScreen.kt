@@ -2,7 +2,6 @@ package com.habittracker.ui.card
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import com.habittracker.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -28,7 +27,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,7 +45,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.R
 import com.habittracker.data.local.entity.CardHistoryEntity
+import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -65,7 +66,7 @@ private val CardSeriesColors = listOf(Color(0xFF285A4B), Color(0xFFDA8B45), Colo
 
 @Composable
 fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var inputUseDate by remember { mutableStateOf(LocalDate.now().minusDays(1).toString()) }
     val summaryDate = inputUseDate.toLocalDateOrNull() ?: LocalDate.now().minusDays(1)
     val topSummary = remember(uiState.histories, summaryDate) {
@@ -262,7 +263,7 @@ private fun CardPaymentSettingsCard(paymentDay: Int, onSave: (String) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = input,
-                    onValueChange = { input = it.filter(Char::isDigit).take(2) },
+                    onValueChange = { input = it.digitsOnly().take(2) },
                     modifier = Modifier.weight(1f),
                     label = { Text("결제일") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -327,7 +328,7 @@ private fun CardHistoryInputCard(
         }
         OutlinedTextField(
             value = amount,
-            onValueChange = { amount = it.filter(Char::isDigit) },
+            onValueChange = { amount = it.digitsOnly() },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("결제 예정 금액") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

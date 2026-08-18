@@ -2,7 +2,6 @@
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import com.habittracker.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,7 +23,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,11 +35,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.R
 import com.habittracker.data.local.entity.MemoNoteEntity
+import com.habittracker.ui.digitsOnly
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppButtonRow
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -49,26 +50,18 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import java.time.format.DateTimeFormatter
 
 @Composable
 fun MemoScreen(viewModel: MemoViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var passwordDialogTarget by remember { mutableStateOf<MemoNoteEntity?>(null) }
     var unlockPassword by remember { mutableStateOf("") }
     var showUnlockPassword by remember { mutableStateOf(false) }
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
-
-    if (passwordDialogTarget != null) {
+    // nullable 값을 let으로 좁히면 다이얼로그 내부에서 강제 언래핑(!!) 없이 안전하게 사용할 수 있다.
+    passwordDialogTarget?.let { targetMemo ->
         AlertDialog(
             onDismissRequest = {
                 passwordDialogTarget = null
@@ -77,7 +70,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
             },
             confirmButton = {
                 AppPrimaryButton(text = "열기", onClick = {
-                    viewModel.unlockMemo(passwordDialogTarget!!.id, unlockPassword)
+                    viewModel.unlockMemo(targetMemo.id, unlockPassword)
                     passwordDialogTarget = null
                     unlockPassword = ""
                     showUnlockPassword = false
@@ -99,7 +92,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
                     Text("이 메모는 잠겨 있습니다. 4~10자리 비밀번호를 입력해 주세요.")
                     AppTextField(
                         value = unlockPassword,
-                        onValueChange = { unlockPassword = it.filter(Char::isDigit).take(10) },
+                        onValueChange = { unlockPassword = it.digitsOnly().take(10) },
                         label = "비밀번호 4~10자리",
                         singleLine = true,
                         visualTransformation = if (showUnlockPassword) VisualTransformation.None else PasswordVisualTransformation(),
@@ -114,18 +107,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
         )
     }
 
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
-    }
-
-    if (uiState.screenMode == "editor") {
+    if (uiState.screenMode == MemoScreenMode.EDITOR) {
         MemoEditorScreen(viewModel = viewModel, uiState = uiState)
     } else {
         MemoListScreen(

@@ -13,7 +13,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.stock.StockAutomationService
 import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockRuleAction
@@ -40,7 +40,7 @@ import kotlin.math.roundToLong
 
 @Composable
 fun StockAutomationScreen(viewModel: StockViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var notificationPermissionDenied by remember { mutableStateOf(false) }
     StockStatusDialog(uiState, viewModel::clearStatusMessage)

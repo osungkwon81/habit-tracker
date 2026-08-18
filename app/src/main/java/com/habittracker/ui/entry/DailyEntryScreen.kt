@@ -21,7 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -34,9 +33,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.local.ValueType
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -45,16 +45,7 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppTextField
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import java.time.LocalDate
-
-private val EntryHeroColor = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
-private val EntryHeroSubColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
-private val EntryCardColor = androidx.compose.ui.graphics.Color(0xFFFFFFFF)
-private val EntryExerciseCardColor = androidx.compose.ui.graphics.Color(0xFFF2F4F3)
-private val EntryTextStrongColor = androidx.compose.ui.graphics.Color(0xFF171C19)
-private val EntryTextMutedColor = androidx.compose.ui.graphics.Color(0xFF5C6661)
 
 @Composable
 fun DailyEntryScreen(
@@ -63,26 +54,22 @@ fun DailyEntryScreen(
     onOpenAdmin: (() -> Unit)? = null,
     onOpenStats: (() -> Unit)? = null,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // 서버/DB에서 온 uiState와 사용자가 편집 중인 임시 입력값을 분리해 저장 전 변경도 즉시 화면에 보인다.
     var dateInput by remember(initialDate) { mutableStateOf(TextFieldValue(initialDate)) }
     var memo by remember(uiState.selectedDate, uiState.memo) { mutableStateOf(TextFieldValue(uiState.memo)) }
     var isHoliday by remember(uiState.selectedDate, uiState.isHoliday) { mutableStateOf(uiState.isHoliday) }
     var expanded by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf(false) }
     var selectedCategory by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf("전체") }
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
+    // SnapshotStateList는 항목 하나가 바뀌어도 Compose가 변경을 감지해 필요한 영역만 다시 그린다.
     val editableItems = remember(uiState.selectedDate, uiState.taskItems) { mutableStateListOf<TaskItemEditorState>().apply { addAll(uiState.taskItems.map(TaskItemEditorState.Companion::from)) } }
     val visibleItemIds = remember(uiState.selectedDate, uiState.taskItems) {
         mutableStateOf(uiState.taskItems.map(TaskItemInputState::taskItemMasterId).toMutableSet())
     }
 
     LaunchedEffect(initialDate) { viewModel.loadRecord(initialDate) }
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     val categories = remember(uiState.taskItems) { listOf("전체") + uiState.taskItems.map(TaskItemInputState::category).distinct() }
     val hiddenItems = editableItems.filterNot { visibleItemIds.value.contains(it.taskItemMasterId) }
@@ -102,17 +89,6 @@ fun DailyEntryScreen(
             uiState.selectedDate.monthValue - 1,
             uiState.selectedDate.dayOfMonth,
         ).show()
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
     }
 
     AppScreen {

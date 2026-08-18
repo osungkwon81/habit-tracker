@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -32,7 +31,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,10 +49,11 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppEditButton
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -64,8 +63,6 @@ import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -75,10 +72,6 @@ private data class WeatherOption(
     val label: String,
 )
 
-private val DiaryTitleCardColor = Color(0xFFFFFFFF)
-private val DiaryBodyCardColor = Color(0xFFF7F8F7)
-private val DiaryHeroColor = Color(0xFFFFFFFF)
-private val DiaryHeroSubColor = Color(0xFF5C6661)
 private val DiaryTextStrongColor = Color(0xFF171C19)
 private val DiaryTextMutedColor = Color(0xFF5C6661)
 private const val DiaryImageTokenPrefix = "![image]("
@@ -86,11 +79,12 @@ private const val DiaryImageTokenSuffix = ")"
 
 @Composable
 fun DiaryScreen(viewModel: DiaryViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     when (uiState.screenMode) {
-        "editor" -> DiaryEditorScreen(viewModel = viewModel, uiState = uiState)
-        "detail" -> DiaryDetailScreen(viewModel = viewModel, uiState = uiState)
-        else -> DiaryListScreen(viewModel = viewModel, uiState = uiState)
+        DiaryScreenMode.EDITOR -> DiaryEditorScreen(viewModel = viewModel, uiState = uiState)
+        DiaryScreenMode.DETAIL -> DiaryDetailScreen(viewModel = viewModel, uiState = uiState)
+        DiaryScreenMode.LIST -> DiaryListScreen(viewModel = viewModel, uiState = uiState)
     }
 }
 
@@ -164,14 +158,6 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         WeatherOption("눈"),
         WeatherOption("바람"),
     )
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
 
     val openDatePicker = {
         DatePickerDialog(
@@ -214,17 +200,6 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
                 }
             }
         }
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
     }
 
     AppScreen {

@@ -11,14 +11,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,8 +27,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
 import com.habittracker.ui.components.AppEmptyCard
+import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
@@ -48,28 +48,19 @@ fun PensionLotteryGeneratorScreen(
     viewModel: PensionLotteryGeneratorViewModel,
     onBack: () -> Unit,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var deleteTarget by remember { mutableStateOf<PensionLotteryGenerationHistory?>(null) }
 
     deleteTarget?.let { history ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "삭제",
-                    onClick = {
-                        viewModel.deleteGeneration(history.generationId)
-                        deleteTarget = null
-                    },
-                )
+        AppConfirmDialog(
+            title = "생성 히스토리 삭제",
+            message = "${history.generatedAt.format(PensionGenerationTimeFormatter)} 생성 번호를 삭제합니다.",
+            confirmText = "삭제",
+            onConfirm = {
+                viewModel.deleteGeneration(history.generationId)
+                deleteTarget = null
             },
-            dismissButton = {
-                AppSecondaryButton(text = "취소", onClick = { deleteTarget = null })
-            },
-            title = { Text("생성 히스토리 삭제") },
-            text = {
-                Text("${history.generatedAt.format(PensionGenerationTimeFormatter)} 생성 번호를 삭제합니다.")
-            },
+            onDismiss = { deleteTarget = null },
         )
     }
 

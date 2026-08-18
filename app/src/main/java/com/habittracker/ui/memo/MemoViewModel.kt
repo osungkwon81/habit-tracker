@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,8 +19,26 @@ import kotlinx.coroutines.launch
 
 private const val memoPageSize = 10
 private const val memoSearchDebounceMillis = 300L
-private const val listMode = "list"
-private const val editorMode = "editor"
+
+/** 목록과 편집 화면에서 허용하는 상태만 표현한다. */
+enum class MemoScreenMode {
+    LIST,
+    EDITOR,
+}
+
+private data class MemoEditorState(
+    val memoId: Long?,
+    val title: String,
+    val content: String,
+    val isLocked: Boolean,
+    val password: String,
+)
+
+private data class MemoListState(
+    val memoNotes: List<MemoNoteEntity>,
+    val searchQuery: String,
+    val visibleLimit: Int,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class MemoViewModel(
@@ -31,7 +50,7 @@ class MemoViewModel(
     private val isLocked = MutableStateFlow(false)
     private val password = MutableStateFlow("")
     private val statusMessage = MutableStateFlow<String?>(null)
-    private val screenMode = MutableStateFlow(listMode)
+    private val screenMode = MutableStateFlow(MemoScreenMode.LIST)
     private val searchQuery = MutableStateFlow("")
     private val visibleLimit = MutableStateFlow(memoPageSize)
 
@@ -46,41 +65,43 @@ class MemoViewModel(
             }
         }
 
-    val uiState: StateFlow<MemoUiState> = combine(
-        memoNotesFlow,
+    private val editorState = combine(
         selectedMemoId,
         title,
         content,
         isLocked,
         password,
-        statusMessage,
-        screenMode,
+    ) { memoId, title, content, isLocked, password ->
+        MemoEditorState(memoId, title, content, isLocked, password)
+    }
+
+    private val listState = combine(
+        memoNotesFlow,
         searchQuery,
         visibleLimit,
-    ) { values ->
-        val memoNotes = values[0] as List<MemoNoteEntity>
-        val memoId = values[1] as Long?
-        val titleValue = values[2] as String
-        val contentValue = values[3] as String
-        val lockedValue = values[4] as Boolean
-        val passwordValue = values[5] as String
-        val message = values[6] as String?
-        val mode = values[7] as String
-        val query = values[8] as String
-        val limit = values[9] as Int
+    ) { memoNotes, query, limit ->
+        MemoListState(memoNotes, query, limit)
+    }
 
+    // 작은 상태 묶음을 다시 합치면 인덱스 접근과 `as` 강제 형변환 없이 UI 상태를 만들 수 있다.
+    val uiState: StateFlow<MemoUiState> = combine(
+        editorState,
+        listState,
+        statusMessage,
+        screenMode,
+    ) { editor, list, message, mode ->
         MemoUiState(
-            memoNotes = memoNotes,
-            selectedMemoId = memoId,
-            title = titleValue,
-            content = contentValue,
-            isLocked = lockedValue,
-            password = passwordValue,
+            memoNotes = list.memoNotes,
+            selectedMemoId = editor.memoId,
+            title = editor.title,
+            content = editor.content,
+            isLocked = editor.isLocked,
+            password = editor.password,
             statusMessage = message,
             screenMode = mode,
-            searchQuery = query,
-            visibleLimit = limit,
-            canLoadMore = memoNotes.size >= limit,
+            searchQuery = list.searchQuery,
+            visibleLimit = list.visibleLimit,
+            canLoadMore = list.memoNotes.size >= list.visibleLimit,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -104,7 +125,7 @@ class MemoViewModel(
     }
 
     fun updatePassword(value: String) {
-        password.value = value.filter(Char::isDigit).take(10)
+        password.value = value.digitsOnly().take(10)
     }
 
     fun updateSearchQuery(value: String) {
@@ -119,18 +140,14 @@ class MemoViewModel(
     }
 
     fun showList() {
-        screenMode.value = listMode
+        screenMode.value = MemoScreenMode.LIST
         statusMessage.value = null
     }
 
     fun startNewMemo() {
-        selectedMemoId.value = null
-        title.value = ""
-        content.value = ""
-        isLocked.value = false
-        password.value = ""
+        resetEditor()
         statusMessage.value = null
-        screenMode.value = editorMode
+        screenMode.value = MemoScreenMode.EDITOR
     }
 
     fun openMemo(memoNote: MemoNoteEntity) {
@@ -140,7 +157,7 @@ class MemoViewModel(
         isLocked.value = memoNote.isLocked
         password.value = ""
         statusMessage.value = null
-        screenMode.value = editorMode
+        screenMode.value = MemoScreenMode.EDITOR
     }
 
     fun unlockMemo(memoId: Long, password: String) {
@@ -184,12 +201,8 @@ class MemoViewModel(
                     password = password.value.takeIf(String::isNotEmpty),
                 )
             }.onSuccess {
-                selectedMemoId.value = null
-                title.value = ""
-                content.value = ""
-                isLocked.value = false
-                password.value = ""
-                screenMode.value = listMode
+                resetEditor()
+                screenMode.value = MemoScreenMode.LIST
                 statusMessage.value = if (lockedSnapshot) {
                     "잠금 메모가 저장되었습니다."
                 } else {
@@ -207,12 +220,8 @@ class MemoViewModel(
             runCatching {
                 repository.deleteMemoNote(memoId)
             }.onSuccess {
-                selectedMemoId.value = null
-                title.value = ""
-                content.value = ""
-                isLocked.value = false
-                password.value = ""
-                screenMode.value = listMode
+                resetEditor()
+                screenMode.value = MemoScreenMode.LIST
                 statusMessage.value = "메모를 삭제했습니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "메모 삭제에 실패했습니다."
@@ -222,6 +231,14 @@ class MemoViewModel(
 
     fun clearStatusMessage() {
         statusMessage.value = null
+    }
+
+    private fun resetEditor() {
+        selectedMemoId.value = null
+        title.value = ""
+        content.value = ""
+        isLocked.value = false
+        password.value = ""
     }
 }
 
@@ -233,7 +250,7 @@ data class MemoUiState(
     val isLocked: Boolean = false,
     val password: String = "",
     val statusMessage: String? = null,
-    val screenMode: String = listMode,
+    val screenMode: MemoScreenMode = MemoScreenMode.LIST,
     val searchQuery: String = "",
     val visibleLimit: Int = memoPageSize,
     val canLoadMore: Boolean = false,

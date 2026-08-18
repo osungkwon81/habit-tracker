@@ -34,7 +34,11 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,6 +87,12 @@ fun String.actionNoticeDialogTitle(): String = when {
     else -> "처리 완료"
 }
 
+/**
+ * 모든 화면이 같은 여백과 배경을 사용하도록 만든 최상위 화면 컨테이너다.
+ *
+ * [content]가 `LazyListScope.() -> Unit`인 것은 Kotlin의 수신 객체 지정 람다 예시다.
+ * 호출하는 쪽에서는 `item { ... }`, `items(...)`를 바로 사용할 수 있다.
+ */
 @Composable
 fun AppScreen(
     modifier: Modifier = Modifier,
@@ -105,6 +115,10 @@ fun AppScreen(
     )
 }
 
+/**
+ * 제목 영역의 공통 레이아웃이다.
+ * nullable 매개변수와 Composable 슬롯을 사용해 화면마다 필요한 내용만 선택적으로 끼운다.
+ */
 @Composable
 fun AppHeroCard(
     title: String,
@@ -495,6 +509,66 @@ fun AppNoticeDialog(
         },
         title = { Text(title) },
         text = { Text(message, color = MaterialTheme.colorScheme.onSurface) },
+    )
+}
+
+/**
+ * ViewModel의 상태 메시지를 일회성 알림창으로 보여 주는 공통 상태 호이스팅 컴포넌트다.
+ *
+ * 화면은 메시지와 닫기 동작만 전달하고, 다이얼로그를 열어 둘 로컬 상태는 이곳에서 관리한다.
+ * 새 메시지가 도착할 때 실행해야 하는 작업은 [LaunchedEffect]로 분리한다.
+ */
+@Composable
+fun AppActionNotice(
+    message: String?,
+    onDismiss: () -> Unit,
+) {
+    var dialogMessage by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(message) {
+        val currentMessage = message.orEmpty()
+        if (currentMessage.shouldShowActionNoticeDialog()) {
+            dialogMessage = currentMessage
+        }
+    }
+
+    dialogMessage?.let { currentMessage ->
+        AppNoticeDialog(
+            message = currentMessage,
+            onDismiss = {
+                dialogMessage = null
+                onDismiss()
+            },
+            title = currentMessage.actionNoticeDialogTitle(),
+        )
+    }
+}
+
+/** 단순 확인/취소 다이얼로그의 버튼 배치와 스타일을 공통화한다. */
+@Composable
+fun AppConfirmDialog(
+    title: String,
+    confirmText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    message: String? = null,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            AppPrimaryButton(text = confirmText, onClick = onConfirm)
+        },
+        dismissButton = {
+            AppSecondaryButton(text = "취소", onClick = onDismiss)
+        },
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                message?.let { Text(it, color = MaterialTheme.colorScheme.onSurface) }
+                content?.invoke(this)
+            }
+        },
     )
 }
 

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -26,8 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -41,11 +38,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.local.entity.PlantEntity
+import com.habittracker.ui.components.AppActionNotice
+import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppEditButton
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -54,8 +53,6 @@ import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -65,53 +62,28 @@ import java.util.UUID
 
 @Composable
 fun PlantScreen(viewModel: PlantViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     when (uiState.screenMode) {
-        "editor" -> PlantEditorScreen(viewModel = viewModel, uiState = uiState)
-        else -> PlantListScreen(viewModel = viewModel, uiState = uiState)
+        PlantScreenMode.EDITOR -> PlantEditorScreen(viewModel = viewModel, uiState = uiState)
+        PlantScreenMode.LIST -> PlantListScreen(viewModel = viewModel, uiState = uiState)
     }
 }
 
 @Composable
 private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
     var deleteTarget by remember { mutableStateOf<PlantEntity?>(null) }
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
 
     deleteTarget?.let { plant ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "삭제",
-                    onClick = {
-                        viewModel.deletePlant(plant.id)
-                        deleteTarget = null
-                    },
-                )
+        AppConfirmDialog(
+            title = "화분 삭제",
+            message = "${plant.name} 정보를 삭제합니다.",
+            confirmText = "삭제",
+            onConfirm = {
+                viewModel.deletePlant(plant.id)
+                deleteTarget = null
             },
-            dismissButton = {
-                AppSecondaryButton(text = "취소", onClick = { deleteTarget = null })
-            },
-            title = { Text("화분 삭제") },
-            text = { Text("${plant.name} 정보를 삭제합니다.") },
-        )
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
+            onDismiss = { deleteTarget = null },
         )
     }
 
@@ -183,7 +155,6 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
 private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
     val context = LocalContext.current
     var expandedImageUri by remember { mutableStateOf<String?>(null) }
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
     val openDatePicker = {
         DatePickerDialog(
             context,
@@ -204,13 +175,6 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
             )
         }
         viewModel.updateImageUri(copyPlantImageToAppStorage(context, uri) ?: uri.toString())
-    }
-
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
     }
 
     if (expandedImageUri != null) {
@@ -236,17 +200,6 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                 }
             }
         }
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
     }
 
     AppScreen {

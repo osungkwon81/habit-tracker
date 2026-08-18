@@ -1,7 +1,6 @@
 ﻿package com.habittracker.ui.lotto
 
 import androidx.compose.foundation.background
-import com.habittracker.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +20,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,7 +30,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.R
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
@@ -56,10 +55,11 @@ import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.lotto.LottoScoreCorrelation
 import com.habittracker.data.lotto.LottoScorePerformance
+import com.habittracker.ui.digitsOnly
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppLoadingCard
-import com.habittracker.ui.components.AppNoticeDialog
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
@@ -68,8 +68,6 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
-import com.habittracker.ui.components.actionNoticeDialogTitle
-import com.habittracker.ui.components.shouldShowActionNoticeDialog
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -77,8 +75,6 @@ import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
-private val LottoHeroColor = Color(0xFFFFFFFF)
-private val LottoHeroSubColor = Color(0xFF5C6661)
 private val LottoCardColor = Color(0xFFFFFFFF)
 private val LottoTextStrongColor = Color(0xFF171C19)
 private val LottoTextMutedColor = Color(0xFF5C6661)
@@ -89,26 +85,8 @@ fun LottoScreen(
     viewModel: LottoViewModel,
     onBackToLotteryHome: () -> Unit,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    var noticeMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uiState.statusMessage) {
-        val message = uiState.statusMessage.orEmpty()
-        if (message.shouldShowActionNoticeDialog()) {
-            noticeMessage = message
-        }
-    }
-
-    noticeMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = {
-                noticeMessage = null
-                viewModel.clearStatusMessage()
-            },
-            title = message.actionNoticeDialogTitle(),
-        )
-    }
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     AppScreen {
         item {
@@ -129,21 +107,21 @@ fun LottoScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AppSelectableChip(label = "번호 생성", selected = uiState.selectedTab == "generator", onClick = viewModel::selectGeneratorTab)
-                AppSelectableChip(label = "구입 이력", selected = uiState.selectedTab == "purchase", onClick = viewModel::selectPurchaseTab)
-                AppSelectableChip(label = "추첨결과", selected = uiState.selectedTab == "draw", onClick = viewModel::selectDrawTab)
+                AppSelectableChip(label = "번호 생성", selected = uiState.selectedTab == LottoTab.GENERATOR, onClick = viewModel::selectGeneratorTab)
+                AppSelectableChip(label = "구입 이력", selected = uiState.selectedTab == LottoTab.PURCHASE, onClick = viewModel::selectPurchaseTab)
+                AppSelectableChip(label = "추첨결과", selected = uiState.selectedTab == LottoTab.DRAW, onClick = viewModel::selectDrawTab)
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AppSelectableChip(label = "저장번호", selected = uiState.selectedTab == "saved", onClick = viewModel::selectSavedTab)
-                AppSelectableChip(label = "당첨 이력", selected = uiState.selectedTab == "winning", onClick = viewModel::selectWinningTab)
-                AppSelectableChip(label = "통계", selected = uiState.selectedTab == "stats", onClick = viewModel::selectStatsTab)
+                AppSelectableChip(label = "저장번호", selected = uiState.selectedTab == LottoTab.SAVED, onClick = viewModel::selectSavedTab)
+                AppSelectableChip(label = "당첨 이력", selected = uiState.selectedTab == LottoTab.WINNING, onClick = viewModel::selectWinningTab)
+                AppSelectableChip(label = "통계", selected = uiState.selectedTab == LottoTab.STATS, onClick = viewModel::selectStatsTab)
             }
         }
         item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }
         when (uiState.selectedTab) {
-            "generator" -> {
+            LottoTab.GENERATOR -> {
                 item {
                     GeneratorSection(
                         selectedMode = uiState.generationMode,
@@ -199,7 +177,7 @@ fun LottoScreen(
                     item { SavedTicketGroupCard(roundNo = uiState.nextRoundNo, tickets = uiState.savedTickets) }
                 }
             }
-            "draw" -> {
+            LottoTab.DRAW -> {
                 item {
                     SaveSection(
                         roundInput = uiState.roundInput,
@@ -228,7 +206,7 @@ fun LottoScreen(
                     items(uiState.savedDraws, key = { it.roundNo }) { draw -> LottoDrawCard(draw = draw) }
                 }
             }
-            "purchase" -> {
+            LottoTab.PURCHASE -> {
                 item {
                     PurchaseSection(
                         defaultRoundNo = uiState.nextRoundNo,
@@ -248,7 +226,7 @@ fun LottoScreen(
                     }
                 }
             }
-            "winning" -> {
+            LottoTab.WINNING -> {
                 item {
                     WinningSection(
                         defaultRoundNo = uiState.latestSavedRoundNo,
@@ -268,7 +246,7 @@ fun LottoScreen(
                     }
                 }
             }
-            "saved" -> {
+            LottoTab.SAVED -> {
                 item {
                     SavedNumbersSection(
                         currentRoundNo = uiState.nextRoundNo,
@@ -282,7 +260,7 @@ fun LottoScreen(
                     )
                 }
             }
-            "stats" -> {
+            LottoTab.STATS -> {
                 item {
                     LottoStatsSection(
                         totalPurchase = uiState.totalPurchaseAmount,
@@ -850,7 +828,7 @@ private fun PurchaseSection(
         if (lottoType == "로또") {
             OutlinedTextField(
                 value = roundNo,
-                onValueChange = { roundNo = it.filter(Char::isDigit) },
+                onValueChange = { roundNo = it.digitsOnly() },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("구입 회차") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -936,8 +914,8 @@ private fun WinningSection(
                 modifier = Modifier.weight(1f),
             )
         }
-        OutlinedTextField(value = roundNo, onValueChange = { roundNo = it.filter(Char::isDigit) }, modifier = Modifier.fillMaxWidth(), label = { Text("회차") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-        OutlinedTextField(value = amount, onValueChange = { amount = it.filter(Char::isDigit) }, modifier = Modifier.fillMaxWidth(), label = { Text("당첨 금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        OutlinedTextField(value = roundNo, onValueChange = { roundNo = it.digitsOnly() }, modifier = Modifier.fillMaxWidth(), label = { Text("회차") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+        OutlinedTextField(value = amount, onValueChange = { amount = it.digitsOnly() }, modifier = Modifier.fillMaxWidth(), label = { Text("당첨 금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         if (amount.isNotBlank()) {
             Text(text = formatWon(amount.toLongOrNull() ?: 0L), color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
         }
@@ -1405,25 +1383,4 @@ private fun lottoBallColor(number: Int) = when (number) {
     in 21..30 -> Color(0xFFFF6B6B)
     in 31..40 -> Color(0xFFA0A0A0)
     else -> Color(0xFF76B947)
-}
-
-@Composable
-private fun EmptyCard(message: String) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Text(text = message, modifier = Modifier.fillMaxWidth().padding(16.dp), color = LottoTextMutedColor)
-    }
-}
-
-@Composable
-private fun LoadingCard(message: String) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator()
-            Text(text = message, color = LottoTextMutedColor)
-        }
-    }
 }

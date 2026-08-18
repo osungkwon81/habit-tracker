@@ -34,6 +34,7 @@ import com.habittracker.data.local.entity.TaskItemAttachmentEntity
 import com.habittracker.data.local.entity.TaskItemMasterEntity
 import com.habittracker.data.local.entity.VocabularyWordEntity
 
+/** Entity, DAO, 타입 변환기와 스키마 버전을 Room에 등록하는 데이터베이스 진입점이다. */
 @Database(
     entities = [
         TaskItemMasterEntity::class,
@@ -74,6 +75,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
         const val DB_NAME = "habit-tracker.db"
         const val DB_VERSION = 29
 
+        // builder와 create를 나누면 암호화/복구 계층이 필요에 따라 빌더 설정을 재사용할 수 있다.
         fun builder(context: Context) =
             Room.databaseBuilder(
                 context.applicationContext,

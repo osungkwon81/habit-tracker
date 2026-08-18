@@ -2,6 +2,7 @@
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.model.DiarySearchRow
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -18,11 +19,21 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-private const val diaryListMode = "list"
-private const val diaryDetailMode = "detail"
-private const val diaryEditorMode = "editor"
 private const val diaryPageSize = 20
 private const val diarySearchDebounceMillis = 300L
+
+/** 문자열 대신 enum을 사용하면 오타로 존재하지 않는 화면 상태가 만들어지는 것을 막을 수 있다. */
+enum class DiaryScreenMode {
+    LIST,
+    DETAIL,
+    EDITOR,
+}
+
+private data class DiaryContentState(
+    val diary: DailyDiaryEntity?,
+    val statusMessage: String?,
+    val searchQuery: String,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class DiaryViewModel(
@@ -32,7 +43,7 @@ class DiaryViewModel(
     private val reloadToken = MutableStateFlow(0)
     private val message = MutableStateFlow<String?>(null)
     private val searchQuery = MutableStateFlow("")
-    private val screenMode = MutableStateFlow(diaryListMode)
+    private val screenMode = MutableStateFlow(DiaryScreenMode.LIST)
     private val visibleLimit = MutableStateFlow(diaryPageSize)
 
     private val diaryListFlow = combine(searchQuery, visibleLimit) { query, limit -> query to limit }
@@ -46,28 +57,34 @@ class DiaryViewModel(
             }
         }
 
-    val uiState: StateFlow<DiaryUiState> = combine(
-        combine(selectedDate, reloadToken) { date, token -> date to token }
-            .flatMapLatest { (date, _) -> flow { emit(repository.getDiary(date)) } },
+    private val selectedDiary = combine(selectedDate, reloadToken) { date, token -> date to token }
+        .flatMapLatest { (date, _) -> flow { emit(repository.getDiary(date)) } }
+
+    /*
+     * 많은 Flow를 한 번에 합치면 Array<Any?>와 강제 형변환이 생긴다.
+     * 관련 상태를 작은 data class로 먼저 묶으면 이후 combine이 타입 안전해진다.
+     */
+    private val contentState = combine(
+        selectedDiary,
         message,
         searchQuery,
+    ) { diary, statusMessage, query ->
+        DiaryContentState(diary, statusMessage, query)
+    }
+
+    val uiState: StateFlow<DiaryUiState> = combine(
+        contentState,
         diaryListFlow,
         screenMode,
-    ) { values ->
-        val diary = values[0] as com.habittracker.data.local.entity.DailyDiaryEntity?
-        val statusMessage = values[1] as String?
-        val query = values[2] as String
-        val diaryList = values[3] as List<DiarySearchRow>
-        val mode = values[4] as String
-
+    ) { content, diaryList, mode ->
         DiaryUiState(
-            diaryDate = diary?.diaryDate ?: selectedDate.value,
-            title = diary?.title.orEmpty(),
-            body = diary?.body.orEmpty(),
-            weather = diary?.weather ?: "맑음",
-            imageUris = diary?.imageUris?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
-            statusMessage = statusMessage,
-            searchQuery = query,
+            diaryDate = content.diary?.diaryDate ?: selectedDate.value,
+            title = content.diary?.title.orEmpty(),
+            body = content.diary?.body.orEmpty(),
+            weather = content.diary?.weather ?: "맑음",
+            imageUris = content.diary?.imageUris?.split("\n")?.filter(String::isNotBlank) ?: emptyList(),
+            statusMessage = content.statusMessage,
+            searchQuery = content.searchQuery,
             searchResults = diaryList,
             canLoadMore = diaryList.size >= visibleLimit.value,
             screenMode = mode,
@@ -84,7 +101,7 @@ class DiaryViewModel(
                 selectedDate.value = it
                 reloadToken.value += 1
                 message.value = null
-                screenMode.value = diaryDetailMode
+                screenMode.value = DiaryScreenMode.DETAIL
             }
             .onFailure {
                 message.value = "날짜 형식은 YYYY-MM-DD로 입력해 주세요."
@@ -109,16 +126,16 @@ class DiaryViewModel(
         selectedDate.value = diaryDate
         reloadToken.value += 1
         message.value = null
-        screenMode.value = diaryDetailMode
+        screenMode.value = DiaryScreenMode.DETAIL
     }
 
     fun showList() {
-        screenMode.value = diaryListMode
+        screenMode.value = DiaryScreenMode.LIST
         message.value = null
     }
 
     fun editCurrentDiary() {
-        screenMode.value = diaryEditorMode
+        screenMode.value = DiaryScreenMode.EDITOR
         message.value = null
     }
 
@@ -126,7 +143,7 @@ class DiaryViewModel(
         selectedDate.value = LocalDate.now()
         reloadToken.value += 1
         message.value = null
-        screenMode.value = diaryEditorMode
+        screenMode.value = DiaryScreenMode.EDITOR
     }
 
     fun saveDiary(rawDate: String, title: String, body: String, weather: String, imageUris: List<String>) {
@@ -137,7 +154,7 @@ class DiaryViewModel(
                 selectedDate.value = diaryDate
                 reloadToken.value += 1
             }.onSuccess {
-                screenMode.value = diaryDetailMode
+                screenMode.value = DiaryScreenMode.DETAIL
                 message.value = "일기가 저장되었습니다."
             }.onFailure { error ->
                 message.value = error.message ?: "일기 저장에 실패했습니다."
@@ -160,5 +177,5 @@ data class DiaryUiState(
     val searchQuery: String = "",
     val searchResults: List<DiarySearchRow> = emptyList(),
     val canLoadMore: Boolean = false,
-    val screenMode: String = diaryListMode,
+    val screenMode: DiaryScreenMode = DiaryScreenMode.LIST,
 )

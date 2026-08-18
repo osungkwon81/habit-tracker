@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.CardHistoryEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -60,7 +61,7 @@ class CardHistoryViewModel(
     }
 
     fun updatePaymentDay(value: String) {
-        val parsed = value.filter(Char::isDigit).toIntOrNull()
+        val parsed = value.digitsOnly().toIntOrNull()
         if (parsed == null || parsed !in 1..28) {
             statusMessage.value = "결제일은 1일부터 28일 사이로 입력해 주세요."
             return
@@ -76,7 +77,7 @@ class CardHistoryViewModel(
                 val parsedUseDate = LocalDate.parse(useDate)
                 repository.saveCardHistory(
                     useDate = parsedUseDate,
-                    amount = amount.filter(Char::isDigit).toLongOrNull() ?: 0L,
+                    amount = amount.digitsOnly().toLongOrNull() ?: 0L,
                     memo = memo,
                 )
             }.onSuccess {

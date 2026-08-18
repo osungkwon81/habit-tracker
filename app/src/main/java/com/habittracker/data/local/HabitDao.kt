@@ -42,6 +42,10 @@ import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 import java.time.LocalDateTime
 
+/**
+ * Room이 구현체를 자동 생성하는 데이터 접근 인터페이스다.
+ * `Flow` 반환 조회는 테이블이 바뀌면 새 결과를 방출하고, `suspend` 함수는 코루틴에서 실행한다.
+ */
 @Dao
 interface HabitDao {
     @Query(

@@ -19,6 +19,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -67,6 +69,7 @@ import com.habittracker.ui.stock.StockViewModel
 import com.habittracker.ui.theme.HabitTrackerTheme
 import java.time.LocalDate
 
+/** Android 진입점은 테마와 최상위 Composable만 연결하고 화면 로직은 Compose 계층에 맡긴다. */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,54 +84,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun HabitTrackerApp() {
     val navController = rememberNavController()
-    val bottomDestinations = listOf(
-        AppDestination.HOME,
-        AppDestination.CARD,
-        AppDestination.STOCK,
-        AppDestination.MEMO,
-        AppDestination.PLANT,
-        AppDestination.LOTTO,
-    )
+    // remember는 재구성 때마다 동일한 Factory를 새로 만들지 않도록 값을 보관한다.
+    val viewModelFactory = remember { AppViewModelFactory() }
 
     Scaffold(
-        bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentDestination = navBackStackEntry?.destination
-
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    bottomDestinations.forEach { destination ->
-                        val selected = currentDestination?.hierarchy?.any { route ->
-                            route.route == destination.route || route.route?.startsWith("${destination.route}/") == true
-                        } == true
-                        FloatingNavItem(
-                            emoji = destination.emoji,
-                            label = destination.label,
-                            selected = selected,
-                            onClick = {
-                                val popped = navController.popBackStack(destination.route, false)
-                                if (!popped) {
-                                    navController.navigate(destination.route) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-        },
+        bottomBar = { AppBottomNavigation(navController) },
     ) { innerPadding ->
         NavHost(
             navController = navController,
@@ -136,7 +96,7 @@ private fun HabitTrackerApp() {
             modifier = Modifier.padding(innerPadding),
         ) {
             composable(AppDestination.HOME.route) {
-                val viewModel: HomeViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: HomeViewModel = viewModel(factory = viewModelFactory)
                 HomeScreen(
                     viewModel = viewModel,
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
@@ -148,7 +108,7 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.ENTRY.route) {
-                val viewModel: DailyEntryViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: DailyEntryViewModel = viewModel(factory = viewModelFactory)
                 DailyEntryScreen(
                     viewModel = viewModel,
                     initialDate = LocalDate.now().toString(),
@@ -157,7 +117,7 @@ private fun HabitTrackerApp() {
                 )
             }
             composable("${AppDestination.ENTRY.route}/{date}") { backStackEntry ->
-                val viewModel: DailyEntryViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: DailyEntryViewModel = viewModel(factory = viewModelFactory)
                 DailyEntryScreen(
                     viewModel = viewModel,
                     initialDate = backStackEntry.arguments?.getString("date") ?: LocalDate.now().toString(),
@@ -166,19 +126,19 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.DIARY.route) {
-                val viewModel: DiaryViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: DiaryViewModel = viewModel(factory = viewModelFactory)
                 DiaryScreen(viewModel = viewModel)
             }
             composable(AppDestination.MEMO.route) {
-                val viewModel: MemoViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: MemoViewModel = viewModel(factory = viewModelFactory)
                 MemoScreen(viewModel = viewModel)
             }
             composable(AppDestination.STATS.route) {
-                val viewModel: MonthlyStatsViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: MonthlyStatsViewModel = viewModel(factory = viewModelFactory)
                 MonthlyStatsScreen(viewModel = viewModel, onOpenEntry = { navController.navigate(AppDestination.ENTRY.route) })
             }
             composable(AppDestination.STOCK.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockScreen(
                     viewModel = viewModel,
                     onOpenOrder = { navController.navigate(AppDestination.STOCK_ORDER.route) },
@@ -190,31 +150,31 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.STOCK_ORDER.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockOrderScreen(viewModel)
             }
             composable(AppDestination.STOCK_PORTFOLIO.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockPortfolioScreen(viewModel)
             }
             composable(AppDestination.STOCK_AUTOMATION.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockAutomationScreen(viewModel)
             }
             composable(AppDestination.STOCK_REBALANCE.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockRebalanceScreen(viewModel)
             }
             composable(AppDestination.STOCK_JOURNAL.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockJournalScreen(viewModel)
             }
             composable(AppDestination.STOCK_SETTINGS.route) {
-                val viewModel: StockViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: StockViewModel = viewModel(factory = viewModelFactory)
                 StockSettingsScreen(viewModel)
             }
             composable(AppDestination.ADMIN.route) {
-                val viewModel: AdminViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: AdminViewModel = viewModel(factory = viewModelFactory)
                 AdminScreen(
                     viewModel = viewModel,
                     onOpenEntry = { navController.navigate(AppDestination.ENTRY.route) { launchSingleTop = true } },
@@ -227,14 +187,14 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.LOTTO_645.route) {
-                val viewModel: LottoViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: LottoViewModel = viewModel(factory = viewModelFactory)
                 LottoScreen(
                     viewModel = viewModel,
                     onBackToLotteryHome = { navController.popBackStack() },
                 )
             }
             composable(AppDestination.PENSION_LOTTO.route) {
-                val viewModel: PensionLotteryViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: PensionLotteryViewModel = viewModel(factory = viewModelFactory)
                 PensionLotteryScreen(
                     viewModel = viewModel,
                     onBackToLotteryHome = { navController.popBackStack() },
@@ -242,18 +202,18 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.PENSION_LOTTO_GENERATOR.route) {
-                val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = viewModelFactory)
                 PensionLotteryGeneratorScreen(
                     viewModel = viewModel,
                     onBack = { navController.popBackStack() },
                 )
             }
             composable(AppDestination.CARD.route) {
-                val viewModel: CardHistoryViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: CardHistoryViewModel = viewModel(factory = viewModelFactory)
                 CardHistoryScreen(viewModel = viewModel)
             }
             composable(AppDestination.PLANT.route) {
-                val viewModel: PlantViewModel = viewModel(factory = AppViewModelFactory())
+                val viewModel: PlantViewModel = viewModel(factory = viewModelFactory)
                 PlantScreen(viewModel = viewModel)
             }
         }
@@ -261,8 +221,46 @@ private fun HabitTrackerApp() {
 }
 
 @Composable
+private fun AppBottomNavigation(navController: NavHostController) {
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            AppDestination.bottomNavigation.forEach { destination ->
+                val selected = currentDestination?.hierarchy?.any { current ->
+                    destination.matches(current.route)
+                } == true
+                FloatingNavItem(
+                    label = destination.label,
+                    selected = selected,
+                    onClick = {
+                        val popped = navController.popBackStack(destination.route, false)
+                        if (!popped) {
+                            navController.navigate(destination.route) {
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun FloatingNavItem(
-    emoji: String,
     label: String,
     selected: Boolean,
     onClick: () -> Unit,

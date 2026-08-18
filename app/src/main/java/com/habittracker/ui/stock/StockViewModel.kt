@@ -23,6 +23,7 @@ import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderAvailability
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
+import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -40,6 +41,10 @@ private const val stockAutomationEventPageSize = 50
 private const val stockViewModelLogTag = "StockViewModel"
 private const val orderInputAutomationDelayMillis = 600L
 
+/**
+ * 주식 화면 묶음이 공유하는 상태 보유자다.
+ * 외부에는 읽기 전용 [StateFlow]를 노출하고, 내부에서는 data class의 copy로 새 상태를 만든다.
+ */
 class StockViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
@@ -110,9 +115,9 @@ class StockViewModel(
     fun updateAppKey(value: String) = _uiState.update { it.copy(appKey = value.trim()) }
     fun updateAppSecret(value: String) = _uiState.update { it.copy(appSecret = value.trim()) }
     fun updateAccountNumber(value: String) =
-        _uiState.update { it.copy(accountNumber = value.filter(Char::isDigit).take(8)) }
+        _uiState.update { it.copy(accountNumber = value.digitsOnly().take(8)) }
     fun updateAccountProductCode(value: String) =
-        _uiState.update { it.copy(accountProductCode = value.filter(Char::isDigit).take(2)) }
+        _uiState.update { it.copy(accountProductCode = value.digitsOnly().take(2)) }
     fun toggleConfigExpanded() = _uiState.update { it.copy(isConfigExpanded = !it.isConfigExpanded) }
 
     fun saveConfig() {
@@ -265,7 +270,7 @@ class StockViewModel(
     }
 
     fun updateOrderDivisionCode(value: String) {
-        val orderDivisionCode = value.filter(Char::isDigit).take(2)
+        val orderDivisionCode = value.digitsOnly().take(2)
         cancelOrderInputAutomation()
         _uiState.update {
             it.copy(
@@ -287,14 +292,14 @@ class StockViewModel(
 
     fun updateOrderQuantity(value: String) = _uiState.update {
         it.copy(
-            orderQuantity = value.filter(Char::isDigit),
+            orderQuantity = value.digitsOnly(),
             orderCalculationAmount = "",
             orderQuantityPercent = null,
         )
     }
 
     fun updateOrderUnitPrice(value: String) {
-        val orderUnitPrice = value.filter(Char::isDigit)
+        val orderUnitPrice = value.digitsOnly()
         cancelOrderInputAutomation()
         _uiState.update {
             it.copy(
@@ -362,7 +367,7 @@ class StockViewModel(
     }
 
     fun updateOrderCalculationAmount(value: String) {
-        val calculationAmount = value.filter(Char::isDigit)
+        val calculationAmount = value.digitsOnly()
         _uiState.update { state ->
             val amount = calculationAmount.toLongOrNull()
             val unitPrice = state.orderCalculationUnitPrice()
@@ -421,8 +426,8 @@ class StockViewModel(
     }
     fun updateExchangeIdDivisionCode(value: String) =
         _uiState.update { it.copy(exchangeIdDivisionCode = value.filter(Char::isLetter).uppercase().take(3)) }
-    fun updateSellType(value: String) = _uiState.update { it.copy(sellType = value.filter(Char::isDigit).take(2)) }
-    fun updateConditionPrice(value: String) = _uiState.update { it.copy(conditionPrice = value.filter(Char::isDigit)) }
+    fun updateSellType(value: String) = _uiState.update { it.copy(sellType = value.digitsOnly().take(2)) }
+    fun updateConditionPrice(value: String) = _uiState.update { it.copy(conditionPrice = value.digitsOnly()) }
 
     fun loadOrderAvailability() {
         val state = _uiState.value
@@ -684,9 +689,9 @@ class StockViewModel(
     fun updateManualTradeDate(value: String) =
         _uiState.update { it.copy(manualTradeDate = value.filter { char -> char.isDigit() || char == '-' }.take(10)) }
     fun updateManualTradeQuantity(value: String) =
-        _uiState.update { it.copy(manualTradeQuantity = value.filter(Char::isDigit)) }
+        _uiState.update { it.copy(manualTradeQuantity = value.digitsOnly()) }
     fun updateManualTradePrice(value: String) =
-        _uiState.update { it.copy(manualTradePrice = value.filter(Char::isDigit)) }
+        _uiState.update { it.copy(manualTradePrice = value.digitsOnly()) }
 
     fun startEditingManualTrade(order: StockOrderEntity) {
         val side = KisOrderSide.values().firstOrNull { it.name == order.side } ?: KisOrderSide.SELL
@@ -770,11 +775,11 @@ class StockViewModel(
         }
 
     fun updateMonitoringInterval(value: String) =
-        _uiState.update { it.copy(monitorIntervalMinutes = value.filter(Char::isDigit)) }
+        _uiState.update { it.copy(monitorIntervalMinutes = value.digitsOnly()) }
     fun updateMaxOrderAmount(value: String) =
-        _uiState.update { it.copy(maxOrderAmount = value.filter(Char::isDigit)) }
+        _uiState.update { it.copy(maxOrderAmount = value.digitsOnly()) }
     fun updateDailyBuyLimit(value: String) =
-        _uiState.update { it.copy(dailyBuyLimit = value.filter(Char::isDigit)) }
+        _uiState.update { it.copy(dailyBuyLimit = value.digitsOnly()) }
     fun updateCrashThreshold(value: String) =
         _uiState.update { it.copy(crashThresholdPercent = value.filter { char -> char.isDigit() || char == '.' }) }
     fun selectCrashBenchmark(code: String) = _uiState.update { it.copy(crashBenchmarkCode = code) }
@@ -890,7 +895,7 @@ class StockViewModel(
         }
     fun updateRuleTriggerPrice(value: String) =
         _uiState.update {
-            val filtered = value.filter(Char::isDigit)
+            val filtered = value.digitsOnly()
             it.copy(ruleTriggerPrice = filtered, ruleTriggerValue = if (filtered.isNotBlank()) "" else it.ruleTriggerValue)
         }
     fun updateRuleSellPercent(value: String) =
@@ -1060,6 +1065,7 @@ class StockViewModel(
         }
     }
 
+    /** 반복되는 코루틴 실행과 오류 기록을 고차 함수 하나로 공통화한다. */
     private fun launchAction(failurePrefix: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             runCatching { block() }

@@ -24,6 +24,7 @@ class DailyEntryViewModel(
     private val selectedDate = MutableStateFlow(LocalDate.now())
     private val statusMessage = MutableStateFlow<String?>(null)
 
+    // 선택 날짜가 바뀔 때 기존 수집을 취소하고 해당 날짜의 기록과 활성 항목을 다시 조합한다.
     val uiState: StateFlow<DailyEntryUiState> = selectedDate
         .flatMapLatest { date ->
             combine(repository.observeActiveTaskItems(), statusMessage) { taskItems, message ->
@@ -99,6 +100,7 @@ class DailyEntryViewModel(
     }
 
     private fun mergeTaskItems(taskItems: List<TaskItemMasterEntity>, details: List<RecordDetailRow>): List<TaskItemInputState> {
+        // associateBy를 사용하면 각 항목마다 details 전체를 반복 검색하지 않고 ID로 바로 찾을 수 있다.
         val detailMap = details.associateBy(RecordDetailRow::taskItemMasterId)
         return taskItems.map { taskItem ->
             val detail = detailMap[taskItem.id]

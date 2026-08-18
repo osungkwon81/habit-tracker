@@ -3,23 +3,24 @@ package com.habittracker.ui.stock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.stock.KisOrderSide
 import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderStatus
+import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
@@ -31,7 +32,7 @@ import com.habittracker.ui.components.AppTextField
 
 @Composable
 fun StockJournalScreen(viewModel: StockViewModel) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var unknownToResolve by remember { mutableStateOf<StockOrderEntity?>(null) }
     var showClearAutomationEventsDialog by remember { mutableStateOf(false) }
     var isManualTradeExpanded by remember { mutableStateOf(false) }
@@ -69,50 +70,29 @@ fun StockJournalScreen(viewModel: StockViewModel) {
     }
 
     unknownToResolve?.let { order ->
-        AlertDialog(
-            onDismissRequest = { unknownToResolve = null },
-            title = { Text("KIS 주문내역 확인 완료") },
-            text = {
-                Text(
-                    "${order.productName} ${order.requestedQuantity}주 주문이 KIS 주문내역에 접수되지 않은 것을 직접 확인한 경우에만 처리하세요. " +
-                        "실제로 접수된 주문이면 중복 주문 위험이 있습니다.",
-                )
+        AppConfirmDialog(
+            title = "KIS 주문내역 확인 완료",
+            message = "${order.productName} ${order.requestedQuantity}주 주문이 KIS 주문내역에 접수되지 않은 것을 직접 확인한 경우에만 처리하세요. " +
+                "실제로 접수된 주문이면 중복 주문 위험이 있습니다.",
+            confirmText = "미접수로 처리",
+            onConfirm = {
+                viewModel.resolveUnknownOrder(order.id)
+                unknownToResolve = null
             },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "미접수로 처리",
-                    onClick = {
-                        viewModel.resolveUnknownOrder(order.id)
-                        unknownToResolve = null
-                    },
-                )
-            },
-            dismissButton = {
-                AppSecondaryButton(text = "취소", onClick = { unknownToResolve = null })
-            },
+            onDismiss = { unknownToResolve = null },
         )
     }
 
     if (showClearAutomationEventsDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearAutomationEventsDialog = false },
-            title = { Text("주식 알림·오류 기록 삭제") },
-            text = { Text("저장된 주식 알림·오류 기록을 모두 삭제할까요? 삭제한 기록은 되돌릴 수 없습니다.") },
-            confirmButton = {
-                AppPrimaryButton(
-                    text = "전체 삭제",
-                    onClick = {
-                        viewModel.clearStockAutomationEvents()
-                        showClearAutomationEventsDialog = false
-                    },
-                )
+        AppConfirmDialog(
+            title = "주식 알림·오류 기록 삭제",
+            message = "저장된 주식 알림·오류 기록을 모두 삭제할까요? 삭제한 기록은 되돌릴 수 없습니다.",
+            confirmText = "전체 삭제",
+            onConfirm = {
+                viewModel.clearStockAutomationEvents()
+                showClearAutomationEventsDialog = false
             },
-            dismissButton = {
-                AppSecondaryButton(
-                    text = "취소",
-                    onClick = { showClearAutomationEventsDialog = false },
-                )
-            },
+            onDismiss = { showClearAutomationEventsDialog = false },
         )
     }
 
@@ -348,7 +328,7 @@ fun StockJournalScreen(viewModel: StockViewModel) {
                         AppStatusText("매수 건 미연결 ${unallocatedQuantity}주")
                         AppTextField(
                             value = allocationQuantity,
-                            onValueChange = { allocationQuantity = it.filter(Char::isDigit) },
+                            onValueChange = { allocationQuantity = it.digitsOnly() },
                             label = "연결할 수량",
                             singleLine = true,
                         )

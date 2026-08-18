@@ -25,6 +25,10 @@ class HomeViewModel(
     private val currentMonth = MutableStateFlow(YearMonth.now())
     private val selectedDate = MutableStateFlow<LocalDate?>(null)
 
+    /*
+     * 사용자가 월이나 날짜를 바꾸면 flatMapLatest가 이전 조회를 취소하고 새 기간의 Flow로 전환한다.
+     * 여러 원천 데이터를 HomeUiState 하나로 합쳐 화면에는 읽기 전용 StateFlow만 노출한다.
+     */
     val uiState: StateFlow<HomeUiState> = combine(currentMonth, selectedDate) { month, date -> month to date }
         .flatMapLatest { (month, date) ->
             val selectedDetailsFlow = flow {

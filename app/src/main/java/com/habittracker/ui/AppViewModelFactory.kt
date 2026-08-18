@@ -17,11 +17,17 @@ import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsViewModel
 import com.habittracker.ui.stock.StockViewModel
 
+/**
+ * Android가 ViewModel을 다시 만들 때 Repository 생성 방법을 알 수 있도록 연결하는 Factory다.
+ * 각 화면은 Repository의 생성 과정을 모르고 생성자 매개변수로만 의존성을 받는다.
+ */
 class AppViewModelFactory : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
-        val application = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]) as HabitTrackerApplication
+        val application = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as? HabitTrackerApplication
+            ?: error("HabitTrackerApplication을 CreationExtras에서 찾을 수 없습니다.")
         val repository = application.appContainer.habitRepository
 
+        // Factory API가 제네릭 T를 요구하므로, 실제 타입을 확인한 분기 안에서만 제한적으로 캐스팅한다.
         @Suppress("UNCHECKED_CAST")
         return when {
             modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(repository) as T
