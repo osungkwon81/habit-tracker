@@ -842,6 +842,24 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_29_30 = object : Migration(29, 30) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `stock_asset_snapshot` (
+                    `snapshot_date` TEXT NOT NULL,
+                    `purchase_amount` INTEGER NOT NULL,
+                    `valuation_amount` INTEGER NOT NULL,
+                    `evaluation_profit_loss` INTEGER NOT NULL,
+                    `realized_profit_loss` INTEGER NOT NULL,
+                    `updated_at` TEXT NOT NULL,
+                    PRIMARY KEY(`snapshot_date`)
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -867,6 +885,7 @@ object HabitTrackerMigrations {
         MIGRATION_26_27,
         MIGRATION_27_28,
         MIGRATION_28_29,
+        MIGRATION_29_30,
     )
 }
 

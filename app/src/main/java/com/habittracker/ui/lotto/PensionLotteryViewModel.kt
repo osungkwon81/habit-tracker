@@ -4,8 +4,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.data.lotto.LotteryProduct
+import com.habittracker.data.lotto.LotterySyncStatus
+import com.habittracker.data.lotto.toLotterySyncUserMessage
 import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -54,6 +58,15 @@ class PensionLotteryViewModel(
     private val recentDrawLimit = MutableStateFlow(RECENT_DRAW_PAGE_SIZE)
     private val matchNumberInput = MutableStateFlow("")
     private val statusMessage = MutableStateFlow<String?>(null)
+    private val _isOfficialSyncing = MutableStateFlow(false)
+    val isOfficialSyncing: StateFlow<Boolean> = _isOfficialSyncing
+    val officialSyncStatus: StateFlow<LotterySyncStatus> = repository
+        .observeLotterySyncStatus(LotteryProduct.PENSION_720)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = LotterySyncStatus(LotteryProduct.PENSION_720),
+        )
 
     private val draws = repository.observeAllPensionLotteryDraws()
         .onEach { savedDraws ->
@@ -167,6 +180,36 @@ class PensionLotteryViewModel(
                 statusMessage.value = "${roundNo}회 연금복권 1등 당첨번호가 저장되었습니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "연금복권 당첨번호 저장에 실패했습니다."
+            }
+        }
+    }
+
+    fun syncOfficialDrawsNow() {
+        if (_isOfficialSyncing.value) return
+        _isOfficialSyncing.value = true
+        repository.markLotterySyncRunning(LotteryProduct.PENSION_720)
+        viewModelScope.launch {
+            try {
+                val result = repository.syncOfficialLotteryDraws(LotteryProduct.PENSION_720)
+                repository.markLotterySyncSuccess(result)
+                roundInput.value = (result.latestOfficialRound + 1).toString()
+                statusMessage.value = if (result.savedCount > 0) {
+                    "공식 연금복권 당첨번호 ${result.savedCount}개 회차를 저장했습니다."
+                } else {
+                    "${result.latestOfficialRound}회 공식 번호까지 확인했습니다."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = error.toLotterySyncUserMessage()
+                repository.markLotterySyncFailure(
+                    LotteryProduct.PENSION_720,
+                    com.habittracker.data.lotto.LotteryDrawSyncScheduler.expectedDrawDate(LotteryProduct.PENSION_720),
+                    message,
+                )
+                statusMessage.value = message
+            } finally {
+                _isOfficialSyncing.value = false
             }
         }
     }

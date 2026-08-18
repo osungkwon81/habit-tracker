@@ -82,6 +82,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.google.material)
+    implementation(libs.google.code.scanner)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.compose.foundation.layout)
     ksp(libs.androidx.room.compiler)
 

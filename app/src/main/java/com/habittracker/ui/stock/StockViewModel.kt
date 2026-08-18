@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.StockAutomationEventEntity
+import com.habittracker.data.local.entity.StockAssetSnapshotEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
@@ -21,6 +22,7 @@ import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockJournalAnalysis
 import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderAvailability
+import com.habittracker.data.stock.StockOrderReconciliationResult
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRuleAction
 import com.habittracker.ui.digitsOnly
@@ -71,6 +73,11 @@ class StockViewModel(
                         journalAnalysis = repository.calculateStockJournalAnalysis(orders),
                     )
                 }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeStockAssetSnapshots().collect { snapshots ->
+                _uiState.update { it.copy(assetSnapshots = snapshots) }
             }
         }
         viewModelScope.launch {
@@ -156,7 +163,11 @@ class StockViewModel(
         if (!state.isConfigSaved || state.isLoadingOwnedStocks || (!force && state.hasLoadedOwnedStocks)) return
         _uiState.update { it.copy(isLoadingOwnedStocks = true) }
         viewModelScope.launch {
-            runCatching { repository.getKisBalanceStocks(forceRefresh = force) }
+            runCatching {
+                repository.getKisBalanceStocks(forceRefresh = force).also { stocks ->
+                    repository.saveStockAssetSnapshot(stocks)
+                }
+            }
                 .onSuccess { stocks ->
                     _uiState.update {
                         it.copy(
@@ -636,14 +647,16 @@ class StockViewModel(
         _uiState.update { it.copy(isLoadingPortfolio = true) }
         viewModelScope.launch {
             runCatching {
-                repository.syncStockOrderExecutions()
+                val reconciliation = repository.syncStockOrderExecutions()
                 val balanceStocks = repository.getKisBalanceStocks(forceRefresh = forceRefresh)
-                balanceStocks to repository.getStockBuyLotRows(balanceStocks)
-            }.onSuccess { (balanceStocks, rows) ->
+                repository.saveStockAssetSnapshot(balanceStocks)
+                Triple(balanceStocks, repository.getStockBuyLotRows(balanceStocks), reconciliation)
+            }.onSuccess { (balanceStocks, rows, reconciliation) ->
                 _uiState.update {
                     it.copy(
                         ownedStocks = balanceStocks,
                         buyLotRows = rows,
+                        lastOrderReconciliation = reconciliation,
                         isLoadingPortfolio = false,
                         hasLoadedOwnedStocks = true,
                     )
@@ -662,12 +675,29 @@ class StockViewModel(
         }
     }
 
-    fun syncOrders() {
+    fun syncOrders() = reconcileOrders(showResultMessage = true)
+
+    fun syncOrdersSilently() = reconcileOrders(showResultMessage = false)
+
+    private fun reconcileOrders(showResultMessage: Boolean) {
+        if (_uiState.value.isSyncingOrders) return
         _uiState.update { it.copy(isSyncingOrders = true) }
         viewModelScope.launch {
             runCatching { repository.syncStockOrderExecutions() }
-                .onSuccess { count ->
-                    _uiState.update { it.copy(isSyncingOrders = false, statusMessage = "체결 기록 ${count}건을 동기화했습니다.") }
+                .onSuccess { result ->
+                    _uiState.update {
+                        it.copy(
+                            isSyncingOrders = false,
+                            lastOrderReconciliation = result,
+                            statusMessage = if (showResultMessage) {
+                                "KIS 체결 ${result.matchedExecutionCount}건 대조 · " +
+                                    "외부 체결 ${result.importedExternalOrderCount}건 등록 · " +
+                                    "확인 필요 ${result.unresolvedOrderCount}건"
+                            } else {
+                                it.statusMessage
+                            },
+                        )
+                    }
                 }
                 .onFailure { error ->
                     recordStockError(
@@ -1135,6 +1165,8 @@ data class StockUiState(
     val isLoadingOrderPrice: Boolean = false,
     val isLoadingOrderAvailability: Boolean = false,
     val orders: List<StockOrderEntity> = emptyList(),
+    val assetSnapshots: List<StockAssetSnapshotEntity> = emptyList(),
+    val lastOrderReconciliation: StockOrderReconciliationResult? = null,
     val sellAllocations: List<StockSellAllocationEntity> = emptyList(),
     val buyLotRows: List<StockBuyLotRow> = emptyList(),
     val isLoadingPortfolio: Boolean = false,

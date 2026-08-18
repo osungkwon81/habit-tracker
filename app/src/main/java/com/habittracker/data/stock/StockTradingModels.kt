@@ -61,6 +61,14 @@ data class StockOrderAvailability(
     val currentPrice: Long,
 )
 
+/** KIS 체결내역과 앱 주문 기록을 비교한 한 번의 동기화 결과다. */
+data class StockOrderReconciliationResult(
+    val checkedAt: LocalDateTime,
+    val matchedExecutionCount: Int,
+    val importedExternalOrderCount: Int,
+    val unresolvedOrderCount: Int,
+)
+
 data class KisMarketIndex(
     val code: String,
     val name: String,

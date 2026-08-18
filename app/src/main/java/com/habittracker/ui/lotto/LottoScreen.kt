@@ -44,6 +44,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.habittracker.data.local.entity.LottoDrawEntity
 import com.habittracker.data.local.entity.LottoPurchaseEntity
 import com.habittracker.data.local.entity.LottoTicketEntity
@@ -68,6 +71,7 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.AppSupportText
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -86,6 +90,36 @@ fun LottoScreen(
     onBackToLotteryHome: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val officialSyncStatus by viewModel.officialSyncStatus.collectAsStateWithLifecycle()
+    val isOfficialSyncing by viewModel.isOfficialSyncing.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val qrScanner = remember(context) {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+        GmsBarcodeScanning.getClient(context, options)
+    }
+    var isQrScanning by remember { mutableStateOf(false) }
+    val startQrScan: () -> Unit = {
+        isQrScanning = true
+        runCatching {
+            qrScanner.startScan()
+                .addOnSuccessListener { barcode ->
+                    isQrScanning = false
+                    barcode.rawValue?.let(viewModel::importPurchaseQr)
+                        ?: viewModel.reportQrScanFailure("QR 내용을 읽지 못했습니다.")
+                }
+                .addOnCanceledListener { isQrScanning = false }
+                .addOnFailureListener { error ->
+                    isQrScanning = false
+                    viewModel.reportQrScanFailure(error.message ?: "QR 스캐너를 열지 못했습니다.")
+                }
+        }.onFailure { error ->
+            isQrScanning = false
+            viewModel.reportQrScanFailure(error.message ?: "QR 스캐너를 열지 못했습니다.")
+        }
+    }
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     AppScreen {
@@ -107,16 +141,21 @@ fun LottoScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AppSelectableChip(label = "번호 생성", selected = uiState.selectedTab == LottoTab.GENERATOR, onClick = viewModel::selectGeneratorTab)
-                AppSelectableChip(label = "구입 이력", selected = uiState.selectedTab == LottoTab.PURCHASE, onClick = viewModel::selectPurchaseTab)
-                AppSelectableChip(label = "추첨결과", selected = uiState.selectedTab == LottoTab.DRAW, onClick = viewModel::selectDrawTab)
+                AppSelectableChip(label = "번호 생성", selected = uiState.selectedTab == LottoTab.GENERATOR, onClick = viewModel::selectGeneratorTab, modifier = Modifier.weight(1f))
+                AppSelectableChip(label = "추첨결과", selected = uiState.selectedTab == LottoTab.DRAW, onClick = viewModel::selectDrawTab, modifier = Modifier.weight(1f))
+                AppSelectableChip(label = "저장번호", selected = uiState.selectedTab == LottoTab.SAVED, onClick = viewModel::selectSavedTab, modifier = Modifier.weight(1f))
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                AppSelectableChip(label = "저장번호", selected = uiState.selectedTab == LottoTab.SAVED, onClick = viewModel::selectSavedTab)
-                AppSelectableChip(label = "당첨 이력", selected = uiState.selectedTab == LottoTab.WINNING, onClick = viewModel::selectWinningTab)
-                AppSelectableChip(label = "통계", selected = uiState.selectedTab == LottoTab.STATS, onClick = viewModel::selectStatsTab)
+                AppSelectableChip(label = "구입 이력", selected = uiState.selectedTab == LottoTab.PURCHASE, onClick = viewModel::selectPurchaseTab, modifier = Modifier.weight(1f))
+                AppSelectableChip(label = "실물복권 QR", selected = uiState.selectedTab == LottoTab.PHYSICAL_QR, onClick = viewModel::selectPhysicalQrTab, modifier = Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                AppSelectableChip(label = "당첨 이력", selected = uiState.selectedTab == LottoTab.WINNING, onClick = viewModel::selectWinningTab, modifier = Modifier.weight(1f))
+                AppSelectableChip(label = "통계", selected = uiState.selectedTab == LottoTab.STATS, onClick = viewModel::selectStatsTab, modifier = Modifier.weight(1f))
             }
         }
         item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }
@@ -179,6 +218,14 @@ fun LottoScreen(
             }
             LottoTab.DRAW -> {
                 item {
+                    LotterySyncStatusCard(
+                        product = com.habittracker.data.lotto.LotteryProduct.LOTTO_645,
+                        status = officialSyncStatus,
+                        isSyncing = isOfficialSyncing,
+                        onSyncNow = viewModel::syncOfficialDrawsNow,
+                    )
+                }
+                item {
                     SaveSection(
                         roundInput = uiState.roundInput,
                         numberInputs = uiState.numberInputs,
@@ -223,6 +270,29 @@ fun LottoScreen(
                             }
                         }
                         LottoPurchaseCard(purchase = purchase, onDelete = viewModel::deletePurchase)
+                    }
+                }
+            }
+            LottoTab.PHYSICAL_QR -> {
+                item {
+                    PhysicalQrRegistrationCard(
+                        isQrScanning = isQrScanning,
+                        onScanQr = startQrScan,
+                    )
+                }
+                val ticketsByRound = uiState.physicalQrTickets
+                    .groupBy { ticket -> ticket.roundNo ?: 0 }
+                    .entries
+                    .sortedByDescending { entry -> entry.key }
+                if (ticketsByRound.isEmpty()) {
+                    item { AppEmptyCard("등록된 실물 로또 복권이 없습니다.") }
+                } else {
+                    items(ticketsByRound, key = { entry -> entry.key }) { (roundNo, tickets) ->
+                        PhysicalQrRoundCard(
+                            roundNo = roundNo,
+                            tickets = tickets,
+                            draw = uiState.allDraws.firstOrNull { draw -> draw.roundNo == roundNo },
+                        )
                     }
                 }
             }
@@ -860,6 +930,83 @@ private fun PurchaseSection(
             },
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+@Composable
+private fun PhysicalQrRegistrationCard(
+    isQrScanning: Boolean,
+    onScanQr: () -> Unit,
+) {
+    AppSectionCard {
+        AppSectionHeader(
+            title = "실물 로또 복권 QR 등록",
+            subtitle = "QR의 회차와 최대 5게임을 읽어 구매완료 번호로 저장합니다.",
+        )
+        AppPrimaryButton(
+            text = if (isQrScanning) "QR 스캔 중" else "실물 복권 QR 스캔",
+            onClick = onScanQr,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isQrScanning,
+        )
+        AppSupportText("발표된 공식 당첨번호가 있으면 회차별 결과를 바로 확인할 수 있습니다.")
+    }
+}
+
+@Composable
+private fun PhysicalQrRoundCard(
+    roundNo: Int,
+    tickets: List<LottoTicketEntity>,
+    draw: LottoDrawEntity?,
+) {
+    val winningCount = draw?.let { winningDraw ->
+        tickets.count { ticket -> calculateWinningRank(ticket, winningDraw) != null }
+    }
+    val status = when {
+        draw == null -> "추첨 대기"
+        winningCount != null && winningCount > 0 -> "${winningCount}게임 당첨"
+        else -> "미당첨"
+    }
+    AppSectionCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(status, color = if (winningCount != null && winningCount > 0) ChatGptAccent else LottoTextMutedColor)
+        }
+        draw?.let { winningDraw ->
+            Text("당첨 번호", color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
+            LottoNumbersCard(numbers = winningDraw.numbers(), bonusNumber = winningDraw.bonusNumber)
+        }
+        tickets
+            .groupBy { ticket -> ticket.setNo ?: 1 }
+            .entries
+            .sortedByDescending { entry -> entry.key }
+            .forEach { (setNo, setTickets) ->
+                Text("QR ${setNo}번 등록 · ${setTickets.size}게임", fontWeight = FontWeight.SemiBold)
+                setTickets.sortedBy { ticket -> ticket.recommendationRank ?: Int.MAX_VALUE }
+                    .forEachIndexed { index, ticket ->
+                        val rank = draw?.let { winningDraw -> calculateWinningRank(ticket, winningDraw) }
+                        val matchCount = draw?.numbers()?.let { winningNumbers ->
+                            ticket.numbers().count(winningNumbers::contains)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text("${index + 1}번 번호", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                formatWinningStatusWithMatchCount(rank, matchCount),
+                                color = if (rank != null) ChatGptAccent else LottoTextMutedColor,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        LottoNumbersCard(numbers = ticket.numbers())
+                    }
+            }
     }
 }
 

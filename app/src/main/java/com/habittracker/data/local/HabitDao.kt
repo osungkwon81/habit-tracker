@@ -24,6 +24,7 @@ import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
+import com.habittracker.data.local.entity.StockAssetSnapshotEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
@@ -62,6 +63,12 @@ interface HabitDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPensionLotteryDraw(draw: PensionLotteryDrawEntity)
+
+    @Query("SELECT * FROM pension_lottery_draw WHERE round_no = :roundNo LIMIT 1")
+    suspend fun getPensionLotteryDraw(roundNo: Int): PensionLotteryDrawEntity?
+
+    @Query("SELECT * FROM pension_lottery_draw ORDER BY round_no DESC")
+    suspend fun getAllPensionLotteryDraws(): List<PensionLotteryDrawEntity>
 
     @Query(
         """
@@ -126,6 +133,15 @@ interface HabitDao {
         """,
     )
     fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_ticket
+        WHERE source_label = :sourceLabel
+        ORDER BY round_no DESC, set_no DESC, recommendation_rank ASC, id ASC
+        """,
+    )
+    fun observeLottoTicketsBySource(sourceLabel: String): Flow<List<LottoTicketEntity>>
 
     @Query(
         """
@@ -571,6 +587,21 @@ interface HabitDao {
 
     @Query("SELECT * FROM stock_order ORDER BY order_date DESC, order_time DESC, id DESC")
     fun observeStockOrders(): Flow<List<StockOrderEntity>>
+
+    @Query(
+        """
+        SELECT * FROM (
+            SELECT * FROM stock_asset_snapshot
+            ORDER BY snapshot_date DESC
+            LIMIT :limit
+        )
+        ORDER BY snapshot_date ASC
+        """,
+    )
+    fun observeStockAssetSnapshots(limit: Int): Flow<List<StockAssetSnapshotEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStockAssetSnapshot(snapshot: StockAssetSnapshotEntity)
 
     @Query("SELECT * FROM stock_order ORDER BY order_date DESC, order_time DESC, id DESC")
     suspend fun getStockOrders(): List<StockOrderEntity>

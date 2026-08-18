@@ -1,10 +1,13 @@
 package com.habittracker.ui.plant
 
 import android.app.DatePickerDialog
-import com.habittracker.R
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
+import android.util.LruCache
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -39,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.R
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppConfirmDialog
@@ -59,6 +63,7 @@ import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlin.math.ceil
 
 @Composable
 fun PlantScreen(viewModel: PlantViewModel) {
@@ -188,6 +193,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                 ) {
                     PlantImage(
                         uri = expandedImageUri.orEmpty(),
+                        maxSizePx = 1600,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(com.habittracker.ui.components.AppSpacing.lg * 10),
@@ -438,14 +444,22 @@ private fun copyPlantImageToAppStorage(context: android.content.Context, sourceU
 @Composable
 private fun PlantImage(
     uri: String,
+    maxSizePx: Int = 1024,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val bitmapState = produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uri) {
+    val cacheKey = remember(uri, maxSizePx) { PlantImageCacheKey(uri, maxSizePx) }
+    val bitmapState = produceState<Bitmap?>(
+        initialValue = plantImageCache.get(cacheKey),
+        key1 = cacheKey,
+    ) {
+        if (value != null) return@produceState
         value = withContext(Dispatchers.IO) {
-            runCatching {
-                decodeSampledBitmap(context, Uri.parse(uri))
-            }.getOrNull()
+            plantImageCache.get(cacheKey) ?: runCatching {
+                decodeSampledBitmap(context, Uri.parse(uri), maxSizePx)
+            }.getOrNull()?.also { decodedBitmap ->
+                plantImageCache.put(cacheKey, decodedBitmap)
+            }
         }
     }
 
@@ -475,7 +489,19 @@ private fun PlantImage(
     )
 }
 
-private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxSizePx: Int = 1600): android.graphics.Bitmap? {
+private data class PlantImageCacheKey(
+    val uri: String,
+    val maxSizePx: Int,
+)
+
+private val plantImageCache = object : LruCache<PlantImageCacheKey, Bitmap>(16 * 1024) {
+    override fun sizeOf(key: PlantImageCacheKey, value: Bitmap): Int =
+        (value.allocationByteCount / 1024).coerceAtLeast(1)
+}
+
+private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxSizePx: Int): Bitmap? {
+    // EXIF는 디코딩 전에 한 번만 읽고, 축소된 Bitmap에 회전을 적용한다.
+    val orientation = readExifOrientation(context, uri)
     resolveLocalImageFile(uri)?.let { file ->
         val bounds = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
@@ -486,7 +512,8 @@ private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxS
             inSampleSize = sampleSize
             inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
         }
-        return BitmapFactory.decodeFile(file.absolutePath, options)
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options) ?: return null
+        return applyExifOrientation(bitmap, orientation)
     }
 
     val bounds = BitmapFactory.Options().apply {
@@ -501,9 +528,55 @@ private fun decodeSampledBitmap(context: android.content.Context, uri: Uri, maxS
         inSampleSize = sampleSize
         inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
     }
-    return openImageInputStream(context, uri)?.use { input ->
+    val bitmap = openImageInputStream(context, uri)?.use { input ->
         BitmapFactory.decodeStream(input, null, options)
+    } ?: return null
+    return applyExifOrientation(bitmap, orientation)
+}
+
+/**
+ * 사진 픽셀은 그대로 두고 회전 방향만 EXIF 메타데이터에 기록하는 카메라가 많다.
+ * 디코딩한 Bitmap에 그 방향을 적용해야 세로 사진이 옆으로 눕지 않는다.
+ */
+private fun readExifOrientation(context: android.content.Context, uri: Uri): Int {
+    return runCatching {
+        resolveLocalImageFile(uri)?.let { file ->
+            ExifInterface(file.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        } ?: openImageInputStream(context, uri)?.use { input ->
+            ExifInterface(input).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        } ?: ExifInterface.ORIENTATION_NORMAL
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+}
+
+private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+    val matrix = Matrix()
+    when (orientation) {
+        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+        ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+            matrix.setRotate(180f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_TRANSPOSE -> {
+            matrix.setRotate(90f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+        ExifInterface.ORIENTATION_TRANSVERSE -> {
+            matrix.setRotate(-90f)
+            matrix.postScale(-1f, 1f)
+        }
+        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+        else -> return bitmap
     }
+
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
 
 private fun resolveLocalImageFile(uri: Uri): File? {
@@ -528,16 +601,17 @@ private fun openImageInputStream(
 private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
     val height = options.outHeight
     val width = options.outWidth
-    var inSampleSize = 1
+    if (height <= 0 || width <= 0) return 1
 
-    if (height > reqHeight || width > reqWidth) {
-        val halfHeight = height / 2
-        val halfWidth = width / 2
-
-        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-            inSampleSize *= 2
-        }
+    // 두 변이 모두 클 때만 축소하던 기존 방식과 달리, 긴 변 하나라도 목표 크기를 넘으면 줄인다.
+    val requiredSample = maxOf(
+        ceil(width.toDouble() / reqWidth.coerceAtLeast(1)).toInt(),
+        ceil(height.toDouble() / reqHeight.coerceAtLeast(1)).toInt(),
+        1,
+    )
+    var sampleSize = 1
+    while (sampleSize < requiredSample) {
+        sampleSize *= 2
     }
-
-    return inSampleSize.coerceAtLeast(1)
+    return sampleSize
 }

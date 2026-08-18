@@ -2,6 +2,7 @@ package com.habittracker
 
 import android.app.Application
 import com.habittracker.data.AppContainer
+import com.habittracker.data.lotto.LotteryDrawSyncScheduler
 
 /**
  * 프로세스 전체에서 하나만 생성되는 Android Application이다.
@@ -14,5 +15,7 @@ class HabitTrackerApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         appContainer = AppContainer(this)
+        // 정확한 알람 권한 없이 발표 후 여유 시간에 실행하고, 재부팅 후에도 WorkManager가 일정을 복구한다.
+        LotteryDrawSyncScheduler.scheduleAll(this)
     }
 }

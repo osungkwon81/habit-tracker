@@ -25,6 +25,7 @@ import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
+import com.habittracker.data.local.entity.StockAssetSnapshotEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockOrderEntity
 import com.habittracker.data.local.entity.StockSafetyConfigEntity
@@ -45,7 +46,17 @@ import com.habittracker.data.lotto.LottoControlComparison
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.lotto.LottoPerformanceAnalyzer
 import com.habittracker.data.lotto.LottoPerformanceSample
+import com.habittracker.data.lotto.LottoPurchasedTicketResult
+import com.habittracker.data.lotto.LottoQrPurchase
 import com.habittracker.data.lotto.LottoScorePerformance
+import com.habittracker.data.lotto.DhlotteryDrawClient
+import com.habittracker.data.lotto.LotteryDrawSyncScheduler
+import com.habittracker.data.lotto.LotteryDrawSyncStore
+import com.habittracker.data.lotto.LotteryOfficialSyncResult
+import com.habittracker.data.lotto.LotteryProduct
+import com.habittracker.data.lotto.LotterySyncStatus
+import com.habittracker.data.lotto.OfficialLottoDraw
+import com.habittracker.data.lotto.OfficialPensionLotteryDraw
 import com.habittracker.data.security.AndroidKeystoreStringCipher
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
@@ -65,6 +76,7 @@ import com.habittracker.data.stock.StockExitRuleType
 import com.habittracker.data.stock.StockJournalAnalysis
 import com.habittracker.data.stock.StockOrderSource
 import com.habittracker.data.stock.StockOrderAvailability
+import com.habittracker.data.stock.StockOrderReconciliationResult
 import com.habittracker.data.stock.StockOrderStatus
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.data.stock.StockRealtimeMonitoringSnapshot
@@ -117,6 +129,7 @@ class HabitRepository(
         const val lottoDrawSourceSeed = "SEED"
         const val lottoDrawSourceManual = "MANUAL"
         const val lottoDrawSourceOfficial = "OFFICIAL"
+        const val lottoQrSource = "QR 등록"
         const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
         const val cardPrefsName = "card-prefs"
@@ -160,9 +173,12 @@ class HabitRepository(
     private val kisAccessTokenMutex = Mutex()
     private val stockOrderMutex = Mutex()
     private val stockAutomationMutex = Mutex()
+    private val lotterySyncMutex = Mutex()
     private var kisBalanceCache: KisBalanceCacheEntry? = null
     private val kisConfigCipher = AndroidKeystoreStringCipher()
     private val kisDomesticStockClient = KisDomesticStockClient()
+    private val lotteryDrawClient = DhlotteryDrawClient()
+    private val lotteryDrawSyncStore = LotteryDrawSyncStore(context)
     private val regularMarketOpenTime = LocalTime.of(9, 0)
     private val regularMarketCloseTime = LocalTime.of(15, 30)
     private val nxtAfterMarketOpenTime = LocalTime.of(15, 40)
@@ -187,16 +203,179 @@ class HabitRepository(
     fun observeAllPensionLotteryDraws(): Flow<List<PensionLotteryDrawEntity>> =
         habitDao.observeAllPensionLotteryDraws()
 
-    suspend fun savePensionLotteryDraw(roundNo: Int, groupNo: Int, winningNumber: String) {
-        persistChange {
-            habitDao.upsertPensionLotteryDraw(
-                PensionLotteryDrawEntity(
-                    roundNo = roundNo,
-                    groupNo = groupNo,
-                    winningNumber = winningNumber,
-                ),
-            )
+    fun observeLotterySyncStatus(product: LotteryProduct): Flow<LotterySyncStatus> =
+        lotteryDrawSyncStore.observe(product)
+
+    fun markLotterySyncRunning(product: LotteryProduct) {
+        lotteryDrawSyncStore.markRunning(product)
+    }
+
+    fun markLotterySyncRetrying(product: LotteryProduct, message: String, nextDelayMinutes: Int) {
+        lotteryDrawSyncStore.markRetrying(product, message, nextDelayMinutes)
+    }
+
+    fun markLotterySyncSuccess(result: LotteryOfficialSyncResult) {
+        lotteryDrawSyncStore.markSuccess(result.product, result)
+    }
+
+    fun markLotterySyncFailure(product: LotteryProduct, expectedDrawDate: LocalDate, message: String) {
+        lotteryDrawSyncStore.markFailure(product, expectedDrawDate, message)
+    }
+
+    suspend fun syncOfficialLotteryDraws(
+        product: LotteryProduct,
+        expectedDrawDate: LocalDate = LotteryDrawSyncScheduler.expectedDrawDate(product),
+    ): LotteryOfficialSyncResult = lotterySyncMutex.withLock {
+        when (product) {
+            LotteryProduct.LOTTO_645 -> syncOfficialLottoDraws(expectedDrawDate)
+            LotteryProduct.PENSION_720 -> syncOfficialPensionLotteryDraws(expectedDrawDate)
         }
+    }
+
+    suspend fun savePensionLotteryDraw(roundNo: Int, groupNo: Int, winningNumber: String) {
+        val newDraw = PensionLotteryDrawEntity(
+            roundNo = roundNo,
+            groupNo = groupNo,
+            winningNumber = winningNumber,
+        )
+        persistChange {
+            val existing = habitDao.getPensionLotteryDraw(roundNo)
+            require(existing == null || existing == newDraw) {
+                "${roundNo}회 연금복권 번호가 이미 저장되어 있어 덮어쓸 수 없습니다."
+            }
+            if (existing == null) habitDao.upsertPensionLotteryDraw(newDraw)
+        }
+    }
+
+    private suspend fun syncOfficialLottoDraws(expectedDrawDate: LocalDate): LotteryOfficialSyncResult {
+        // 새 설치에서도 오래된 공식 API 구간을 순회하지 않도록 번들 이력을 먼저 채운다.
+        syncBundledLottoDraws()
+        val localLatestRound = habitDao.getLatestLottoRoundNo()
+        var cursorRound = (localLatestRound ?: 1).coerceAtLeast(1)
+        val officialDraws = linkedMapOf<Int, OfficialLottoDraw>()
+
+        var remainingBatchCount = 12
+        while (remainingBatchCount-- > 0) {
+            val batch = lotteryDrawClient.getLottoDrawsAround(cursorRound)
+            batch.draws.forEach { draw -> officialDraws[draw.roundNo] = draw }
+            val batchLatest = batch.draws.maxBy(OfficialLottoDraw::roundNo)
+            if (!batchLatest.drawDate.isBefore(expectedDrawDate)) break
+            val nextCursor = batchLatest.roundNo + 1
+            if (nextCursor <= cursorRound) break
+            cursorRound = nextCursor
+        }
+
+        val latestOfficial = officialDraws.values.maxByOrNull(OfficialLottoDraw::roundNo)
+            ?: throw IllegalStateException("공식 로또 당첨번호가 비어 있습니다.")
+        require(!latestOfficial.drawDate.isBefore(expectedDrawDate)) {
+            "$expectedDrawDate 로또 6/45 당첨번호가 아직 공식 사이트에 게시되지 않았습니다."
+        }
+
+        var savedCount = 0
+        persistChange {
+            database.withTransaction {
+                officialDraws.values.sortedBy(OfficialLottoDraw::roundNo).forEach { official ->
+                    val existing = habitDao.getLottoDrawByRoundNo(official.roundNo)
+                    if (existing != null) {
+                        require(
+                            existing.numbers() == official.numbers &&
+                                (existing.bonusNumber == null || existing.bonusNumber == official.bonusNumber),
+                        ) {
+                            "${official.roundNo}회 로또 수동 입력값과 공식 당첨번호가 다릅니다. 자동으로 덮어쓰지 않았습니다."
+                        }
+                    }
+                    val officialEntity = LottoDrawEntity.from(
+                        roundNo = official.roundNo,
+                        numbers = official.numbers,
+                        bonusNumber = official.bonusNumber,
+                        dataSource = lottoDrawSourceOfficial,
+                        sourceReference = official.sourceReference,
+                        sourceContentHash = official.sourceContentHash,
+                    )
+                    val drawToSave = existing?.copy(
+                        bonusNumber = official.bonusNumber,
+                        dataSource = lottoDrawSourceOfficial,
+                        sourceReference = official.sourceReference,
+                        sourceContentHash = official.sourceContentHash,
+                    ) ?: officialEntity
+                    if (existing != drawToSave) {
+                        habitDao.upsertLottoDraw(drawToSave)
+                        savedCount += 1
+                    }
+                }
+                if (savedCount > 0) recalculateAllLottoWinningStats()
+            }
+        }
+        return LotteryOfficialSyncResult(
+            product = LotteryProduct.LOTTO_645,
+            savedCount = savedCount,
+            latestOfficialRound = latestOfficial.roundNo,
+            latestOfficialDrawDate = latestOfficial.drawDate,
+        )
+    }
+
+    private suspend fun syncOfficialPensionLotteryDraws(expectedDrawDate: LocalDate): LotteryOfficialSyncResult {
+        val officialDraws = lotteryDrawClient.getPensionLotteryDraws()
+        val latestOfficial = officialDraws.maxBy(OfficialPensionLotteryDraw::roundNo)
+        require(!latestOfficial.drawDate.isBefore(expectedDrawDate)) {
+            "$expectedDrawDate 연금복권 720+ 당첨번호가 아직 공식 사이트에 게시되지 않았습니다."
+        }
+        val existingByRound = habitDao.getAllPensionLotteryDraws().associateBy(PensionLotteryDrawEntity::roundNo)
+        val latestExistingRound = existingByRound.keys.maxOrNull() ?: 1
+        var savedCount = 0
+        persistChange {
+            database.withTransaction {
+                officialDraws
+                    .asSequence()
+                    .filter { draw -> draw.roundNo >= latestExistingRound }
+                    .sortedBy(OfficialPensionLotteryDraw::roundNo)
+                    .forEach { official ->
+                        val newDraw = PensionLotteryDrawEntity(
+                            roundNo = official.roundNo,
+                            groupNo = official.groupNo,
+                            winningNumber = official.winningNumber,
+                        )
+                        val existing = existingByRound[official.roundNo]
+                        require(existing == null || existing == newDraw) {
+                            "${official.roundNo}회 연금복권 수동 입력값과 공식 당첨번호가 다릅니다. 자동으로 덮어쓰지 않았습니다."
+                        }
+                        if (existing == null) {
+                            habitDao.upsertPensionLotteryDraw(newDraw)
+                            savedCount += 1
+                        }
+                    }
+            }
+        }
+        return LotteryOfficialSyncResult(
+            product = LotteryProduct.PENSION_720,
+            savedCount = savedCount,
+            latestOfficialRound = latestOfficial.roundNo,
+            latestOfficialDrawDate = latestOfficial.drawDate,
+        )
+    }
+
+    suspend fun getPurchasedLottoTicketResult(roundNo: Int): LottoPurchasedTicketResult? {
+        require(roundNo > 0) { "당첨 확인 회차가 올바르지 않습니다." }
+        val draw = habitDao.getLottoDrawByRoundNo(roundNo) ?: return null
+        val tickets = habitDao.getPurchasedLottoTicketsByRound(roundNo)
+            .filter { ticket -> ticket.isPurchased && !ticket.isEvaluationTarget }
+        if (tickets.isEmpty()) return null
+
+        val rankCounts = tickets
+            .mapNotNull { ticket -> calculateWinningRank(ticket, draw) }
+            .groupingBy { rank -> rank }
+            .eachCount()
+        val winningNumbers = draw.numbers()
+        val maximumMatchCount = tickets.maxOf { ticket ->
+            ticket.numbers().count(winningNumbers::contains)
+        }
+        return LottoPurchasedTicketResult(
+            roundNo = roundNo,
+            totalTicketCount = tickets.size,
+            physicalQrTicketCount = tickets.count { ticket -> ticket.sourceLabel == lottoQrSource },
+            winningRankCounts = rankCounts,
+            maximumMatchCount = maximumMatchCount,
+        )
     }
 
     fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>> =
@@ -224,6 +403,9 @@ class HabitRepository(
 
     fun observeAllSavedLottoTickets(): Flow<List<LottoTicketEntity>> =
         habitDao.observeAllSavedLottoTickets()
+
+    fun observeLottoTicketsBySource(sourceLabel: String): Flow<List<LottoTicketEntity>> =
+        habitDao.observeLottoTicketsBySource(sourceLabel)
 
     fun observeLottoScorePerformances(): Flow<List<LottoScorePerformance>> = combine(
         habitDao.observeScoredPurchasedLottoTickets(),
@@ -495,6 +677,28 @@ class HabitRepository(
     }
 
     fun observeStockOrders(): Flow<List<StockOrderEntity>> = habitDao.observeStockOrders()
+
+    fun observeStockAssetSnapshots(limit: Int = 90): Flow<List<StockAssetSnapshotEntity>> =
+        habitDao.observeStockAssetSnapshots(limit)
+
+    suspend fun saveStockAssetSnapshot(balanceStocks: List<KisBalanceStock>): StockAssetSnapshotEntity {
+        val purchaseAmount = balanceStocks.sumOf { stock ->
+            (stock.quantity.toLongOrNull() ?: 0L) * (stock.averagePrice.toDoubleOrNull()?.roundToLong() ?: 0L)
+        }
+        val valuationAmount = balanceStocks.sumOf { stock ->
+            (stock.quantity.toLongOrNull() ?: 0L) * (stock.currentPrice.toLongOrNull() ?: 0L)
+        }
+        val realizedProfitLoss = calculateStockJournalAnalysis(habitDao.getStockOrders()).estimatedRealizedProfit
+        val snapshot = StockAssetSnapshotEntity(
+            snapshotDate = LocalDate.now(),
+            purchaseAmount = purchaseAmount,
+            valuationAmount = valuationAmount,
+            evaluationProfitLoss = valuationAmount - purchaseAmount,
+            realizedProfitLoss = realizedProfitLoss,
+        )
+        persistChange { habitDao.upsertStockAssetSnapshot(snapshot) }
+        return snapshot
+    }
 
     fun observeStockSellAllocations(): Flow<List<StockSellAllocationEntity>> =
         habitDao.observeStockSellAllocations()
@@ -892,7 +1096,7 @@ class HabitRepository(
         StockBulkSellResult(submittedOrders, failures)
     }
 
-    suspend fun syncStockOrderExecutions(): Int = withContext(Dispatchers.IO) {
+    suspend fun syncStockOrderExecutions(): StockOrderReconciliationResult = withContext(Dispatchers.IO) {
         stockOrderMutex.withLock {
             val (config, accessToken) = getKisConfigAndAccessToken()
             val today = LocalDate.now()
@@ -909,7 +1113,8 @@ class HabitRepository(
                     endDate = today,
                 )
             }.sortedWith(compareBy(KisOrderExecution::orderDate, KisOrderExecution::orderTime))
-            var updatedCount = 0
+            var matchedCount = 0
+            var importedCount = 0
             if (executions.isNotEmpty()) {
                 persistChange {
                     database.withTransaction {
@@ -924,7 +1129,7 @@ class HabitRepository(
                                     rejectedQuantity = execution.rejectedQuantity,
                                     isCanceled = execution.isCanceled,
                                 )
-                                updatedCount += 1
+                                matchedCount += 1
                                 return@forEach
                             }
                             if (execution.filledQuantity <= 0L) return@forEach
@@ -957,13 +1162,18 @@ class HabitRepository(
                                     updatedAt = LocalDateTime.now(),
                                 ),
                             )
-                            updatedCount += 1
+                            importedCount += 1
                         }
                     }
                 }
             }
             stockExecutionPrefs.edit().putString(lastStockExecutionSyncDateKey, today.toString()).apply()
-            updatedCount
+            StockOrderReconciliationResult(
+                checkedAt = LocalDateTime.now(),
+                matchedExecutionCount = matchedCount,
+                importedExternalOrderCount = importedCount,
+                unresolvedOrderCount = habitDao.getUnfinishedStockOrders().size,
+            )
         }
     }
 
@@ -2218,6 +2428,56 @@ class HabitRepository(
                     memo = memo?.trim()?.takeIf(String::isNotEmpty),
                 ),
             )
+        }
+    }
+
+    /** QR의 구매 이력과 실제 게임 번호를 함께 저장해 둘 중 하나만 남는 상태를 막는다. */
+    suspend fun importLottoQrPurchase(qrPurchase: LottoQrPurchase): Int {
+        require(qrPurchase.roundNo > 0) { "QR 구입 회차를 확인해 주세요." }
+        require(qrPurchase.tickets.size in 1..5) { "QR에는 로또 번호가 1~5게임 포함되어야 합니다." }
+        val sourceLabel = lottoQrSource
+        val canonicalTickets = qrPurchase.tickets.map { numbers -> numbers.sorted().joinToString(",") }.sorted()
+        val confirmedAt = LocalDateTime.now()
+
+        return persistChange {
+            database.withTransaction {
+                val existingTickets = habitDao.getLottoTicketsBySourceAndRound(sourceLabel, qrPurchase.roundNo)
+                val duplicated = existingTickets
+                    .groupBy(LottoTicketEntity::setNo)
+                    .values
+                    .any { savedSet ->
+                        savedSet.map { ticket -> ticket.numbers().joinToString(",") }.sorted() == canonicalTickets
+                    }
+                require(!duplicated) { "이미 등록한 로또 QR입니다." }
+
+                val setNo = (existingTickets.mapNotNull(LottoTicketEntity::setNo).maxOrNull() ?: 0) + 1
+                val setNote = buildLottoSetNote(qrPurchase.roundNo, setNo)
+                habitDao.insertLottoPurchase(
+                    LottoPurchaseEntity(
+                        purchaseDate = LocalDate.now(),
+                        lottoType = "로또",
+                        roundNo = qrPurchase.roundNo,
+                        amount = qrPurchase.tickets.size * 1_000,
+                        memo = "QR 자동 등록 · ${qrPurchase.tickets.size}게임",
+                    ),
+                )
+                qrPurchase.tickets.forEachIndexed { index, numbers ->
+                    val ticket = LottoTicketEntity.from(
+                        sourceLabel = sourceLabel,
+                        numbers = numbers,
+                        note = setNote,
+                        roundNo = qrPurchase.roundNo,
+                        setNo = setNo,
+                        generationVersion = "qr",
+                        recommendationRank = index + 1,
+                    ).copy(
+                        isPurchased = true,
+                        purchaseConfirmedAt = confirmedAt,
+                    )
+                    habitDao.insertLottoTicket(ticket)
+                }
+            }
+            qrPurchase.tickets.size
         }
     }
 

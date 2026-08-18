@@ -57,6 +57,8 @@ fun PensionLotteryScreen(
     onOpenGenerator: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val officialSyncStatus by viewModel.officialSyncStatus.collectAsStateWithLifecycle()
+    val isOfficialSyncing by viewModel.isOfficialSyncing.collectAsStateWithLifecycle()
 
     AppScreen {
         item {
@@ -85,6 +87,14 @@ fun PensionLotteryScreen(
 
         when (uiState.selectedTab) {
             PensionLotteryTab.INPUT -> {
+                item {
+                    LotterySyncStatusCard(
+                        product = com.habittracker.data.lotto.LotteryProduct.PENSION_720,
+                        status = officialSyncStatus,
+                        isSyncing = isOfficialSyncing,
+                        onSyncNow = viewModel::syncOfficialDrawsNow,
+                    )
+                }
                 item {
                     PensionLotteryInputCard(
                         roundInput = uiState.roundInput,

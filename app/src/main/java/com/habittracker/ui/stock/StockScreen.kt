@@ -1,6 +1,7 @@
 package com.habittracker.ui.stock
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
+import com.habittracker.data.local.entity.StockAssetSnapshotEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
 import com.habittracker.data.local.entity.StockTargetAllocationEntity
 import com.habittracker.data.stock.KisBalanceStock
@@ -83,7 +86,10 @@ fun StockScreen(
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
     LaunchedEffect(uiState.isConfigSaved) {
-        if (uiState.isConfigSaved) viewModel.loadOwnedStocks()
+        if (uiState.isConfigSaved) {
+            viewModel.loadOwnedStocks()
+            viewModel.syncOrdersSilently()
+        }
     }
 
     AppScreen {
@@ -115,6 +121,9 @@ fun StockScreen(
                 onRefresh = { viewModel.loadOwnedStocks(force = true) },
             )
         }
+        if (uiState.assetSnapshots.isNotEmpty()) {
+            item { StockAssetHistoryCard(uiState.assetSnapshots) }
+        }
         if (!uiState.safetyConfig.globalOrderBlocked) {
             item {
                 StockRiskSummaryCard(
@@ -143,6 +152,52 @@ fun StockScreen(
         }
         item {
             StockMenuCard("⚙", "KIS·안전 설정", "실전 계좌와 주문 한도·급락 차단·감시 주기를 설정합니다.", Color(0xFF665F55), onOpenSettings)
+        }
+    }
+}
+
+@Composable
+private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
+    val latest = snapshots.last()
+    AppSectionCard {
+        Text(
+            text = "일별 주식 자산 흐름",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = "${latest.snapshotDate} · 평가 ${latest.valuationAmount.toWon()} · " +
+                "손익 ${latest.evaluationProfitLoss.toSignedWon()}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (snapshots.size < 2) {
+            AppSupportText("잔고를 다른 날짜에 다시 조회하면 일별 변화 차트가 표시됩니다.")
+        } else {
+            val lineColor = MaterialTheme.colorScheme.primary
+            Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
+                val minimum = snapshots.minOf(StockAssetSnapshotEntity::valuationAmount)
+                val maximum = snapshots.maxOf(StockAssetSnapshotEntity::valuationAmount)
+                val range = (maximum - minimum).coerceAtLeast(1L).toFloat()
+                val horizontalStep = size.width / (snapshots.lastIndex.coerceAtLeast(1))
+                fun point(index: Int): Offset {
+                    val normalized = (snapshots[index].valuationAmount - minimum).toFloat() / range
+                    return Offset(
+                        x = horizontalStep * index,
+                        y = size.height - (normalized * size.height),
+                    )
+                }
+                (0 until snapshots.lastIndex).forEach { index ->
+                    drawLine(
+                        color = lineColor,
+                        start = point(index),
+                        end = point(index + 1),
+                        strokeWidth = 5f,
+                    )
+                }
+            }
+            AppSupportText("최근 ${snapshots.size}일의 보유 주식 평가금액입니다. 예수금·세금·수수료는 포함하지 않습니다.")
         }
     }
 }

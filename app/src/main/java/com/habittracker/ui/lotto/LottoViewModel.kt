@@ -12,10 +12,15 @@ import com.habittracker.data.lotto.LottoGeneratedTicket
 import com.habittracker.data.lotto.LottoGenerationMode
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.lotto.LottoControlComparison
+import com.habittracker.data.lotto.LottoQrParser
 import com.habittracker.data.lotto.LottoScorePerformance
+import com.habittracker.data.lotto.LotteryProduct
+import com.habittracker.data.lotto.LotterySyncStatus
+import com.habittracker.data.lotto.toLotterySyncUserMessage
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +39,7 @@ private const val balancedSource = "균형형"
 private const val dispersedSource = "분산형"
 private const val sourceChatGpt = "균형형"
 private const val sourceGemini = "분산형"
+private const val physicalQrSource = "QR 등록"
 private const val savedDrawHistoryLimit = 120
 private const val lottoHistoryPageSize = 20
 
@@ -42,6 +48,7 @@ enum class LottoTab {
     GENERATOR,
     DRAW,
     PURCHASE,
+    PHYSICAL_QR,
     WINNING,
     SAVED,
     STATS,
@@ -63,7 +70,13 @@ private data class LottoHistoryState(
     val allDraws: List<LottoDrawEntity>,
     val savedTickets: List<LottoTicketEntity>,
     val allSavedTickets: List<LottoTicketEntity>,
+    val physicalQrTickets: List<LottoTicketEntity>,
     val purchases: List<LottoPurchaseEntity>,
+)
+
+private data class LottoTicketHistoryState(
+    val savedTickets: List<LottoTicketEntity> = emptyList(),
+    val physicalQrTickets: List<LottoTicketEntity> = emptyList(),
 )
 
 private data class LottoWinningAndAmountState(
@@ -136,6 +149,15 @@ class LottoViewModel(
     private val savedRoundQueryInput = MutableStateFlow("")
     private val purchaseHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
     private val winningHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
+    private val _isOfficialSyncing = MutableStateFlow(false)
+    val isOfficialSyncing: StateFlow<Boolean> = _isOfficialSyncing
+    val officialSyncStatus: StateFlow<LotterySyncStatus> = repository
+        .observeLotterySyncStatus(LotteryProduct.LOTTO_645)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = LotterySyncStatus(LotteryProduct.LOTTO_645),
+        )
 
     private val observedDraws = selectedTab.flatMapLatest { tab ->
         if (tab != LottoTab.DRAW) {
@@ -151,20 +173,37 @@ class LottoViewModel(
         }
     }
     private val allDraws = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.SAVED) repository.observeLottoDraws(roundNo = null, limit = savedDrawHistoryLimit) else flowOf(emptyList())
+        if (tab == LottoTab.SAVED || tab == LottoTab.PHYSICAL_QR) {
+            repository.observeLottoDraws(roundNo = null, limit = savedDrawHistoryLimit)
+        } else {
+            flowOf(emptyList())
+        }
     }
     private val nextRoundSavedTickets = combine(selectedTab, latestRoundNo) { tab, latestDrawRoundNo -> tab to latestDrawRoundNo }.flatMapLatest { (tab, latestDrawRoundNo) ->
         if (tab != LottoTab.GENERATOR && tab != LottoTab.SAVED) return@flatMapLatest flowOf(emptyList())
         val nextRoundNo = latestDrawRoundNo?.plus(1)
-        if (nextRoundNo == null) flowOf(emptyList()) else repository.observeSavedLottoTicketsByRound(nextRoundNo)
+        if (nextRoundNo == null) {
+            flowOf(emptyList())
+        } else {
+            repository.observeSavedLottoTicketsByRound(nextRoundNo)
+                .map { values -> values.filterNot { ticket -> ticket.sourceLabel == physicalQrSource } }
+        }
     }
-    private val savedHistoryTickets = combine(selectedTab, savedRoundQueryInput) { tab, query -> tab to query }
+    private val ticketHistory = combine(selectedTab, savedRoundQueryInput) { tab, query -> tab to query }
         .flatMapLatest { (tab, query) ->
-            if (tab != LottoTab.SAVED) {
-                flowOf(emptyList())
-            } else {
-                query.toIntOrNull()?.let(repository::observeSavedLottoTicketsByRound)
-                    ?: repository.observeAllSavedLottoTickets()
+            when (tab) {
+                LottoTab.SAVED -> {
+                    val tickets = query.toIntOrNull()?.let(repository::observeSavedLottoTicketsByRound)
+                        ?: repository.observeAllSavedLottoTickets()
+                    tickets.map { values ->
+                        LottoTicketHistoryState(
+                            savedTickets = values.filterNot { ticket -> ticket.sourceLabel == physicalQrSource },
+                        )
+                    }
+                }
+                LottoTab.PHYSICAL_QR -> repository.observeLottoTicketsBySource(physicalQrSource)
+                    .map { values -> LottoTicketHistoryState(physicalQrTickets = values) }
+                else -> flowOf(LottoTicketHistoryState())
             }
         }
     private val winningTypeStats = selectedTab.flatMapLatest { tab ->
@@ -234,10 +273,17 @@ class LottoViewModel(
         observedDraws,
         allDraws,
         nextRoundSavedTickets,
-        savedHistoryTickets,
+        ticketHistory,
         purchases,
-    ) { draws, allDraws, savedTickets, allSavedTickets, purchases ->
-        LottoHistoryState(draws, allDraws, savedTickets, allSavedTickets, purchases)
+    ) { draws, allDraws, savedTickets, historyTickets, purchases ->
+        LottoHistoryState(
+            savedDraws = draws,
+            allDraws = allDraws,
+            savedTickets = savedTickets,
+            allSavedTickets = historyTickets.savedTickets,
+            physicalQrTickets = historyTickets.physicalQrTickets,
+            purchases = purchases,
+        )
     }
 
     private val winningAndAmountState = combine(
@@ -333,6 +379,7 @@ class LottoViewModel(
             allDraws = history.allDraws,
             savedTickets = history.savedTickets,
             allSavedTickets = history.allSavedTickets,
+            physicalQrTickets = history.physicalQrTickets,
             purchases = history.purchases,
             winnings = stats.winningAndAmount.winnings,
             canLoadMorePurchases = history.purchases.size >= purchaseHistoryLimit.value,
@@ -382,6 +429,10 @@ class LottoViewModel(
 
     fun selectPurchaseTab() {
         selectedTab.value = LottoTab.PURCHASE
+    }
+
+    fun selectPhysicalQrTab() {
+        selectedTab.value = LottoTab.PHYSICAL_QR
     }
 
     fun selectWinningTab() {
@@ -569,6 +620,37 @@ class LottoViewModel(
         }
     }
 
+    fun syncOfficialDrawsNow() {
+        if (_isOfficialSyncing.value) return
+        _isOfficialSyncing.value = true
+        repository.markLotterySyncRunning(LotteryProduct.LOTTO_645)
+        viewModelScope.launch {
+            try {
+                val result = repository.syncOfficialLotteryDraws(LotteryProduct.LOTTO_645)
+                repository.markLotterySyncSuccess(result)
+                refreshLatestRound()
+                roundInput.value = (result.latestOfficialRound + 1).toString()
+                statusMessage.value = if (result.savedCount > 0) {
+                    "공식 로또 당첨번호 ${result.savedCount}개 회차를 저장했습니다."
+                } else {
+                    "${result.latestOfficialRound}회 공식 번호까지 확인했습니다."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val message = error.toLotterySyncUserMessage()
+                repository.markLotterySyncFailure(
+                    LotteryProduct.LOTTO_645,
+                    com.habittracker.data.lotto.LotteryDrawSyncScheduler.expectedDrawDate(LotteryProduct.LOTTO_645),
+                    message,
+                )
+                statusMessage.value = message
+            } finally {
+                _isOfficialSyncing.value = false
+            }
+        }
+    }
+
     private suspend fun refreshLatestRound() {
         val latest = repository.getLatestLottoRoundNo()
         latestRoundNo.value = latest
@@ -648,6 +730,24 @@ class LottoViewModel(
         }
     }
 
+    fun importPurchaseQr(rawValue: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.importLottoQrPurchase(LottoQrParser.parse(rawValue))
+            }.onSuccess { gameCount ->
+                statusMessage.value = "QR 실물복권 ${gameCount}개 등록했습니다."
+            }.onFailure { error ->
+                val reason = error.message?.takeIf(String::isNotBlank) ?: "알 수 없는 오류"
+                statusMessage.value = "로또 QR 등록에 실패했습니다. $reason"
+            }
+        }
+    }
+
+    fun reportQrScanFailure(message: String) {
+        val reason = message.ifBlank { "QR 내용을 읽지 못했습니다." }
+        statusMessage.value = "로또 QR 스캔에 실패했습니다. $reason"
+    }
+
     fun deletePurchase(purchaseId: Long) {
         viewModelScope.launch {
             runCatching { repository.deleteLottoPurchase(purchaseId) }
@@ -724,6 +824,7 @@ data class LottoUiState(
     val allDraws: List<LottoDrawEntity> = emptyList(),
     val savedTickets: List<LottoTicketEntity> = emptyList(),
     val allSavedTickets: List<LottoTicketEntity> = emptyList(),
+    val physicalQrTickets: List<LottoTicketEntity> = emptyList(),
     val purchases: List<LottoPurchaseEntity> = emptyList(),
     val winnings: List<LottoWinningEntity> = emptyList(),
     val canLoadMorePurchases: Boolean = false,

@@ -246,6 +246,13 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.isConfigSaved && !uiState.isSyncingOrders,
                 )
+                uiState.lastOrderReconciliation?.let { result ->
+                    AppSupportText(
+                        "최근 대조: KIS 체결 ${result.matchedExecutionCount}건 · " +
+                            "외부 체결 ${result.importedExternalOrderCount}건 · " +
+                            "확인 필요 ${result.unresolvedOrderCount}건",
+                    )
+                }
                 uiState.orders.take(5).forEach { order ->
                     Text(
                         "${order.productName} · ${if (order.side == KisOrderSide.BUY.name) "매수" else "매도"} " +
