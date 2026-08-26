@@ -62,8 +62,14 @@ class DhlotteryDrawClient {
             for (index in 0 until items.length()) {
                 val item = items.getJSONObject(index)
                 val winningNumber = item.getString("wnRnkVl")
+                val bonusNumber = item.getString("bnsRnkVl")
                 val groupNo = item.getString("wnBndNo").toIntOrNull()
-                require(groupNo != null && groupNo in 1..5 && winningNumber.matches(Regex("\\d{6}"))) {
+                require(
+                    groupNo != null &&
+                        groupNo in 1..5 &&
+                        winningNumber.matches(Regex("\\d{6}")) &&
+                        bonusNumber.matches(Regex("\\d{6}")),
+                ) {
                     "공식 연금복권 당첨번호 값이 올바르지 않습니다."
                 }
                 add(
@@ -72,6 +78,7 @@ class DhlotteryDrawClient {
                         drawDate = item.getString("psltRflYmd").toBasicDate(),
                         groupNo = groupNo,
                         winningNumber = winningNumber,
+                        bonusNumber = bonusNumber,
                     ),
                 )
             }

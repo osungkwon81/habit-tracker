@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.data.stock.KisCurrentPrice
 import com.habittracker.data.stock.StockBuyLotRow
 import com.habittracker.data.stock.isCrashGuardOrderBlock
 import com.habittracker.ui.digitsOnly
@@ -26,10 +27,15 @@ import com.habittracker.ui.components.AppSpacing
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
 
+private data class PendingBuyLotSell(
+    val row: StockBuyLotRow,
+    val quote: KisCurrentPrice,
+)
+
 @Composable
 fun StockPortfolioScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var pendingSellRow by remember { mutableStateOf<StockBuyLotRow?>(null) }
+    var pendingSell by remember { mutableStateOf<PendingBuyLotSell?>(null) }
     var sellQuantity by remember { mutableStateOf("") }
     var showSellAllConfirmation by remember { mutableStateOf(false) }
     val isEmergencySellBlocked = uiState.safetyConfig.globalOrderBlocked &&
@@ -75,11 +81,12 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         )
     }
 
-    pendingSellRow?.let { row ->
+    pendingSell?.let { pending ->
+        val row = pending.row
         val order = row.order
         val quantity = sellQuantity.toLongOrNull()
         val buyPrice = order.filledAveragePrice ?: order.referencePrice
-        val currentPrice = row.currentPrice
+        val currentPrice = pending.quote.currentPrice.toLongOrNull()
         val expectedProfit = if (quantity != null && currentPrice != null) {
             (currentPrice - buyPrice) * quantity
         } else {
@@ -88,7 +95,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         val isExpectedLoss = expectedProfit?.let { it < 0L } == true
         AlertDialog(
             onDismissRequest = {
-                pendingSellRow = null
+                pendingSell = null
                 sellQuantity = ""
             },
             title = {
@@ -133,8 +140,8 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                         else -> "실전 매도 주문"
                     },
                     onClick = {
-                        viewModel.submitBuyLotSell(row, quantity ?: 0L)
-                        pendingSellRow = null
+                        viewModel.submitBuyLotSell(row, quantity ?: 0L, pending.quote)
+                        pendingSell = null
                         sellQuantity = ""
                     },
                     enabled = !uiState.isSubmittingOrder &&
@@ -148,7 +155,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                 AppSecondaryButton(
                     text = "취소",
                     onClick = {
-                        pendingSellRow = null
+                        pendingSell = null
                         sellQuantity = ""
                     },
                 )
@@ -221,7 +228,10 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                 }
             }
         }
-        items(uiState.buyLotRows.size) { index ->
+        items(
+            count = uiState.buyLotRows.size,
+            key = { index -> uiState.buyLotRows[index].order.id },
+        ) { index ->
             val row = uiState.buyLotRows[index]
             val order = row.order
             AppSectionCard {
@@ -279,8 +289,10 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                         else -> "이 수량 매도"
                     },
                     onClick = {
-                        pendingSellRow = row
-                        sellQuantity = order.remainingQuantity.toString()
+                        viewModel.prepareBuyLotSell(row) { quote ->
+                            pendingSell = PendingBuyLotSell(row, quote)
+                            sellQuantity = order.remainingQuantity.toString()
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = order.remainingQuantity > 0L &&

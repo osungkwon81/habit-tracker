@@ -63,10 +63,8 @@ object LottoNumberGenerator {
     private val gapThresholds = listOf(5, 10, 15)
     private const val historyAnalysisMaximumScore = 27.4
     private const val maximumBacktestWeightAdjustment = 0.10
-    private const val previousDrawTwoMatchPenalty = 4.0
-    private const val previousDrawThreeMatchPenalty = 12.0
-    private const val previousDrawFourPlusMatchPenalty = 20.0
-    private const val maximumPreviousDrawTwoPlusGamesPerBatch = 1
+    private const val previousDrawThreeMatchPenalty = 2.0
+    private const val previousDrawFourPlusMatchPenalty = 6.0
     private val random = Random.Default
 
     fun generateBalanced(
@@ -87,13 +85,7 @@ object LottoNumberGenerator {
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = {
-                generatePredictedCombination(
-                    trendProfile = trendProfile,
-                    strategy = CoverageStrategy.BALANCED,
-                    randomSource = randomSource,
-                )
-            },
+            generator = { generateRandomCombination(randomSource) },
             validator = { numbers -> isBalancedCandidate(numbers, trendProfile) },
             scorer = { numbers ->
                 scoreCandidate(
@@ -112,7 +104,6 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
-            lastDraw = lastDraw,
             generationSeed = seed,
         )
     }
@@ -136,13 +127,7 @@ object LottoNumberGenerator {
         return generateRankedTickets(
             history = normalizedHistory,
             gameCount = gameCount,
-            generator = {
-                generatePredictedCombination(
-                    trendProfile = trendProfile,
-                    strategy = CoverageStrategy.DIVERSIFIED,
-                    randomSource = randomSource,
-                )
-            },
+            generator = { generateRandomCombination(randomSource) },
             validator = ::isDiversifiedCandidate,
             scorer = { numbers ->
                 scoreCandidate(
@@ -161,7 +146,6 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.DIVERSIFIED,
-            lastDraw = lastDraw,
             generationSeed = seed,
         )
     }
@@ -246,13 +230,9 @@ object LottoNumberGenerator {
             "maximumConsecutiveRun": 3,
             "minimumAcValue": 3
           },
-          "weightedSelection": {
-            "minimumWeight": 0.05,
-            "numberFit": {"base": 0.72, "evidenceDivisor": 180.0, "range": [0.72, 1.28]},
-            "gapFit": {"inactiveWeight": 1.0, "maximumVerifiedLift": $adaptiveMaximumLift},
-            "pairFit": {"base": 0.78, "evidenceDivisor": 230.0, "range": [0.78, 1.22]},
-            "diversifiedHighNumberMinimum": 32,
-            "diversifiedHighNumberMultiplier": 1.05
+          "candidateSampling": {
+            "method": "UNIFORM_WITHOUT_REPLACEMENT",
+            "historicalEvidenceApplied": "SCORING_ONLY"
           },
           "evidence": {
             "numberRateCenter": 50.0,
@@ -281,7 +261,12 @@ object LottoNumberGenerator {
           },
           "scoreComposition": {
             "data": {"number": 0.55, "pair": 0.30, "gap": 0.15},
-            "pattern": {"history": 0.65, "transition": 0.35},
+            "pattern": {
+              "history": 0.65,
+              "transition": 0.35,
+              "transitionShape": 0.90,
+              "transitionCarry": 0.10
+            },
             "backtest": {"data": 0.60, "pattern": 0.40},
             "backtestStrategyMatched": true,
             "backtestEligibleCandidateBaseline": true,
@@ -301,12 +286,14 @@ object LottoNumberGenerator {
           "finalSelection": {
             "overlapPenalties": {"two": 1.5, "three": 5.0, "fourOrMore": 10.0},
             "multipleUsePenaltyMultiplier": 2.4,
+            "maximumNumberUsesPerFiveGames": 2,
+            "balancedMaximumPairwiseOverlap": 2,
             "diversifiedMaximumPairwiseOverlap": 2,
             "previousDrawOverlap": {
-              "twoMatchPenalty": $previousDrawTwoMatchPenalty,
+              "twoMatchPenalty": 0.0,
               "threeMatchPenalty": $previousDrawThreeMatchPenalty,
               "fourPlusMatchPenalty": $previousDrawFourPlusMatchPenalty,
-              "maximumTwoPlusGamesPerBatch": $maximumPreviousDrawTwoPlusGamesPerBatch
+              "batchHardLimit": false
             }
           },
           "balanced": {
@@ -320,24 +307,24 @@ object LottoNumberGenerator {
             "repeatedPairPenalty": 1.3,
             "newCoverageWeight": 1.0,
             "bucketBonusWeight": 0.45,
-            "selectionAvoidanceWeight": 0.0,
+            "avoidanceScoreWeight": 0.03,
             "dataWeight": 0.45,
             "patternWeight": 0.35,
             "distributionWeight": 0.20
           },
           "diversified": {
-            "minimumHighCount": 2,
-            "minimumSpread": 27,
-            "minimumDecadeBuckets": 4,
+            "minimumHighCount": 0,
+            "minimumSpread": 22,
+            "minimumDecadeBuckets": 3,
             "maximumSameTailCount": 3,
-            "minimumAcValue": 5,
+            "minimumAcValue": 4,
             "distributionScoring": "HISTORY_FIT",
             "selectionOverlapWeight": 1.45,
             "repeatedNumberPenalty": 1.15,
             "repeatedPairPenalty": 2.25,
             "newCoverageWeight": 1.55,
             "bucketBonusWeight": 0.7,
-            "selectionAvoidanceWeight": 0.08,
+            "avoidanceScoreWeight": 0.05,
             "dataWeight": 0.40,
             "patternWeight": 0.20,
             "distributionWeight": 0.40
@@ -391,7 +378,6 @@ object LottoNumberGenerator {
             pairEvidence = buildPairEvidence(history, longFrequency, longPairFrequency),
             currentGaps = lastSeenGap,
             gapEvidence = buildGapEvidence(lastSeenGap, gapValidationProfile),
-            gapWeight = buildGapWeight(lastSeenGap, gapValidationProfile),
             gapValidationProfile = gapValidationProfile,
             sumValidationProfile = sumValidationProfile,
             transitionProfile = buildTransitionProfile(history),
@@ -407,84 +393,6 @@ object LottoNumberGenerator {
             selected += randomSource.nextInt(maxNumber) + 1
         }
         return selected.sorted()
-    }
-
-    private fun generatePredictedCombination(
-        trendProfile: TrendProfile,
-        strategy: CoverageStrategy,
-        randomSource: Random,
-    ): List<Int> {
-        val selected = mutableSetOf<Int>()
-
-        while (selected.size < pickCount) {
-            val candidates = (1..maxNumber).filter { number -> number !in selected }
-            if (candidates.isEmpty()) return generateRandomCombination(randomSource)
-            selected += pickWeightedNumber(
-                candidates = candidates,
-                selected = selected,
-                trendProfile = trendProfile,
-                strategy = strategy,
-                randomSource = randomSource,
-            )
-        }
-
-        return selected.sorted()
-    }
-
-    private fun pickWeightedNumber(
-        candidates: List<Int>,
-        selected: Set<Int>,
-        trendProfile: TrendProfile,
-        strategy: CoverageStrategy,
-        randomSource: Random,
-    ): Int {
-        val weights = candidates.map { number ->
-            predictedNumberWeight(
-                number = number,
-                selected = selected,
-                trendProfile = trendProfile,
-                strategy = strategy,
-            ).coerceAtLeast(0.05)
-        }
-        val totalWeight = weights.sum()
-        if (totalWeight <= 0.0) return candidates[randomSource.nextInt(candidates.size)]
-
-        var threshold = randomSource.nextDouble() * totalWeight
-        for (index in candidates.indices) {
-            threshold -= weights[index]
-            if (threshold <= 0.0) return candidates[index]
-        }
-        return candidates.last()
-    }
-
-    private fun predictedNumberWeight(
-        number: Int,
-        selected: Set<Int>,
-        trendProfile: TrendProfile,
-        strategy: CoverageStrategy,
-    ): Double {
-        val numberFit = (0.72 + trendProfile.numberEvidence.getValue(number) / 180.0).coerceIn(0.72, 1.28)
-        val gapFit = trendProfile.gapWeight.getValue(number)
-        val highNumberFit = when {
-            number >= 32 && strategy == CoverageStrategy.DIVERSIFIED -> 1.05
-            else -> 1.0
-        }
-
-        return numberFit * gapFit * highNumberFit * selectedPairEvidenceFit(number, selected, trendProfile)
-    }
-
-    private fun selectedPairEvidenceFit(
-        number: Int,
-        selected: Set<Int>,
-        trendProfile: TrendProfile,
-    ): Double {
-        if (selected.isEmpty()) return 1.0
-
-        val averageEvidence = selected.map { picked ->
-            val pair = if (number < picked) number to picked else picked to number
-            trendProfile.pairEvidence.getValue(pair)
-        }.average()
-        return (0.78 + averageEvidence / 230.0).coerceIn(0.78, 1.22)
     }
 
     private fun isBaseCoverageCandidate(numbers: List<Int>): Boolean {
@@ -528,14 +436,12 @@ object LottoNumberGenerator {
 
     private fun isDiversifiedCandidate(numbers: List<Int>): Boolean {
         if (!isBaseCoverageCandidate(numbers)) return false
-        val highCount = numbers.count { it >= 32 }
         val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
 
-        if (highCount < 2) return false
-        if (numbers.last() - numbers.first() < 27) return false
-        if (decadeBucketCount(numbers) < 4) return false
+        if (numbers.last() - numbers.first() < 22) return false
+        if (decadeBucketCount(numbers) < 3) return false
         if (tailDuplicates > 3) return false
-        return acValue(numbers) >= 5
+        return acValue(numbers) >= 4
     }
 
     private fun generateRankedTickets(
@@ -547,7 +453,6 @@ object LottoNumberGenerator {
         commentBuilder: (List<Int>, CandidateScore) -> String,
         mode: LottoGenerationMode,
         strategy: CoverageStrategy,
-        lastDraw: List<Int>,
         generationSeed: Long,
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
@@ -567,7 +472,7 @@ object LottoNumberGenerator {
             .sortedByDescending { candidate -> candidate.score.totalScore }
             .take(mode.finalistPoolSize)
 
-        return pickDiverseTopGames(scored, gameCount, strategy, lastDraw).map { candidate ->
+        return pickDiverseTopGames(scored, gameCount, strategy).map { candidate ->
             LottoGeneratedTicket(
                 numbers = candidate.numbers,
                 comment = commentBuilder(candidate.numbers, candidate.score),
@@ -583,7 +488,6 @@ object LottoNumberGenerator {
         candidates: List<ScoredCandidate>,
         gameCount: Int,
         strategy: CoverageStrategy,
-        lastDraw: List<Int>,
     ): List<ScoredCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
@@ -600,18 +504,15 @@ object LottoNumberGenerator {
                     }
                 }
             } ?: remaining
-            val selectedTwoPlusCount = selected.count { candidate ->
-                candidate.numbers.count(lastDraw::contains) >= 2
+            val maximumNumberUses = maxOf(2, (gameCount * pickCount + maxNumber - 1) / maxNumber)
+            val numberUsage = selected.flatMap { it.numbers }.groupingBy { it }.eachCount()
+            val usageSelectable = pairwiseSelectable.filter { candidate ->
+                candidate.numbers.all { number -> (numberUsage[number] ?: 0) < maximumNumberUses }
             }
-            val selectable = if (selectedTwoPlusCount >= maximumPreviousDrawTwoPlusGamesPerBatch) {
-                pairwiseSelectable.filter { candidate -> candidate.numbers.count(lastDraw::contains) < 2 }
-            } else {
-                pairwiseSelectable
-            }
+            val selectable = usageSelectable
             if (selectable.isEmpty()) break
 
             val coverage = selected.flatMap { it.numbers }.toSet()
-            val numberUsage = selected.flatMap { it.numbers }.groupingBy { it }.eachCount()
             val selectedPairs = selected.flatMap { drawPairs(it.numbers) }.toSet()
             val next = selectable.maxByOrNull { candidate ->
                 val overlapPenalty = selected.sumOf { picked ->
@@ -634,7 +535,6 @@ object LottoNumberGenerator {
                 val newCoverage = candidate.numbers.count { it !in coverage } * strategy.newCoverageWeight
                 val spacingBonus = decadeBucketCount(candidate.numbers) * strategy.bucketBonusWeight
                 candidate.score.totalScore +
-                    candidate.score.avoidanceScore * strategy.selectionAvoidanceWeight +
                     newCoverage - overlapPenalty - repeatedNumberPenalty - repeatedPairPenalty + spacingBonus
             } ?: break
             selected += next
@@ -669,7 +569,8 @@ object LottoNumberGenerator {
             dataScore * weights.data +
                 patternScore * weights.pattern +
                 distributionScore * weights.distribution -
-                previousDrawOverlapPenalty
+                previousDrawOverlapPenalty +
+                (avoidanceScore - 50.0) * strategy.avoidanceScoreWeight
             ).coerceIn(0.0, 100.0)
         val featureSnapshotJson = if (captureFeatureSnapshot) {
             buildFeatureSnapshotJson(
@@ -701,7 +602,6 @@ object LottoNumberGenerator {
     private fun previousDrawOverlapPenalty(overlapCount: Int): Double = when {
         overlapCount >= 4 -> previousDrawFourPlusMatchPenalty
         overlapCount == 3 -> previousDrawThreeMatchPenalty
-        overlapCount == 2 -> previousDrawTwoMatchPenalty
         else -> 0.0
     }
 
@@ -915,13 +815,6 @@ object LottoNumberGenerator {
         val evidence = validationProfile.evidenceForGap(currentGaps.getValue(number))
         val appliedLift = evidence?.appliedLift ?: 0.0
         (50.0 + appliedLift * 100.0).coerceIn(0.0, 100.0)
-    }
-
-    private fun buildGapWeight(
-        currentGaps: Map<Int, Int>,
-        validationProfile: GapValidationProfile,
-    ): Map<Int, Double> = (1..maxNumber).associateWith { number ->
-        1.0 + (validationProfile.evidenceForGap(currentGaps.getValue(number))?.appliedLift ?: 0.0)
     }
 
     private fun buildGapValidationProfile(history: List<List<Int>>): GapValidationProfile {
@@ -1172,7 +1065,6 @@ object LottoNumberGenerator {
             )
             roundEvidence += BacktestRoundEvidence(
                 actualNumbers = actualNumbers,
-                previousDraw = lastTrainingDraw,
                 totalPercentile = actualCandidateScore?.let { score ->
                     scorePercentile(
                         actualScore = score.dataScore * 0.60 + score.patternScore * 0.40,
@@ -1237,11 +1129,7 @@ object LottoNumberGenerator {
         var attempt = 0
         while (candidates.size < backtestStrategyCandidateCount && attempt < maximumAttempts) {
             attempt++
-            val numbers = generatePredictedCombination(
-                trendProfile = trainingProfile,
-                strategy = strategy,
-                randomSource = randomSource,
-            )
+            val numbers = generateRandomCombination(randomSource)
             val eligible = when (strategy) {
                 CoverageStrategy.BALANCED -> isBalancedCandidate(numbers, trainingProfile)
                 CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(numbers)
@@ -1296,7 +1184,8 @@ object LottoNumberGenerator {
                                 candidate.score.dataScore * weights.data +
                                     candidate.score.patternScore * weights.pattern +
                                     candidate.score.distributionScore * weights.distribution -
-                                    candidate.score.previousDrawOverlapPenalty
+                                    candidate.score.previousDrawOverlapPenalty +
+                                    (candidate.score.avoidanceScore - 50.0) * strategy.avoidanceScoreWeight
                                 ).coerceIn(0.0, 100.0),
                         ),
                     )
@@ -1306,7 +1195,6 @@ object LottoNumberGenerator {
                 candidates = reweightedCandidates,
                 gameCount = defaultGameCount,
                 strategy = strategy,
-                lastDraw = round.previousDraw,
             )
             if (strategyTickets.size < defaultGameCount || round.controlTickets.size < defaultGameCount) {
                 return@mapNotNull null
@@ -1408,15 +1296,17 @@ object LottoNumberGenerator {
     ): Double {
         if (profile.totalSampleCount == 0 || profile.conditionalSampleCount == 0) return 50.0
         val pattern = drawPattern(numbers, lastDraw)
-        val componentScores = listOf(
+        val shapeScores = listOf(
             transitionLiftScore(profile.conditional.sumBuckets, profile.all.sumBuckets, pattern.sumBucket, profile),
             transitionLiftScore(profile.conditional.oddCounts, profile.all.oddCounts, pattern.oddCount, profile),
             transitionLiftScore(profile.conditional.lowCounts, profile.all.lowCounts, pattern.lowCount, profile),
             transitionLiftScore(profile.conditional.bucketCounts, profile.all.bucketCounts, pattern.bucketCount, profile),
-            transitionLiftScore(profile.conditional.carryCounts, profile.all.carryCounts, pattern.carryCount, profile),
         )
+        val carryScore =
+            transitionLiftScore(profile.conditional.carryCounts, profile.all.carryCounts, pattern.carryCount, profile)
+        val transitionScore = shapeScores.average() * 0.90 + carryScore * 0.10
         val reliability = profile.conditionalSampleCount.toDouble() / (profile.conditionalSampleCount + 24.0)
-        return (50.0 + (componentScores.average() - 50.0) * reliability).coerceIn(0.0, 100.0)
+        return (50.0 + (transitionScore - 50.0) * reliability).coerceIn(0.0, 100.0)
     }
 
     private fun transitionLiftScore(
@@ -1581,7 +1471,6 @@ object LottoNumberGenerator {
         val pairEvidence: Map<Pair<Int, Int>, Double>,
         val currentGaps: Map<Int, Int>,
         val gapEvidence: Map<Int, Double>,
-        val gapWeight: Map<Int, Double>,
         val gapValidationProfile: GapValidationProfile,
         val sumValidationProfile: SumValidationProfile,
         val transitionProfile: TransitionProfile,
@@ -1663,7 +1552,6 @@ object LottoNumberGenerator {
 
     private data class BacktestRoundEvidence(
         val actualNumbers: List<Int>,
-        val previousDraw: List<Int>,
         val totalPercentile: Double,
         val dataPercentile: Double,
         val patternPercentile: Double,
@@ -1825,7 +1713,7 @@ object LottoNumberGenerator {
         val repeatedPairPenalty: Double,
         val newCoverageWeight: Double,
         val bucketBonusWeight: Double,
-        val selectionAvoidanceWeight: Double,
+        val avoidanceScoreWeight: Double,
         val maximumPairwiseOverlap: Int?,
         val dataWeight: Double,
         val patternWeight: Double,
@@ -1837,8 +1725,8 @@ object LottoNumberGenerator {
             repeatedPairPenalty = 1.3,
             newCoverageWeight = 1.0,
             bucketBonusWeight = 0.45,
-            selectionAvoidanceWeight = 0.0,
-            maximumPairwiseOverlap = null,
+            avoidanceScoreWeight = 0.03,
+            maximumPairwiseOverlap = 2,
             dataWeight = 0.45,
             patternWeight = 0.35,
             distributionWeight = 0.20,
@@ -1849,7 +1737,7 @@ object LottoNumberGenerator {
             repeatedPairPenalty = 2.25,
             newCoverageWeight = 1.55,
             bucketBonusWeight = 0.7,
-            selectionAvoidanceWeight = 0.08,
+            avoidanceScoreWeight = 0.05,
             maximumPairwiseOverlap = 2,
             dataWeight = 0.40,
             patternWeight = 0.20,

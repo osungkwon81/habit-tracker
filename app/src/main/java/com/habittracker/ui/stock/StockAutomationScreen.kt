@@ -258,12 +258,14 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                             onClick = { viewModel.selectRuleOrderDivision("00") },
                             modifier = Modifier.weight(1f),
                         )
-                        AppSelectableChip(
-                            label = "시장가",
-                            selected = uiState.ruleOrderDivisionCode == "01",
-                            onClick = { viewModel.selectRuleOrderDivision("01") },
-                            modifier = Modifier.weight(1f),
-                        )
+                        if (uiState.ruleAction == StockRuleAction.AUTO_BUY) {
+                            AppSelectableChip(
+                                label = "시장가",
+                                selected = uiState.ruleOrderDivisionCode == "01",
+                                onClick = { viewModel.selectRuleOrderDivision("01") },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                     if (uiState.ruleOrderDivisionCode == "01") {
                         Text(
@@ -305,7 +307,10 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
         if (uiState.exitRules.isEmpty()) {
             item { AppSectionCard { AppSupportText("저장된 자동화 규칙이 없습니다.") } }
         }
-        items(uiState.exitRules.size) { index ->
+        items(
+            count = uiState.exitRules.size,
+            key = { index -> uiState.exitRules[index].id },
+        ) { index ->
             val rule = uiState.exitRules[index]
             val type = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType }
             val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode }

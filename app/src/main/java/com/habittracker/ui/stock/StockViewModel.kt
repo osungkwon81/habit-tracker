@@ -14,6 +14,7 @@ import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
 import com.habittracker.data.stock.KisCashOrderDraft
+import com.habittracker.data.stock.KisCurrentPrice
 import com.habittracker.data.stock.KisEnvironment
 import com.habittracker.data.stock.KisMarketCapStock
 import com.habittracker.data.stock.KisOrderSide
@@ -223,12 +224,14 @@ class StockViewModel(
     fun selectOrderSide(side: KisOrderSide) {
         cancelOrderInputAutomation()
         _uiState.update {
+            val orderDivisionCode = if (side == KisOrderSide.SELL) "00" else it.orderDivisionCode
             it.copy(
                 orderSide = side,
                 productCode = "",
                 productName = "",
                 orderQuantity = "",
-                orderUnitPrice = if (it.orderDivisionCode == "01") "0" else "",
+                orderDivisionCode = orderDivisionCode,
+                orderUnitPrice = if (orderDivisionCode == "01") "0" else "",
                 orderCalculationAmount = "",
                 orderQuantityPercent = null,
                 orderCurrentPrice = null,
@@ -281,9 +284,16 @@ class StockViewModel(
     }
 
     fun updateOrderDivisionCode(value: String) {
-        val orderDivisionCode = value.digitsOnly().take(2)
+        val requestedOrderDivisionCode = value.digitsOnly().take(2)
         cancelOrderInputAutomation()
         _uiState.update {
+            val orderDivisionCode = if (
+                it.orderSide == KisOrderSide.SELL && requestedOrderDivisionCode == "01"
+            ) {
+                "00"
+            } else {
+                requestedOrderDivisionCode
+            }
             it.copy(
                 orderDivisionCode = orderDivisionCode,
                 orderQuantity = "",
@@ -310,6 +320,7 @@ class StockViewModel(
     }
 
     fun updateOrderUnitPrice(value: String) {
+        if (_uiState.value.orderSide == KisOrderSide.SELL) return
         val orderUnitPrice = value.digitsOnly()
         cancelOrderInputAutomation()
         _uiState.update {
@@ -345,15 +356,18 @@ class StockViewModel(
             )
         }
         viewModelScope.launch {
-            runCatching { repository.getKisCurrentStockPrice(productCode) }
-                .onSuccess { currentPrice ->
+            runCatching { repository.getKisCurrentStockQuote(productCode) }
+                .onSuccess { quote ->
                     if (requestId != orderPriceRequestId) return@onSuccess
                     val current = _uiState.value
                     if (current.productCode != productCode) return@onSuccess
+                    val currentPrice = quote.currentPrice.toLongOrNull()
+                        ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=$productCode)")
                     _uiState.update {
                         it.copy(
                             orderCurrentPrice = currentPrice,
                             orderUnitPrice = if (it.orderDivisionCode == "01") "0" else currentPrice.toString(),
+                            exchangeIdDivisionCode = quote.market.orderExchangeCode,
                             isLoadingOrderPrice = false,
                         )
                     }
@@ -448,9 +462,7 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching {
                 repository.getStockOrderAvailability(
-                    state.toCashOrderDraft().copy(
-                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
-                    ),
+                    state.toCashOrderDraft(),
                     verifiedCurrentPrice = state.orderCurrentPrice,
                 )
             }.onSuccess { availability ->
@@ -499,6 +511,90 @@ class StockViewModel(
         }
     }
 
+    fun prepareCashOrderConfirmation(onReady: () -> Unit) {
+        val state = _uiState.value
+        if (state.orderSide != KisOrderSide.SELL) {
+            onReady()
+            return
+        }
+        if (state.isLoadingOrderPrice || state.isLoadingOrderAvailability || state.isSubmittingOrder) return
+        val requestedQuantity = state.orderQuantity.toLongOrNull()
+        if (requestedQuantity == null || requestedQuantity <= 0L) {
+            _uiState.update { it.copy(statusMessage = "매도 수량은 1주 이상으로 입력해 주세요.") }
+            return
+        }
+
+        val requestId = ++orderPriceRequestId
+        orderAvailabilityRequestId += 1
+        _uiState.update {
+            it.copy(
+                isLoadingOrderPrice = true,
+                isLoadingOrderAvailability = false,
+                orderAvailability = null,
+            )
+        }
+        viewModelScope.launch {
+            runCatching {
+                val quote = repository.getKisCurrentStockQuote(state.productCode)
+                val currentPrice = quote.currentPrice.toLongOrNull()
+                    ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${state.productCode})")
+                val draft = state.toCashOrderDraft().copy(
+                    orderDivisionCode = "00",
+                    orderUnitPrice = currentPrice.toString(),
+                    exchangeIdDivisionCode = quote.market.orderExchangeCode,
+                )
+                quote to repository.getStockOrderAvailability(
+                    draft = draft,
+                    knownHoldingQuantity = state.orderAvailability?.holdingQuantity,
+                    verifiedQuote = quote,
+                )
+            }.onSuccess { (quote, availability) ->
+                if (requestId != orderPriceRequestId) return@onSuccess
+                val current = _uiState.value
+                if (current.orderSide != KisOrderSide.SELL || current.productCode != state.productCode) return@onSuccess
+                if (requestedQuantity > availability.availableQuantity) {
+                    _uiState.update {
+                        it.copy(
+                            orderDivisionCode = "00",
+                            orderCurrentPrice = availability.currentPrice,
+                            orderUnitPrice = availability.currentPrice.toString(),
+                            exchangeIdDivisionCode = quote.market.orderExchangeCode,
+                            orderAvailability = availability,
+                            isLoadingOrderPrice = false,
+                            statusMessage = "매도 수량은 ${availability.availableQuantity}주 이하로 입력해 주세요.",
+                        )
+                    }
+                    return@onSuccess
+                }
+                _uiState.update {
+                    it.copy(
+                        orderDivisionCode = "00",
+                        orderCurrentPrice = availability.currentPrice,
+                        orderUnitPrice = availability.currentPrice.toString(),
+                        exchangeIdDivisionCode = quote.market.orderExchangeCode,
+                        orderAvailability = availability,
+                        isLoadingOrderPrice = false,
+                    )
+                }
+                onReady()
+            }.onFailure { error ->
+                if (requestId != orderPriceRequestId) return@onFailure
+                recordStockError(
+                    eventType = "ORDER_CONFIRMATION_PREPARE_FAILED",
+                    title = "매도 주문 확인 준비 실패",
+                    error = error,
+                    fallbackMessage = "최신 현재가와 매도 가능 수량을 확인하지 못했습니다.",
+                )
+                _uiState.update {
+                    it.copy(
+                        isLoadingOrderPrice = false,
+                        statusMessage = error.message ?: "매도 주문 확인을 준비하지 못했습니다.",
+                    )
+                }
+            }
+        }
+    }
+
     fun submitCashOrder() {
         val state = _uiState.value
         val requestedQuantity = state.orderQuantity.toLongOrNull()
@@ -517,11 +613,11 @@ class StockViewModel(
         viewModelScope.launch {
             runCatching {
                 repository.placeKisCashOrder(
-                    draft = state.toCashOrderDraft().copy(
-                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
-                    ),
+                    draft = state.toCashOrderDraft(),
                     productName = state.productName,
                     source = StockOrderSource.MANUAL,
+                    verifiedCurrentPrice = availability.currentPrice.takeIf { state.orderSide == KisOrderSide.SELL },
+                    verifiedQuoteUnit = availability.quoteUnit.takeIf { state.orderSide == KisOrderSide.SELL },
                 )
             }.onSuccess { order ->
                 _uiState.update {
@@ -548,14 +644,45 @@ class StockViewModel(
         }
     }
 
-    fun submitBuyLotSell(row: StockBuyLotRow, quantity: Long) {
+    fun prepareBuyLotSell(row: StockBuyLotRow, onReady: (KisCurrentPrice) -> Unit) {
         val order = row.order
-        val currentPrice = row.currentPrice
+        if (order.remainingQuantity <= 0L || _uiState.value.isSubmittingOrder) return
+        _uiState.update { it.copy(isSubmittingOrder = true) }
+        viewModelScope.launch {
+            runCatching { repository.getKisCurrentStockQuote(order.productCode) }
+                .onSuccess { quote ->
+                    _uiState.update { it.copy(isSubmittingOrder = false) }
+                    onReady(quote)
+                }
+                .onFailure { error ->
+                    recordStockError(
+                        eventType = "ORDER_CURRENT_PRICE_QUERY_FAILED",
+                        title = "매도 현재가 조회 실패",
+                        error = error,
+                        fallbackMessage = "매도 확인에 필요한 현재가를 조회하지 못했습니다.",
+                    )
+                    _uiState.update {
+                        it.copy(
+                            isSubmittingOrder = false,
+                            statusMessage = error.message ?: "현재가 조회에 실패했습니다.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun submitBuyLotSell(row: StockBuyLotRow, quantity: Long, confirmedQuote: KisCurrentPrice) {
+        val order = row.order
+        val currentPrice = confirmedQuote.currentPrice.toLongOrNull()
         if (quantity !in 1L..order.remainingQuantity) {
             _uiState.update { it.copy(statusMessage = "매도 수량은 1주 이상 ${order.remainingQuantity}주 이하로 입력해 주세요.") }
             return
         }
-        if (currentPrice == null || currentPrice <= 0L) {
+        if (
+            confirmedQuote.productCode != order.productCode ||
+            currentPrice == null ||
+            currentPrice <= 0L
+        ) {
             _uiState.update { it.copy(statusMessage = "${order.productName} 현재가를 확인한 뒤 다시 시도해 주세요.") }
             return
         }
@@ -571,13 +698,15 @@ class StockViewModel(
                         orderDivisionCode = "00",
                         orderQuantity = quantity.toString(),
                         orderUnitPrice = currentPrice.toString(),
-                        exchangeIdDivisionCode = repository.getCurrentStockOrderExchangeCode(),
+                        exchangeIdDivisionCode = confirmedQuote.market.orderExchangeCode,
                         sellType = "01",
                         conditionPrice = "",
                     ),
                     productName = order.productName,
                     source = StockOrderSource.MANUAL,
                     intendedBuyOrderId = order.id,
+                    verifiedCurrentPrice = currentPrice,
+                    verifiedQuoteUnit = confirmedQuote.quoteUnit,
                 )
             }.onSuccess { sellOrder ->
                 _uiState.update {
@@ -655,7 +784,9 @@ class StockViewModel(
                 _uiState.update {
                     it.copy(
                         ownedStocks = balanceStocks,
-                        buyLotRows = rows,
+                        buyLotRows = rows.sortedBy { row ->
+                            if (row.order.remainingQuantity > 0L) 0 else 1
+                        },
                         lastOrderReconciliation = reconciliation,
                         isLoadingPortfolio = false,
                         hasLoadedOwnedStocks = true,
@@ -914,6 +1045,7 @@ class StockViewModel(
         _uiState.update {
             it.copy(
                 ruleAction = action,
+                ruleOrderDivisionCode = if (action == StockRuleAction.AUTO_SELL) "00" else it.ruleOrderDivisionCode,
                 ruleProductCode = "",
                 ruleProductName = "",
             )
@@ -1009,10 +1141,48 @@ class StockViewModel(
         }
     }
 
-    fun executeRebalanceLine(line: StockRebalanceLine) {
+    fun prepareRebalanceLine(line: StockRebalanceLine, onReady: (KisCurrentPrice?) -> Unit) {
+        if (line.orderSide != KisOrderSide.SELL) {
+            onReady(null)
+            return
+        }
+        if (_uiState.value.isSubmittingOrder) return
+        _uiState.update { it.copy(isSubmittingOrder = true) }
+        viewModelScope.launch {
+            runCatching { repository.getKisCurrentStockQuote(line.productCode) }
+                .onSuccess { quote ->
+                    _uiState.update { it.copy(isSubmittingOrder = false) }
+                    onReady(quote)
+                }
+                .onFailure { error ->
+                    recordStockError(
+                        eventType = "REBALANCE_CURRENT_PRICE_QUERY_FAILED",
+                        title = "리밸런싱 매도 현재가 조회 실패",
+                        error = error,
+                        fallbackMessage = "리밸런싱 매도 확인에 필요한 현재가를 조회하지 못했습니다.",
+                    )
+                    _uiState.update {
+                        it.copy(
+                            isSubmittingOrder = false,
+                            statusMessage = error.message ?: "리밸런싱 매도 현재가 조회에 실패했습니다.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun executeRebalanceLine(line: StockRebalanceLine, confirmedQuote: KisCurrentPrice?) {
+        if (_uiState.value.isSubmittingOrder) return
+        _uiState.update { it.copy(isSubmittingOrder = true) }
         launchAction("리밸런싱 주문에 실패했습니다.") {
-            val order = repository.executeStockRebalanceLine(line)
-            _uiState.update { it.copy(statusMessage = "${order.productName} 리밸런싱 주문이 접수되었습니다. (${order.orderNumber})") }
+            try {
+                val order = repository.executeStockRebalanceLine(line, confirmedQuote)
+                _uiState.update {
+                    it.copy(statusMessage = "${order.productName} 리밸런싱 주문이 접수되었습니다. (${order.orderNumber})")
+                }
+            } finally {
+                _uiState.update { it.copy(isSubmittingOrder = false) }
+            }
         }
     }
 

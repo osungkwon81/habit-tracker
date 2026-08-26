@@ -42,6 +42,7 @@ private const val sourceGemini = "분산형"
 private const val physicalQrSource = "QR 등록"
 private const val savedDrawHistoryLimit = 120
 private const val lottoHistoryPageSize = 20
+private const val lottoTypeLotto = "로또"
 
 /** 탭을 문자열이 아닌 타입으로 제한해 잘못된 화면 상태를 컴파일 단계에서 막는다. */
 enum class LottoTab {
@@ -54,7 +55,7 @@ enum class LottoTab {
     STATS,
 }
 
-enum class LottoStatsRange(val label: String) {
+enum class LotteryAccountingStatsRange(val label: String) {
     WEEKLY("주간"),
     MONTHLY("월간"),
     YEARLY("년간"),
@@ -83,15 +84,13 @@ private data class LottoWinningAndAmountState(
     val winnings: List<LottoWinningEntity>,
     val totalPurchaseAmount: Long,
     val totalWinningAmount: Long,
-    val pensionPurchaseAmount: Long,
-    val pensionWinningAmount: Long,
 )
 
 private data class LottoPeriodStatsState(
     val weekly: List<LottoPeriodStatRow>,
     val monthly: List<LottoPeriodStatRow>,
     val yearly: List<LottoPeriodStatRow>,
-    val selectedRange: LottoStatsRange,
+    val selectedRange: LotteryAccountingStatsRange,
     val winningTypeStats: List<LottoWinningStatEntity>,
 )
 
@@ -145,7 +144,7 @@ class LottoViewModel(
     private val latestRoundNo = MutableStateFlow<Int?>(null)
     private val pendingDelete = MutableStateFlow<PendingLottoDelete?>(null)
     private val lastGeneratedSource = MutableStateFlow<String?>(null)
-    private val selectedStatsRange = MutableStateFlow(LottoStatsRange.WEEKLY)
+    private val selectedStatsRange = MutableStateFlow(LotteryAccountingStatsRange.WEEKLY)
     private val savedRoundQueryInput = MutableStateFlow("")
     private val purchaseHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
     private val winningHistoryLimit = MutableStateFlow(lottoHistoryPageSize)
@@ -241,32 +240,34 @@ class LottoViewModel(
     }
     private val purchases = combine(selectedTab, purchaseHistoryLimit) { tab, limit -> tab to limit }
         .flatMapLatest { (tab, limit) ->
-            if (tab == LottoTab.PURCHASE) repository.observeLottoPurchases(limit) else flowOf(emptyList())
+            if (tab == LottoTab.PURCHASE) {
+                repository.observeLottoPurchases(lottoTypeLotto, limit)
+            } else {
+                flowOf(emptyList())
+            }
         }
     private val winnings = combine(selectedTab, winningHistoryLimit) { tab, limit -> tab to limit }
         .flatMapLatest { (tab, limit) ->
-            if (tab == LottoTab.WINNING) repository.observeLottoWinnings(limit) else flowOf(emptyList())
+            if (tab == LottoTab.WINNING) {
+                repository.observeLottoWinnings(lottoTypeLotto, limit)
+            } else {
+                flowOf(emptyList())
+            }
         }
     private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeTotalLottoPurchaseAmount("로또") else flowOf(0L)
+        if (tab == LottoTab.STATS) repository.observeTotalLottoPurchaseAmount(lottoTypeLotto) else flowOf(0L)
     }
     private val totalWinningAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeTotalLottoWinningAmount("로또") else flowOf(0L)
-    }
-    private val pensionPurchaseAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeTotalLottoPurchaseAmount("연금") else flowOf(0L)
-    }
-    private val pensionWinningAmount = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeTotalLottoWinningAmount("연금") else flowOf(0L)
+        if (tab == LottoTab.STATS) repository.observeTotalLottoWinningAmount(lottoTypeLotto) else flowOf(0L)
     }
     private val weeklyStats = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeLottoWeeklyStats(limit = 12) else flowOf(emptyList())
+        if (tab == LottoTab.STATS) repository.observeLottoWeeklyStats(lottoTypeLotto, limit = 12) else flowOf(emptyList())
     }
     private val monthlyStats = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeLottoMonthlyStats(limit = 12) else flowOf(emptyList())
+        if (tab == LottoTab.STATS) repository.observeLottoMonthlyStats(lottoTypeLotto, limit = 12) else flowOf(emptyList())
     }
     private val yearlyStats = selectedTab.flatMapLatest { tab ->
-        if (tab == LottoTab.STATS) repository.observeLottoYearlyStats(limit = 12) else flowOf(emptyList())
+        if (tab == LottoTab.STATS) repository.observeLottoYearlyStats(lottoTypeLotto, limit = 12) else flowOf(emptyList())
     }
 
     private val historyState = combine(
@@ -290,10 +291,8 @@ class LottoViewModel(
         winnings,
         totalPurchaseAmount,
         totalWinningAmount,
-        pensionPurchaseAmount,
-        pensionWinningAmount,
-    ) { winnings, totalPurchase, totalWinning, pensionPurchase, pensionWinning ->
-        LottoWinningAndAmountState(winnings, totalPurchase, totalWinning, pensionPurchase, pensionWinning)
+    ) { winnings, totalPurchase, totalWinning ->
+        LottoWinningAndAmountState(winnings, totalPurchase, totalWinning)
     }
 
     private val periodStatsState = combine(
@@ -357,9 +356,9 @@ class LottoViewModel(
         feedbackState,
     ) { history, stats, input, generation, feedback ->
         val activeStats = when (stats.period.selectedRange) {
-            LottoStatsRange.WEEKLY -> stats.period.weekly
-            LottoStatsRange.MONTHLY -> stats.period.monthly
-            LottoStatsRange.YEARLY -> stats.period.yearly
+            LotteryAccountingStatsRange.WEEKLY -> stats.period.weekly
+            LotteryAccountingStatsRange.MONTHLY -> stats.period.monthly
+            LotteryAccountingStatsRange.YEARLY -> stats.period.yearly
         }
 
         LottoUiState(
@@ -386,8 +385,6 @@ class LottoViewModel(
             canLoadMoreWinnings = stats.winningAndAmount.winnings.size >= winningHistoryLimit.value,
             totalPurchaseAmount = stats.winningAndAmount.totalPurchaseAmount,
             totalWinningAmount = stats.winningAndAmount.totalWinningAmount,
-            pensionPurchaseAmount = stats.winningAndAmount.pensionPurchaseAmount,
-            pensionWinningAmount = stats.winningAndAmount.pensionWinningAmount,
             selectedStatsRange = stats.period.selectedRange,
             stats = activeStats,
             latestSavedRoundNo = feedback.latestRoundNo,
@@ -447,7 +444,7 @@ class LottoViewModel(
         selectedTab.value = LottoTab.STATS
     }
 
-    fun selectStatsRange(range: LottoStatsRange) {
+    fun selectStatsRange(range: LotteryAccountingStatsRange) {
         selectedStatsRange.value = range
     }
 
@@ -676,7 +673,7 @@ class LottoViewModel(
             runCatching {
                 repository.markLottoSetPurchased(sourceLabel, note)
             }.onSuccess {
-                statusMessage.value = "세트를 구매 처리했습니다."
+                statusMessage.value = "세트를 구매 처리하고 구입 이력에 등록했습니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "세트 구매 처리에 실패했습니다."
             }
@@ -706,7 +703,6 @@ class LottoViewModel(
 
     fun savePurchase(
         purchaseDate: String,
-        lottoType: String,
         roundNo: String,
         amount: String,
         memo: String,
@@ -716,16 +712,16 @@ class LottoViewModel(
             runCatching {
                 repository.saveLottoPurchase(
                     purchaseDate = java.time.LocalDate.parse(purchaseDate),
-                    lottoType = lottoType,
+                    lottoType = lottoTypeLotto,
                     roundNo = roundNo.toIntOrNull(),
                     amount = amount.digitsOnly().toIntOrNull() ?: 0,
                     memo = memo,
                 )
             }.onSuccess {
-                statusMessage.value = "구입 이력이 저장되었습니다."
+                statusMessage.value = "로또 구입 이력이 저장되었습니다."
                 onSuccess?.invoke()
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "구입 이력 저장에 실패했습니다."
+                statusMessage.value = error.message ?: "로또 구입 이력 저장에 실패했습니다."
             }
         }
     }
@@ -750,14 +746,13 @@ class LottoViewModel(
 
     fun deletePurchase(purchaseId: Long) {
         viewModelScope.launch {
-            runCatching { repository.deleteLottoPurchase(purchaseId) }
-                .onSuccess { statusMessage.value = "구입 이력을 삭제했습니다." }
-                .onFailure { error -> statusMessage.value = error.message ?: "구입 이력 삭제에 실패했습니다." }
+            runCatching { repository.deleteLottoPurchase(purchaseId, lottoTypeLotto) }
+                .onSuccess { statusMessage.value = "로또 구입 이력을 삭제했습니다." }
+                .onFailure { error -> statusMessage.value = error.message ?: "로또 구입 이력 삭제에 실패했습니다." }
         }
     }
 
     fun saveWinning(
-        lottoType: String,
         roundNo: String,
         amount: String,
         memo: String,
@@ -767,24 +762,24 @@ class LottoViewModel(
             runCatching {
                 repository.saveLottoWinning(
                     roundNo = roundNo.toIntOrNull() ?: 0,
-                    lottoType = lottoType,
+                    lottoType = lottoTypeLotto,
                     amount = amount.digitsOnly().toLongOrNull() ?: 0L,
                     memo = memo,
                 )
             }.onSuccess {
-                statusMessage.value = "당첨 이력이 저장되었습니다."
+                statusMessage.value = "로또 당첨 이력이 저장되었습니다."
                 onSuccess?.invoke()
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "당첨 이력 저장에 실패했습니다."
+                statusMessage.value = error.message ?: "로또 당첨 이력 저장에 실패했습니다."
             }
         }
     }
 
     fun deleteWinning(winningId: Long) {
         viewModelScope.launch {
-            runCatching { repository.deleteLottoWinning(winningId) }
-                .onSuccess { statusMessage.value = "당첨 이력을 삭제했습니다." }
-                .onFailure { error -> statusMessage.value = error.message ?: "당첨 이력 삭제에 실패했습니다." }
+            runCatching { repository.deleteLottoWinning(winningId, lottoTypeLotto) }
+                .onSuccess { statusMessage.value = "로또 당첨 이력을 삭제했습니다." }
+                .onFailure { error -> statusMessage.value = error.message ?: "로또 당첨 이력 삭제에 실패했습니다." }
         }
     }
 }
@@ -831,9 +826,7 @@ data class LottoUiState(
     val canLoadMoreWinnings: Boolean = false,
     val totalPurchaseAmount: Long = 0L,
     val totalWinningAmount: Long = 0L,
-    val pensionPurchaseAmount: Long = 0L,
-    val pensionWinningAmount: Long = 0L,
-    val selectedStatsRange: LottoStatsRange = LottoStatsRange.WEEKLY,
+    val selectedStatsRange: LotteryAccountingStatsRange = LotteryAccountingStatsRange.WEEKLY,
     val stats: List<LottoPeriodStatRow> = emptyList(),
     val latestSavedRoundNo: Int? = null,
     val nextRoundNo: Int? = null,

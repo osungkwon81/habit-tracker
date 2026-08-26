@@ -57,13 +57,17 @@ import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
 import java.text.NumberFormat
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToLong
 
 private val StockTokenDateTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+private val StockAssetChartDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MM.dd")
 
 @Composable
 fun StockScreen(
@@ -158,7 +162,17 @@ fun StockScreen(
 
 @Composable
 private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
-    val latest = snapshots.last()
+    val orderedSnapshots = remember(snapshots) { snapshots.sortedBy(StockAssetSnapshotEntity::snapshotDate) }
+    val first = orderedSnapshots.first()
+    val latest = orderedSnapshots.last()
+    val valuationChange = latest.valuationAmount - first.valuationAmount
+    val valuationChangePercent = if (first.valuationAmount > 0L) {
+        valuationChange.toDouble() / first.valuationAmount.toDouble() * 100.0
+    } else {
+        null
+    }
+    val periodDays = ChronoUnit.DAYS.between(first.snapshotDate, latest.snapshotDate).coerceAtLeast(1L)
+    val middleDate = first.snapshotDate.plusDays(periodDays / 2L)
     AppSectionCard {
         Text(
             text = "일별 주식 자산 흐름",
@@ -172,33 +186,138 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        if (snapshots.size < 2) {
+        if (orderedSnapshots.size < 2) {
             AppSupportText("잔고를 다른 날짜에 다시 조회하면 일별 변화 차트가 표시됩니다.")
         } else {
-            val lineColor = MaterialTheme.colorScheme.primary
-            Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
-                val minimum = snapshots.minOf(StockAssetSnapshotEntity::valuationAmount)
-                val maximum = snapshots.maxOf(StockAssetSnapshotEntity::valuationAmount)
-                val range = (maximum - minimum).coerceAtLeast(1L).toFloat()
-                val horizontalStep = size.width / (snapshots.lastIndex.coerceAtLeast(1))
-                fun point(index: Int): Offset {
-                    val normalized = (snapshots[index].valuationAmount - minimum).toFloat() / range
-                    return Offset(
-                        x = horizontalStep * index,
-                        y = size.height - (normalized * size.height),
-                    )
+            val valuationColor = MaterialTheme.colorScheme.primary
+            val purchaseColor = MaterialTheme.colorScheme.tertiary
+            val gridColor = MaterialTheme.colorScheme.outlineVariant
+            val minimum = orderedSnapshots.minOf { snapshot ->
+                minOf(snapshot.purchaseAmount, snapshot.valuationAmount)
+            }.toDouble()
+            val maximum = orderedSnapshots.maxOf { snapshot ->
+                maxOf(snapshot.purchaseAmount, snapshot.valuationAmount)
+            }.toDouble()
+            val domainPadding = ((maximum - minimum) * 0.1)
+                .coerceAtLeast((maximum * 0.02).coerceAtLeast(1.0))
+            val chartMinimum = (minimum - domainPadding).coerceAtLeast(0.0)
+            val chartMaximum = maximum + domainPadding
+            val chartRange = (chartMaximum - chartMinimum).coerceAtLeast(1.0)
+            val chartMiddle = (chartMinimum + chartMaximum) / 2.0
+
+            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                StockAssetChartLegendItem(color = valuationColor, label = "평가금액")
+                StockAssetChartLegendItem(color = purchaseColor, label = "매입금액")
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+            ) {
+                Column(
+                    modifier = Modifier.width(62.dp).height(160.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(chartMaximum.roundToLong().toCompactWon(), style = MaterialTheme.typography.labelSmall)
+                    Text(chartMiddle.roundToLong().toCompactWon(), style = MaterialTheme.typography.labelSmall)
+                    Text(chartMinimum.roundToLong().toCompactWon(), style = MaterialTheme.typography.labelSmall)
                 }
-                (0 until snapshots.lastIndex).forEach { index ->
-                    drawLine(
-                        color = lineColor,
-                        start = point(index),
-                        end = point(index + 1),
-                        strokeWidth = 5f,
-                    )
+                Canvas(modifier = Modifier.weight(1f).height(160.dp)) {
+                    listOf(0f, 0.5f, 1f).forEach { ratio ->
+                        val y = size.height * ratio
+                        drawLine(
+                            color = gridColor,
+                            start = Offset(0f, y),
+                            end = Offset(size.width, y),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+                    fun point(index: Int, amount: Long): Offset {
+                        val normalized = ((amount.toDouble() - chartMinimum) / chartRange).toFloat()
+                            .coerceIn(0f, 1f)
+                        val elapsedDays = ChronoUnit.DAYS.between(
+                            first.snapshotDate,
+                            orderedSnapshots[index].snapshotDate,
+                        )
+                        return Offset(
+                            x = size.width * (elapsedDays.toFloat() / periodDays.toFloat()),
+                            y = size.height - (normalized * size.height),
+                        )
+                    }
+                    (0 until orderedSnapshots.lastIndex).forEach { index ->
+                        drawLine(
+                            color = purchaseColor,
+                            start = point(index, orderedSnapshots[index].purchaseAmount),
+                            end = point(index + 1, orderedSnapshots[index + 1].purchaseAmount),
+                            strokeWidth = 2.dp.toPx(),
+                        )
+                        drawLine(
+                            color = valuationColor,
+                            start = point(index, orderedSnapshots[index].valuationAmount),
+                            end = point(index + 1, orderedSnapshots[index + 1].valuationAmount),
+                            strokeWidth = 3.dp.toPx(),
+                        )
+                    }
+                    val markerIndexes = if (orderedSnapshots.size <= 20) {
+                        orderedSnapshots.indices.toList()
+                    } else {
+                        listOf(0, orderedSnapshots.lastIndex / 2, orderedSnapshots.lastIndex)
+                    }
+                    markerIndexes.distinct().forEach { index ->
+                        val radius = if (index == orderedSnapshots.lastIndex) 4.dp.toPx() else 2.5.dp.toPx()
+                        drawCircle(
+                            color = purchaseColor,
+                            radius = radius,
+                            center = point(index, orderedSnapshots[index].purchaseAmount),
+                        )
+                        drawCircle(
+                            color = valuationColor,
+                            radius = radius,
+                            center = point(index, orderedSnapshots[index].valuationAmount),
+                        )
+                    }
                 }
             }
-            AppSupportText("최근 ${snapshots.size}일의 보유 주식 평가금액입니다. 예수금·세금·수수료는 포함하지 않습니다.")
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 70.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(first.snapshotDate.toStockChartDate(), style = MaterialTheme.typography.labelSmall)
+                Text(middleDate.toStockChartDate(), style = MaterialTheme.typography.labelSmall)
+                Text(latest.snapshotDate.toStockChartDate(), style = MaterialTheme.typography.labelSmall)
+            }
+            Text(
+                text = buildString {
+                    append("기간 평가금액 변화 ${valuationChange.toSignedWon()}")
+                    valuationChangePercent?.let { append(" (${it.toPercent()})") }
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = when {
+                    valuationChange > 0L -> MaterialTheme.colorScheme.primary
+                    valuationChange < 0L -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = "현재 평가손익 ${latest.evaluationProfitLoss.toSignedWon()} · " +
+                    "누적 실현손익 ${latest.realizedProfitLoss.toSignedWon()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            AppSupportText("최근 ${orderedSnapshots.size}일의 평가금액과 매입금액입니다. 예수금·세금·수수료는 포함하지 않습니다.")
         }
+    }
+}
+
+@Composable
+private fun StockAssetChartLegendItem(color: Color, label: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(8.dp).background(color, CircleShape))
+        Text(label, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -994,6 +1113,20 @@ private fun Long.toSignedWon(): String {
     val absoluteAmount = if (this < 0L) -this else this
     return "$sign${NumberFormat.getNumberInstance(Locale.KOREA).format(absoluteAmount)}원"
 }
+
+private fun Long.toCompactWon(): String {
+    val sign = if (this < 0L) "-" else ""
+    val absoluteAmount = abs(this)
+    return when {
+        absoluteAmount >= 100_000_000L ->
+            "$sign${String.format(Locale.KOREA, "%.1f", absoluteAmount / 100_000_000.0)}억"
+        absoluteAmount >= 10_000L ->
+            "$sign${NumberFormat.getNumberInstance(Locale.KOREA).format(absoluteAmount / 10_000L)}만"
+        else -> "$sign${NumberFormat.getNumberInstance(Locale.KOREA).format(absoluteAmount)}원"
+    }
+}
+
+private fun LocalDate.toStockChartDate(): String = format(StockAssetChartDateFormatter)
 
 private fun Long?.toEstimatedLossText(): String = when {
     this == null -> "-"

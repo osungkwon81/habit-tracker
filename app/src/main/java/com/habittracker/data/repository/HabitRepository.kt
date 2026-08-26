@@ -61,11 +61,13 @@ import com.habittracker.data.security.AndroidKeystoreStringCipher
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
 import com.habittracker.data.stock.KisCashOrderDraft
+import com.habittracker.data.stock.KisCurrentPrice
 import com.habittracker.data.stock.KisDomesticStockClient
 import com.habittracker.data.stock.KisEnvironment
 import com.habittracker.data.stock.KisMarketCapStock
 import com.habittracker.data.stock.KisOrderExecution
 import com.habittracker.data.stock.KisOrderSide
+import com.habittracker.data.stock.KisQuoteUnitPolicy
 import com.habittracker.data.stock.KisStockMarket
 import com.habittracker.data.stock.StockAutomationCycleResult
 import com.habittracker.data.stock.StockAutomationNotice
@@ -147,10 +149,12 @@ class HabitRepository(
         const val currentCardSeedVersion = 2
         const val lottoStatVersionKey = "lotto-winning-stat-version"
         const val currentLottoStatVersion = 6
+        const val pensionLotteryAllGroupsPrice = 5_000
         const val stockSafetyConfigId = 1
         const val stockLimitOrderCode = "00"
         const val stockMarketOrderCode = "01"
         const val kisBalanceCacheTtlNanos = 2_000_000_000L
+        val pensionLotteryFirstDrawDate: LocalDate = LocalDate.of(2020, 5, 7)
         val generatedLottoSources = setOf("균형형", "분산형")
     }
 
@@ -240,7 +244,10 @@ class HabitRepository(
         )
         persistChange {
             val existing = habitDao.getPensionLotteryDraw(roundNo)
-            require(existing == null || existing == newDraw) {
+            require(
+                existing == null ||
+                    existing.groupNo == newDraw.groupNo && existing.winningNumber == newDraw.winningNumber,
+            ) {
                 "${roundNo}회 연금복권 번호가 이미 저장되어 있어 덮어쓸 수 없습니다."
             }
             if (existing == null) habitDao.upsertPensionLotteryDraw(newDraw)
@@ -327,20 +334,30 @@ class HabitRepository(
             database.withTransaction {
                 officialDraws
                     .asSequence()
-                    .filter { draw -> draw.roundNo >= latestExistingRound }
+                    .filter { draw ->
+                        draw.roundNo >= latestExistingRound ||
+                            existingByRound[draw.roundNo]?.bonusNumber == null
+                    }
                     .sortedBy(OfficialPensionLotteryDraw::roundNo)
                     .forEach { official ->
                         val newDraw = PensionLotteryDrawEntity(
                             roundNo = official.roundNo,
                             groupNo = official.groupNo,
                             winningNumber = official.winningNumber,
+                            bonusNumber = official.bonusNumber,
                         )
                         val existing = existingByRound[official.roundNo]
-                        require(existing == null || existing == newDraw) {
+                        require(
+                            existing == null ||
+                                existing.groupNo == official.groupNo &&
+                                existing.winningNumber == official.winningNumber &&
+                                (existing.bonusNumber == null || existing.bonusNumber == official.bonusNumber),
+                        ) {
                             "${official.roundNo}회 연금복권 수동 입력값과 공식 당첨번호가 다릅니다. 자동으로 덮어쓰지 않았습니다."
                         }
-                        if (existing == null) {
-                            habitDao.upsertPensionLotteryDraw(newDraw)
+                        val drawToSave = existing?.copy(bonusNumber = official.bonusNumber) ?: newDraw
+                        if (existing != drawToSave) {
+                            habitDao.upsertPensionLotteryDraw(drawToSave)
                             savedCount += 1
                         }
                     }
@@ -435,11 +452,11 @@ class HabitRepository(
     fun observeSavedLottoTicketsByRound(roundNo: Int): Flow<List<LottoTicketEntity>> =
         habitDao.observeSavedLottoTicketsByRound(roundNo)
 
-    fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>> =
-        habitDao.observeLottoPurchases(limit)
+    fun observeLottoPurchases(lottoType: String, limit: Int): Flow<List<LottoPurchaseEntity>> =
+        habitDao.observeLottoPurchases(lottoType, limit)
 
-    fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>> =
-        habitDao.observeLottoWinnings(limit)
+    fun observeLottoWinnings(lottoType: String, limit: Int): Flow<List<LottoWinningEntity>> =
+        habitDao.observeLottoWinnings(lottoType, limit)
 
     fun observeTotalLottoPurchaseAmount(lottoType: String): Flow<Long> =
         habitDao.observeTotalLottoPurchaseAmount(lottoType)
@@ -453,14 +470,14 @@ class HabitRepository(
     fun observeLottoControlComparisons(): Flow<List<LottoControlComparison>> =
         habitDao.observeAllLottoWinningStatRounds().map(::buildLottoControlComparisons)
 
-    fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
-        habitDao.observeLottoWeeklyStats(limit)
+    fun observeLottoWeeklyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>> =
+        habitDao.observeLottoWeeklyStats(lottoType, limit)
 
-    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
-        habitDao.observeLottoMonthlyStats(limit)
+    fun observeLottoMonthlyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>> =
+        habitDao.observeLottoMonthlyStats(lottoType, limit)
 
-    fun observeLottoYearlyStats(limit: Int): Flow<List<LottoPeriodStatRow>> =
-        habitDao.observeLottoYearlyStats(limit)
+    fun observeLottoYearlyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>> =
+        habitDao.observeLottoYearlyStats(lottoType, limit)
 
     fun observeMemoNotes(limit: Int): Flow<List<MemoNoteEntity>> =
         habitDao.observeMemoNotes(limit)
@@ -552,27 +569,41 @@ class HabitRepository(
         }
     }
 
-    suspend fun getKisCurrentStockPrice(productCode: String): Long = withContext(Dispatchers.IO) {
+    suspend fun getKisCurrentStockQuote(productCode: String): KisCurrentPrice = withContext(Dispatchers.IO) {
         require(productCode.length in 6..7) { "종목코드를 확인해 주세요." }
         val market = currentStockMarket()
         val (config, accessToken) = getKisConfigAndAccessToken()
-        val currentPrice = withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+        withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
             kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, productCode, market)
-        }.currentPrice.toLongOrNull()
+        }.also { quote ->
+            val currentPrice = quote.currentPrice.toLongOrNull()
+            require(currentPrice != null && currentPrice > 0L) {
+                "현재가를 확인하지 못했습니다. (종목=$productCode)"
+            }
+            require(quote.quoteUnit > 0L) { "호가 단위를 확인하지 못했습니다. (종목=$productCode)" }
+        }
+    }
+
+    suspend fun getKisCurrentStockPrice(productCode: String): Long {
+        val currentPrice = getKisCurrentStockQuote(productCode).currentPrice.toLongOrNull()
         require(currentPrice != null && currentPrice > 0L) {
             "현재가를 확인하지 못했습니다. (종목=$productCode)"
         }
-        currentPrice
+        return currentPrice
     }
 
     suspend fun getStockOrderAvailability(
         draft: KisCashOrderDraft,
         verifiedCurrentPrice: Long? = null,
         knownHoldingQuantity: Long? = null,
+        verifiedQuote: KisCurrentPrice? = null,
     ): StockOrderAvailability = withContext(Dispatchers.IO) {
         require(draft.productCode.length in 6..7) { "종목코드를 확인해 주세요." }
         require(draft.orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) {
             "주문 방식은 지정가 또는 시장가만 사용할 수 있습니다."
+        }
+        require(draft.side != KisOrderSide.SELL || draft.orderDivisionCode != stockMarketOrderCode) {
+            "일반 매도는 현재가 지정가만 사용할 수 있습니다. 시장가는 긴급 전체 매도에서만 사용합니다."
         }
         val requestedPrice = draft.orderUnitPrice.toLongOrNull()
             ?: throw IllegalArgumentException("주문단가를 확인해 주세요.")
@@ -584,13 +615,33 @@ class HabitRepository(
         val market = KisStockMarket.values()
             .firstOrNull { it.orderExchangeCode == draft.exchangeIdDivisionCode }
             ?: throw IllegalArgumentException("거래소는 KRX, NXT 또는 SOR만 사용할 수 있습니다.")
+        verifiedQuote?.let { quote ->
+            require(quote.productCode == draft.productCode && quote.market == market) {
+                "현재가 조회 종목과 주문 거래소가 일치하지 않습니다. (종목=${draft.productCode})"
+            }
+        }
         val (config, accessToken) = getKisConfigAndAccessToken()
-        val currentPrice = verifiedCurrentPrice
-            ?: withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+        val quote = verifiedQuote ?: if (verifiedCurrentPrice == null || draft.orderDivisionCode == stockLimitOrderCode) {
+            withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
                 kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, draft.productCode, market)
-            }.currentPrice.toLongOrNull()
+            }
+        } else {
+            null
+        }
+        val currentPrice = quote?.currentPrice?.toLongOrNull()
+            ?: verifiedCurrentPrice
             ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
         require(currentPrice > 0L) { "현재가를 확인하지 못했습니다. (종목=${draft.productCode})" }
+        if (draft.orderDivisionCode == stockLimitOrderCode) {
+            requireValidLimitOrderPrice(
+                productCode = draft.productCode,
+                requestedPrice = requestedPrice,
+                currentPrice = currentPrice,
+                quoteUnit = quote?.quoteUnit
+                    ?: throw IllegalStateException("호가 단위를 확인하지 못했습니다. (종목=${draft.productCode})"),
+                quoteUnitPolicy = quote?.quoteUnitPolicy,
+            )
+        }
         val holdingQuantity = knownHoldingQuantity ?: getKisBalanceStocks()
             .firstOrNull { it.productCode == draft.productCode }
             ?.quantity
@@ -607,6 +658,7 @@ class HabitRepository(
                 availableQuantity = sellable,
                 availableAmount = runCatching { Math.multiplyExact(sellable, currentPrice) }.getOrNull(),
                 currentPrice = currentPrice,
+                quoteUnit = quote?.quoteUnit,
             )
         }
 
@@ -637,6 +689,7 @@ class HabitRepository(
             availableQuantity = availableQuantity,
             availableAmount = runCatching { Math.multiplyExact(availableQuantity, estimatedUnitPrice) }.getOrNull(),
             currentPrice = currentPrice,
+            quoteUnit = quote?.quoteUnit,
         )
     }
 
@@ -806,6 +859,11 @@ class HabitRepository(
             "자동 매수는 당일 상승 규칙에서만 사용할 수 있습니다."
         }
         require(orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) { "자동 주문 방식은 지정가 또는 시장가만 사용할 수 있습니다." }
+        val storedOrderDivisionCode = if (actionMode == StockRuleAction.AUTO_SELL) {
+            stockLimitOrderCode
+        } else {
+            orderDivisionCode
+        }
         val now = LocalDateTime.now()
         persistChange {
             habitDao.upsertStockExitRule(
@@ -818,7 +876,7 @@ class HabitRepository(
                     triggerPrice = if (ruleType in setOf(StockExitRuleType.TIME_EXIT, StockExitRuleType.INTRADAY_RISE)) null else triggerPrice,
                     sellQuantityPercent = if (actionMode != StockRuleAction.NOTIFY_ONLY) sellQuantityPercent else 0.0,
                     actionMode = actionMode.name,
-                    orderDivisionCode = orderDivisionCode,
+                    orderDivisionCode = storedOrderDivisionCode,
                     referenceHighPrice = null,
                     enabled = true,
                     lastTriggeredAt = null,
@@ -878,6 +936,7 @@ class HabitRepository(
         requireAutomaticEnabled: Boolean = false,
         isEmergencyLiquidation: Boolean = false,
         verifiedCurrentPrice: Long? = null,
+        verifiedQuoteUnit: Long? = null,
         skipCrashGuardRefresh: Boolean = false,
         intendedBuyOrderId: Long? = null,
     ): StockOrderEntity = withContext(Dispatchers.IO) {
@@ -892,6 +951,16 @@ class HabitRepository(
             require(draft.productCode.length in 6..7) { "종목코드를 확인해 주세요." }
             require(draft.orderDivisionCode in setOf(stockLimitOrderCode, stockMarketOrderCode)) {
                 "주문 방식은 지정가 또는 시장가만 사용할 수 있습니다."
+            }
+            require(!isEmergencyLiquidation || draft.orderDivisionCode == stockMarketOrderCode) {
+                "긴급 전체 매도는 시장가만 사용할 수 있습니다."
+            }
+            require(
+                draft.side != KisOrderSide.SELL ||
+                    draft.orderDivisionCode != stockMarketOrderCode ||
+                    isEmergencyLiquidation,
+            ) {
+                "일반 매도는 현재가 지정가만 사용할 수 있습니다. 시장가는 긴급 전체 매도에서만 사용합니다."
             }
             intendedBuyOrderId?.let { buyOrderId ->
                 require(draft.side == KisOrderSide.SELL) { "매수 lot 연결은 매도 주문에만 사용할 수 있습니다." }
@@ -931,12 +1000,34 @@ class HabitRepository(
                 "급락 안전장치로 전체 주문이 차단되었습니다. ${safety.blockReason.orEmpty()}"
             }
 
-            val currentPrice = verifiedCurrentPrice
-                ?: withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
+            val quote = if (
+                verifiedCurrentPrice == null ||
+                draft.orderDivisionCode == stockLimitOrderCode && verifiedQuoteUnit == null
+            ) {
+                withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
                     kisDomesticStockClient.getCurrentPrice(retryConfig, retryToken, draft.productCode, quoteMarket)
-                }.currentPrice.toLongOrNull()
+                }
+            } else {
+                null
+            }
+            val currentPrice = verifiedCurrentPrice
+                ?: quote?.currentPrice?.toLongOrNull()
                 ?: throw IllegalStateException("현재가를 확인하지 못했습니다. (종목=${draft.productCode})")
             require(currentPrice > 0L) { "현재가를 확인하지 못했습니다. (종목=${draft.productCode})" }
+            if (draft.orderDivisionCode == stockLimitOrderCode) {
+                requireValidLimitOrderPrice(
+                    productCode = draft.productCode,
+                    requestedPrice = requestedPrice,
+                    currentPrice = currentPrice,
+                    quoteUnit = verifiedQuoteUnit ?: quote?.quoteUnit
+                        ?: throw IllegalStateException("호가 단위를 확인하지 못했습니다. (종목=${draft.productCode})"),
+                    quoteUnitPolicy = quote?.quoteUnitPolicy,
+                )
+                require(draft.side != KisOrderSide.SELL || requestedPrice == currentPrice) {
+                    "일반 매도는 확인한 현재가 지정가로만 주문할 수 있습니다. " +
+                        "(종목=${draft.productCode}, 주문가=${requestedPrice}원, 현재가=${currentPrice}원)"
+                }
+            }
             val estimatedUnitPrice = if (draft.orderDivisionCode == stockLimitOrderCode) requestedPrice else currentPrice
             val estimatedAmount = Math.multiplyExact(quantity, estimatedUnitPrice)
             if (!isEmergencyLiquidation) {
@@ -1454,22 +1545,38 @@ class HabitRepository(
         }
     }
 
-    suspend fun executeStockRebalanceLine(line: StockRebalanceLine): StockOrderEntity {
+    suspend fun executeStockRebalanceLine(
+        line: StockRebalanceLine,
+        confirmedQuote: KisCurrentPrice? = null,
+    ): StockOrderEntity {
         val side = line.orderSide ?: throw IllegalArgumentException("주문이 필요하지 않은 리밸런싱 항목입니다.")
         require(line.orderQuantity > 0L) { "리밸런싱 주문 수량이 없습니다." }
+        val sellQuote = if (side == KisOrderSide.SELL) {
+            confirmedQuote ?: getKisCurrentStockQuote(line.productCode)
+        } else {
+            null
+        }
+        require(sellQuote == null || sellQuote.productCode == line.productCode) {
+            "리밸런싱 종목과 현재가 조회 종목이 일치하지 않습니다. (종목=${line.productCode})"
+        }
+        val orderPrice = sellQuote?.currentPrice?.toLongOrNull() ?: line.referencePrice
+        require(orderPrice > 0L) { "리밸런싱 주문 가격을 확인하지 못했습니다. (종목=${line.productCode})" }
         return placeKisCashOrder(
             draft = KisCashOrderDraft(
                 side = side,
                 productCode = line.productCode,
                 orderDivisionCode = stockLimitOrderCode,
                 orderQuantity = line.orderQuantity.toString(),
-                orderUnitPrice = line.referencePrice.toString(),
-                exchangeIdDivisionCode = currentStockMarket().orderExchangeCode,
+                orderUnitPrice = orderPrice.toString(),
+                exchangeIdDivisionCode = sellQuote?.market?.orderExchangeCode
+                    ?: currentStockMarket().orderExchangeCode,
                 sellType = "01",
                 conditionPrice = "",
             ),
             productName = line.productName,
             source = StockOrderSource.REBALANCE,
+            verifiedCurrentPrice = sellQuote?.currentPrice?.toLongOrNull(),
+            verifiedQuoteUnit = sellQuote?.quoteUnit,
         )
     }
 
@@ -1855,16 +1962,21 @@ class HabitRepository(
                 noticeLines += "처리: 알림만 · 주문 없음"
             } else {
                 val side = if (action == StockRuleAction.AUTO_BUY) KisOrderSide.BUY else KisOrderSide.SELL
-                val orderTypeLabel = if (rule.orderDivisionCode == stockMarketOrderCode) "시장가" else "현재가 지정가"
+                val orderDivisionCode = if (action == StockRuleAction.AUTO_SELL) {
+                    stockLimitOrderCode
+                } else {
+                    rule.orderDivisionCode
+                }
+                val orderTypeLabel = if (orderDivisionCode == stockMarketOrderCode) "시장가" else "현재가 지정가"
                 if (!safety.automaticOrderEnabled) {
                     noticeLines += "처리: 자동 주문 꺼짐 · ${side.label} 주문 없음"
                 } else {
                     val baseDraft = KisCashOrderDraft(
                         side = side,
                         productCode = balance.productCode,
-                        orderDivisionCode = rule.orderDivisionCode,
+                        orderDivisionCode = orderDivisionCode,
                         orderQuantity = "1",
-                        orderUnitPrice = if (rule.orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
+                        orderUnitPrice = if (orderDivisionCode == stockMarketOrderCode) "0" else currentPrice.toString(),
                         exchangeIdDivisionCode = market.orderExchangeCode,
                         sellType = "01",
                         conditionPrice = "",
@@ -1893,11 +2005,19 @@ class HabitRepository(
                             else -> StockOrderSource.INTRADAY_SELL
                         }
                         orderQuantity to placeKisCashOrder(
-                            draft = baseDraft.copy(orderQuantity = orderQuantity.toString()),
+                            draft = baseDraft.copy(
+                                orderQuantity = orderQuantity.toString(),
+                                orderUnitPrice = if (orderDivisionCode == stockLimitOrderCode) {
+                                    availability.currentPrice.toString()
+                                } else {
+                                    "0"
+                                },
+                            ),
                             productName = balance.productName,
                             source = source,
                             requireAutomaticEnabled = true,
-                            verifiedCurrentPrice = currentPrice,
+                            verifiedCurrentPrice = availability.currentPrice,
+                            verifiedQuoteUnit = availability.quoteUnit,
                             skipCrashGuardRefresh = true,
                         )
                     }.onSuccess { (orderQuantity, order) ->
@@ -1959,6 +2079,46 @@ class HabitRepository(
         val marketTime = ZonedDateTime.now(ZoneId.of("Asia/Seoul")).toLocalTime()
         return resolveActiveStockMarket(marketTime) ?: KisStockMarket.KRX
     }
+
+    private fun requireValidLimitOrderPrice(
+        productCode: String,
+        requestedPrice: Long,
+        currentPrice: Long,
+        quoteUnit: Long,
+        quoteUnitPolicy: KisQuoteUnitPolicy?,
+    ) {
+        require(quoteUnit > 0L) { "호가 단위를 확인하지 못했습니다. (종목=$productCode)" }
+        val requiredQuoteUnit = when {
+            requestedPrice == currentPrice -> quoteUnit
+            quoteUnitPolicy == KisQuoteUnitPolicy.STOCK -> stockQuoteUnit(requestedPrice)
+            quoteUnitPolicy == KisQuoteUnitPolicy.ETF_ETN -> etfEtnQuoteUnit(requestedPrice)
+            else -> {
+                val stockQuoteUnit = stockQuoteUnit(requestedPrice)
+                val etfEtnQuoteUnit = etfEtnQuoteUnit(requestedPrice)
+                require(stockQuoteUnit == etfEtnQuoteUnit) {
+                    "종목 유형별 호가 단위를 확인하지 못했습니다. 현재가로 다시 입력해 주세요. " +
+                        "(종목=$productCode, 지정가=${requestedPrice}원)"
+                }
+                stockQuoteUnit
+            }
+        }
+        require(requestedPrice % requiredQuoteUnit == 0L) {
+            "지정가가 호가 단위에 맞지 않습니다. " +
+                "(종목=$productCode, 지정가=${requestedPrice}원, 호가단위=${requiredQuoteUnit}원)"
+        }
+    }
+
+    private fun stockQuoteUnit(price: Long): Long = when {
+        price < 2_000L -> 1L
+        price < 5_000L -> 5L
+        price < 20_000L -> 10L
+        price < 50_000L -> 50L
+        price < 200_000L -> 100L
+        price < 500_000L -> 500L
+        else -> 1_000L
+    }
+
+    private fun etfEtnQuoteUnit(price: Long): Long = if (price < 2_000L) 1L else 5L
 
     private fun KisStockMarket.stockNotificationLabel(): String = when (this) {
         KisStockMarket.KRX -> "KRX"
@@ -2413,7 +2573,7 @@ class HabitRepository(
         memo: String?,
     ) {
         val safeType = lottoType.trim().ifEmpty { "로또" }
-        require(safeType in listOf("로또", "연금")) { "로또 형태는 로또 또는 연금 중 선택해 주세요." }
+        require(safeType in listOf("로또", "연금")) { "복권 종류는 로또 또는 연금 중 선택해 주세요." }
         if (safeType == "로또") {
             require(roundNo != null && roundNo > 0) { "구입한 로또 회차를 입력해 주세요." }
         }
@@ -2429,6 +2589,37 @@ class HabitRepository(
                 ),
             )
         }
+    }
+
+    suspend fun savePensionLotteryPurchase(
+        purchaseDate: LocalDate,
+        purchaseNumber: String,
+    ): Int {
+        val safePurchaseNumber = purchaseNumber.trim()
+        require(safePurchaseNumber.length == 6 && safePurchaseNumber.all(Char::isDigit)) {
+            "연금복권 구입 번호는 6자리 숫자로 입력해 주세요."
+        }
+
+        val daysUntilNextDraw =
+            (DayOfWeek.THURSDAY.value - purchaseDate.dayOfWeek.value + 6) % 7 + 1
+        val drawDate = purchaseDate.plusDays(daysUntilNextDraw.toLong())
+        require(!drawDate.isBefore(pensionLotteryFirstDrawDate)) {
+            "연금복권 720+ 발매 이후의 구입일을 입력해 주세요."
+        }
+        val roundNo = ChronoUnit.WEEKS.between(pensionLotteryFirstDrawDate, drawDate).toInt() + 1
+
+        persistChange {
+            habitDao.insertLottoPurchase(
+                LottoPurchaseEntity(
+                    purchaseDate = purchaseDate,
+                    lottoType = "연금",
+                    roundNo = roundNo,
+                    pensionNumber = safePurchaseNumber,
+                    amount = pensionLotteryAllGroupsPrice,
+                ),
+            )
+        }
+        return roundNo
     }
 
     /** QR의 구매 이력과 실제 게임 번호를 함께 저장해 둘 중 하나만 남는 상태를 막는다. */
@@ -2481,9 +2672,9 @@ class HabitRepository(
         }
     }
 
-    suspend fun deleteLottoPurchase(purchaseId: Long) {
+    suspend fun deleteLottoPurchase(purchaseId: Long, lottoType: String) {
         persistChange {
-            habitDao.deleteLottoPurchaseById(purchaseId)
+            habitDao.deleteLottoPurchaseById(purchaseId, lottoType)
         }
     }
 
@@ -2495,7 +2686,7 @@ class HabitRepository(
         require(roundNo > 0) { "회차 번호를 입력해 주세요." }
         require(amount > 0L) { "당첨 금액을 입력해 주세요." }
         val safeType = lottoType.trim().ifEmpty { "로또" }
-        require(safeType in listOf("로또", "연금")) { "로또 형태는 로또 또는 연금 중 선택해 주세요." }
+        require(safeType in listOf("로또", "연금")) { "복권 종류는 로또 또는 연금 중 선택해 주세요." }
         persistChange {
             habitDao.insertLottoWinning(
                 LottoWinningEntity(
@@ -2559,9 +2750,9 @@ class HabitRepository(
         cardPrefs.edit().putInt(cardPaymentDayKey, day).apply()
     }
 
-    suspend fun deleteLottoWinning(winningId: Long) {
+    suspend fun deleteLottoWinning(winningId: Long, lottoType: String) {
         persistChange {
-            habitDao.deleteLottoWinningById(winningId)
+            habitDao.deleteLottoWinningById(winningId, lottoType)
         }
     }
 
@@ -2626,12 +2817,22 @@ class HabitRepository(
                 require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
                     "이미 추첨 결과가 저장된 회차는 성과 평가용 구매로 처리할 수 없습니다."
                 }
+                val confirmedAt = LocalDateTime.now()
                 val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(
                     sourceLabel = sourceLabel,
                     note = note,
-                    confirmedAt = LocalDateTime.now(),
+                    confirmedAt = confirmedAt,
                 )
                 require(updatedCount > 0) { "구매 처리할 세트를 찾을 수 없습니다." }
+                habitDao.insertLottoPurchase(
+                    LottoPurchaseEntity(
+                        purchaseDate = confirmedAt.toLocalDate(),
+                        lottoType = "로또",
+                        roundNo = roundNo,
+                        amount = updatedCount * 1_000,
+                        memo = "저장 번호 구매 완료 · ${updatedCount}게임",
+                    ),
+                )
                 ensureRandomControlSet(roundNo)
             }
         }

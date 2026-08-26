@@ -59,6 +59,7 @@ data class OfficialPensionLotteryDraw(
     val drawDate: LocalDate,
     val groupNo: Int,
     val winningNumber: String,
+    val bonusNumber: String,
 )
 
 data class OfficialLottoDrawBatch(

@@ -2,7 +2,10 @@ package com.habittracker.ui.lotto
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.habittracker.data.local.entity.LottoPurchaseEntity
+import com.habittracker.data.local.entity.LottoWinningEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
+import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.lotto.LotteryProduct
 import com.habittracker.data.lotto.LotterySyncStatus
@@ -10,9 +13,12 @@ import com.habittracker.data.lotto.toLotterySyncUserMessage
 import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -22,6 +28,9 @@ enum class PensionLotteryTab(val label: String) {
     MATCH("번호 일치"),
     STATS("당첨번호 통계"),
     SCORE("번호 점수"),
+    PURCHASE("구입 이력"),
+    WINNING("당첨 이력"),
+    ACCOUNTING_STATS("구입·당첨 통계"),
 }
 
 enum class PensionLotteryRange(val weeks: Int, val label: String) {
@@ -47,6 +56,26 @@ private data class PensionLotteryListState(
     val statusMessage: String?,
 )
 
+private data class PensionLotteryAccountingTotalsState(
+    val totalPurchaseAmount: Long,
+    val totalWinningAmount: Long,
+)
+
+private data class PensionLotteryPeriodStatsState(
+    val weekly: List<LottoPeriodStatRow>,
+    val monthly: List<LottoPeriodStatRow>,
+    val yearly: List<LottoPeriodStatRow>,
+    val selectedRange: LotteryAccountingStatsRange,
+)
+
+private data class PensionLotteryAccountingState(
+    val purchases: List<LottoPurchaseEntity>,
+    val winnings: List<LottoWinningEntity>,
+    val totals: PensionLotteryAccountingTotalsState,
+    val periods: PensionLotteryPeriodStatsState,
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class PensionLotteryViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
@@ -58,6 +87,9 @@ class PensionLotteryViewModel(
     private val recentDrawLimit = MutableStateFlow(RECENT_DRAW_PAGE_SIZE)
     private val matchNumberInput = MutableStateFlow("")
     private val statusMessage = MutableStateFlow<String?>(null)
+    private val purchaseHistoryLimit = MutableStateFlow(HISTORY_PAGE_SIZE)
+    private val winningHistoryLimit = MutableStateFlow(HISTORY_PAGE_SIZE)
+    private val selectedAccountingStatsRange = MutableStateFlow(LotteryAccountingStatsRange.WEEKLY)
     private val _isOfficialSyncing = MutableStateFlow(false)
     val isOfficialSyncing: StateFlow<Boolean> = _isOfficialSyncing
     val officialSyncStatus: StateFlow<LotterySyncStatus> = repository
@@ -93,14 +125,104 @@ class PensionLotteryViewModel(
         PensionLotteryListState(recentLimit, matchNumber, message)
     }
 
+    private val purchases = combine(selectedTab, purchaseHistoryLimit) { tab, limit -> tab to limit }
+        .flatMapLatest { (tab, limit) ->
+            if (tab == PensionLotteryTab.PURCHASE) {
+                repository.observeLottoPurchases(PENSION_LOTTERY_TYPE, limit)
+            } else {
+                flowOf(emptyList())
+            }
+        }
+
+    private val winnings = combine(selectedTab, winningHistoryLimit) { tab, limit -> tab to limit }
+        .flatMapLatest { (tab, limit) ->
+            if (tab == PensionLotteryTab.WINNING) {
+                repository.observeLottoWinnings(PENSION_LOTTERY_TYPE, limit)
+            } else {
+                flowOf(emptyList())
+            }
+        }
+
+    private val totalPurchaseAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == PensionLotteryTab.ACCOUNTING_STATS) {
+            repository.observeTotalLottoPurchaseAmount(PENSION_LOTTERY_TYPE)
+        } else {
+            flowOf(0L)
+        }
+    }
+
+    private val totalWinningAmount = selectedTab.flatMapLatest { tab ->
+        if (tab == PensionLotteryTab.ACCOUNTING_STATS) {
+            repository.observeTotalLottoWinningAmount(PENSION_LOTTERY_TYPE)
+        } else {
+            flowOf(0L)
+        }
+    }
+
+    private val weeklyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == PensionLotteryTab.ACCOUNTING_STATS) {
+            repository.observeLottoWeeklyStats(PENSION_LOTTERY_TYPE, limit = 12)
+        } else {
+            flowOf(emptyList())
+        }
+    }
+
+    private val monthlyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == PensionLotteryTab.ACCOUNTING_STATS) {
+            repository.observeLottoMonthlyStats(PENSION_LOTTERY_TYPE, limit = 12)
+        } else {
+            flowOf(emptyList())
+        }
+    }
+
+    private val yearlyStats = selectedTab.flatMapLatest { tab ->
+        if (tab == PensionLotteryTab.ACCOUNTING_STATS) {
+            repository.observeLottoYearlyStats(PENSION_LOTTERY_TYPE, limit = 12)
+        } else {
+            flowOf(emptyList())
+        }
+    }
+
+    private val accountingTotalsState = combine(
+        totalPurchaseAmount,
+        totalWinningAmount,
+    ) { purchaseAmount, winningAmount ->
+        PensionLotteryAccountingTotalsState(purchaseAmount, winningAmount)
+    }
+
+    private val periodStatsState = combine(
+        weeklyStats,
+        monthlyStats,
+        yearlyStats,
+        selectedAccountingStatsRange,
+    ) { weekly, monthly, yearly, range ->
+        PensionLotteryPeriodStatsState(weekly, monthly, yearly, range)
+    }
+
+    private val accountingState = combine(
+        purchases,
+        winnings,
+        accountingTotalsState,
+        periodStatsState,
+    ) { purchases, winnings, totals, periods ->
+        PensionLotteryAccountingState(purchases, winnings, totals, periods)
+    }
+
     val uiState: StateFlow<PensionLotteryUiState> = combine(
         draws,
         inputState,
         listState,
-    ) { savedDraws, input, list ->
+        accountingState,
+    ) { savedDraws, input, list, accounting ->
         val rangeDraws = savedDraws.take(input.selectedRange.weeks)
         val recentDraws = savedDraws.take(list.recentDrawLimit)
+        val drawsByRound = savedDraws.associateBy(PensionLotteryDrawEntity::roundNo)
         val sixteenWeekScoreBandSummary = buildSixteenWeekScoreBandSummary(savedDraws)
+        val accountingStats = when (accounting.periods.selectedRange) {
+            LotteryAccountingStatsRange.WEEKLY -> accounting.periods.weekly
+            LotteryAccountingStatsRange.MONTHLY -> accounting.periods.monthly
+            LotteryAccountingStatsRange.YEARLY -> accounting.periods.yearly
+        }
 
         PensionLotteryUiState(
             selectedTab = input.selectedTab,
@@ -125,6 +247,19 @@ class PensionLotteryViewModel(
             duplicateStats = buildDuplicateStats(rangeDraws, savedDraws),
             positionStats = buildPositionStats(rangeDraws, savedDraws),
             positionScores = buildPositionScores(rangeDraws),
+            purchaseResults = accounting.purchases.map { purchase ->
+                PensionLotteryPurchaseResult(
+                    purchase = purchase,
+                    draw = purchase.roundNo?.let(drawsByRound::get),
+                )
+            },
+            winnings = accounting.winnings,
+            canLoadMorePurchases = accounting.purchases.size >= purchaseHistoryLimit.value,
+            canLoadMoreWinnings = accounting.winnings.size >= winningHistoryLimit.value,
+            totalPurchaseAmount = accounting.totals.totalPurchaseAmount,
+            totalWinningAmount = accounting.totals.totalWinningAmount,
+            selectedAccountingStatsRange = accounting.periods.selectedRange,
+            accountingStats = accountingStats,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -134,6 +269,10 @@ class PensionLotteryViewModel(
 
     fun selectTab(tab: PensionLotteryTab) {
         selectedTab.value = tab
+        statusMessage.value = null
+    }
+
+    fun clearStatusMessage() {
         statusMessage.value = null
     }
 
@@ -162,6 +301,83 @@ class PensionLotteryViewModel(
 
     fun loadMoreRecentDraws() {
         recentDrawLimit.value += RECENT_DRAW_PAGE_SIZE
+    }
+
+    fun loadMorePurchases() {
+        if (!uiState.value.canLoadMorePurchases) return
+        purchaseHistoryLimit.value += HISTORY_PAGE_SIZE
+    }
+
+    fun loadMoreWinnings() {
+        if (!uiState.value.canLoadMoreWinnings) return
+        winningHistoryLimit.value += HISTORY_PAGE_SIZE
+    }
+
+    fun selectAccountingStatsRange(range: LotteryAccountingStatsRange) {
+        selectedAccountingStatsRange.value = range
+    }
+
+    fun savePurchase(
+        purchaseDate: String,
+        purchaseNumber: String,
+        onSuccess: (() -> Unit)? = null,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                repository.savePensionLotteryPurchase(
+                    purchaseDate = java.time.LocalDate.parse(purchaseDate),
+                    purchaseNumber = purchaseNumber,
+                )
+            }.onSuccess { roundNo ->
+                statusMessage.value = "${roundNo}회 연금복권 구입 번호가 저장되었습니다."
+                onSuccess?.invoke()
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "연금복권 구입 이력 저장에 실패했습니다."
+            }
+        }
+    }
+
+    fun deletePurchase(purchaseId: Long) {
+        viewModelScope.launch {
+            runCatching { repository.deleteLottoPurchase(purchaseId, PENSION_LOTTERY_TYPE) }
+                .onSuccess { statusMessage.value = "연금복권 구입 이력을 삭제했습니다." }
+                .onFailure { error ->
+                    statusMessage.value = error.message ?: "연금복권 구입 이력 삭제에 실패했습니다."
+                }
+        }
+    }
+
+    fun saveWinning(
+        roundNo: String,
+        amount: String,
+        memo: String,
+        onSuccess: (() -> Unit)? = null,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                repository.saveLottoWinning(
+                    roundNo = roundNo.toIntOrNull() ?: 0,
+                    lottoType = PENSION_LOTTERY_TYPE,
+                    amount = amount.digitsOnly().toLongOrNull() ?: 0L,
+                    memo = memo,
+                )
+            }.onSuccess {
+                statusMessage.value = "연금복권 당첨 이력이 저장되었습니다."
+                onSuccess?.invoke()
+            }.onFailure { error ->
+                statusMessage.value = error.message ?: "연금복권 당첨 이력 저장에 실패했습니다."
+            }
+        }
+    }
+
+    fun deleteWinning(winningId: Long) {
+        viewModelScope.launch {
+            runCatching { repository.deleteLottoWinning(winningId, PENSION_LOTTERY_TYPE) }
+                .onSuccess { statusMessage.value = "연금복권 당첨 이력을 삭제했습니다." }
+                .onFailure { error ->
+                    statusMessage.value = error.message ?: "연금복권 당첨 이력 삭제에 실패했습니다."
+                }
+        }
     }
 
     fun saveDraw() {
@@ -216,6 +432,8 @@ class PensionLotteryViewModel(
 
     private companion object {
         const val RECENT_DRAW_PAGE_SIZE = 12
+        const val HISTORY_PAGE_SIZE = 20
+        const val PENSION_LOTTERY_TYPE = "연금"
     }
 }
 
@@ -242,7 +460,83 @@ data class PensionLotteryUiState(
     val duplicateStats: List<PensionLotteryDuplicateStat> = emptyList(),
     val positionStats: List<PensionLotteryPositionStat> = emptyList(),
     val positionScores: List<PensionLotteryPositionScore> = emptyList(),
+    val purchaseResults: List<PensionLotteryPurchaseResult> = emptyList(),
+    val winnings: List<LottoWinningEntity> = emptyList(),
+    val canLoadMorePurchases: Boolean = false,
+    val canLoadMoreWinnings: Boolean = false,
+    val totalPurchaseAmount: Long = 0L,
+    val totalWinningAmount: Long = 0L,
+    val selectedAccountingStatsRange: LotteryAccountingStatsRange = LotteryAccountingStatsRange.WEEKLY,
+    val accountingStats: List<LottoPeriodStatRow> = emptyList(),
 )
+
+data class PensionLotteryPurchaseResult(
+    val purchase: LottoPurchaseEntity,
+    val draw: PensionLotteryDrawEntity?,
+) {
+    val mainMatchingSuffixLength: Int = matchingSuffixLength(
+        purchaseNumber = purchase.pensionNumber,
+        winningNumber = draw?.winningNumber,
+    )
+    val isBonusMatch: Boolean =
+        purchase.pensionNumber != null && purchase.pensionNumber == draw?.bonusNumber
+    val prizeHits: List<PensionLotteryPrizeHit> = calculatePensionLotteryPrizeHits(
+        purchaseNumber = purchase.pensionNumber,
+        draw = draw,
+    )
+}
+
+enum class PensionLotteryPrizeRank(val label: String) {
+    FIRST("1등"),
+    SECOND("2등"),
+    THIRD("3등"),
+    FOURTH("4등"),
+    FIFTH("5등"),
+    SIXTH("6등"),
+    SEVENTH("7등"),
+    BONUS("보너스"),
+}
+
+data class PensionLotteryPrizeHit(
+    val rank: PensionLotteryPrizeRank,
+    val ticketCount: Int,
+)
+
+private fun calculatePensionLotteryPrizeHits(
+    purchaseNumber: String?,
+    draw: PensionLotteryDrawEntity?,
+): List<PensionLotteryPrizeHit> {
+    if (purchaseNumber == null || draw == null) return emptyList()
+
+    if (purchaseNumber == draw.winningNumber) {
+        return listOf(
+            PensionLotteryPrizeHit(PensionLotteryPrizeRank.FIRST, ticketCount = 1),
+            PensionLotteryPrizeHit(PensionLotteryPrizeRank.SECOND, ticketCount = 4),
+        )
+    }
+    if (purchaseNumber == draw.bonusNumber) {
+        return listOf(PensionLotteryPrizeHit(PensionLotteryPrizeRank.BONUS, ticketCount = 5))
+    }
+
+    val rank = when (matchingSuffixLength(purchaseNumber, draw.winningNumber)) {
+        5 -> PensionLotteryPrizeRank.THIRD
+        4 -> PensionLotteryPrizeRank.FOURTH
+        3 -> PensionLotteryPrizeRank.FIFTH
+        2 -> PensionLotteryPrizeRank.SIXTH
+        1 -> PensionLotteryPrizeRank.SEVENTH
+        else -> null
+    }
+    return rank?.let { listOf(PensionLotteryPrizeHit(it, ticketCount = 5)) }.orEmpty()
+}
+
+private fun matchingSuffixLength(purchaseNumber: String?, winningNumber: String?): Int {
+    if (purchaseNumber == null || winningNumber == null) return 0
+    return purchaseNumber
+        .reversed()
+        .zip(winningNumber.reversed())
+        .takeWhile { (purchaseDigit, winningDigit) -> purchaseDigit == winningDigit }
+        .size
+}
 
 data class PensionLotteryMatchResult(
     val draw: PensionLotteryDrawEntity,

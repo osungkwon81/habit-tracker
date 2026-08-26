@@ -13,12 +13,17 @@ data class PensionLotteryDrawEntity(
     val groupNo: Int,
     @ColumnInfo(name = "winning_number")
     val winningNumber: String,
+    @ColumnInfo(name = "bonus_number")
+    val bonusNumber: String? = null,
 ) {
     init {
         require(roundNo > 0) { "연금복권 회차는 1 이상이어야 합니다." }
         require(groupNo in 1..5) { "연금복권 조는 1부터 5 사이여야 합니다." }
         require(winningNumber.length == 6 && winningNumber.all(Char::isDigit)) {
             "연금복권 당첨번호는 6자리 숫자여야 합니다."
+        }
+        require(bonusNumber == null || bonusNumber.length == 6 && bonusNumber.all(Char::isDigit)) {
+            "연금복권 보너스 번호는 6자리 숫자여야 합니다."
         }
     }
 }

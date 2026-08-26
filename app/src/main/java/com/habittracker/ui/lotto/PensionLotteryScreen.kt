@@ -10,18 +10,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -34,6 +42,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
+import com.habittracker.data.local.model.LottoPeriodStatRow
+import com.habittracker.ui.digitsOnly
+import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppSaveButton
@@ -43,6 +54,9 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.math.roundToInt
 
 private val PensionStatHighBackground = Color(0xFFFFE1D6)
@@ -59,14 +73,15 @@ fun PensionLotteryScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val officialSyncStatus by viewModel.officialSyncStatus.collectAsStateWithLifecycle()
     val isOfficialSyncing by viewModel.isOfficialSyncing.collectAsStateWithLifecycle()
+    AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     AppScreen {
         item {
             AppHeroCard(
-                title = "연금720+ 분석",
-                description = "1등 번호 입력부터 기간별 일치·통계·점수를 확인합니다.",
+                title = "연금복권 720+ 관리",
+                description = "번호 분석과 구입·당첨 이력, 손익 통계를 관리합니다.",
                 icon = "🎟️",
-                eyebrow = "LOTTO · PENSION 720+",
+                eyebrow = "PENSION LOTTERY · 720+",
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
                 action = {
                     AppSecondaryButton(
@@ -211,6 +226,58 @@ fun PensionLotteryScreen(
                     PensionLotteryPositionScoreCard(score)
                 }
             }
+
+            PensionLotteryTab.PURCHASE -> {
+                item {
+                    PensionLotteryPurchaseSection(onSave = viewModel::savePurchase)
+                }
+                if (uiState.purchaseResults.isEmpty()) {
+                    item { AppEmptyCard("연금복권 구입 이력이 없습니다.") }
+                } else {
+                    itemsIndexed(uiState.purchaseResults, key = { _, result -> result.purchase.id }) { index, result ->
+                        if (index == uiState.purchaseResults.lastIndex && uiState.canLoadMorePurchases) {
+                            LaunchedEffect(result.purchase.id, uiState.purchaseResults.size) {
+                                viewModel.loadMorePurchases()
+                            }
+                        }
+                        PensionLotteryPurchaseCard(result = result, onDelete = viewModel::deletePurchase)
+                    }
+                }
+            }
+
+            PensionLotteryTab.WINNING -> {
+                item {
+                    LotteryWinningSection(
+                        lotteryName = "연금복권",
+                        defaultRoundNo = uiState.latestRoundNo,
+                        onSave = viewModel::saveWinning,
+                    )
+                }
+                if (uiState.winnings.isEmpty()) {
+                    item { AppEmptyCard("연금복권 당첨 이력이 없습니다.") }
+                } else {
+                    itemsIndexed(uiState.winnings, key = { _, winning -> winning.id }) { index, winning ->
+                        if (index == uiState.winnings.lastIndex && uiState.canLoadMoreWinnings) {
+                            LaunchedEffect(winning.id, uiState.winnings.size) {
+                                viewModel.loadMoreWinnings()
+                            }
+                        }
+                        LotteryWinningCard(winning = winning, onDelete = viewModel::deleteWinning)
+                    }
+                }
+            }
+
+            PensionLotteryTab.ACCOUNTING_STATS -> {
+                item {
+                    PensionLotteryAccountingStatsSection(
+                        totalPurchase = uiState.totalPurchaseAmount,
+                        totalWinning = uiState.totalWinningAmount,
+                        selectedRange = uiState.selectedAccountingStatsRange,
+                        stats = uiState.accountingStats,
+                        onSelectRange = viewModel::selectAccountingStatsRange,
+                    )
+                }
+            }
         }
     }
 }
@@ -223,17 +290,271 @@ private fun PensionLotteryTabSelector(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            PensionLotteryTab.entries.take(2).forEach { tab ->
-                AppSelectableChip(label = tab.label, selected = selectedTab == tab, onClick = { onSelect(tab) })
+            listOf(PensionLotteryTab.INPUT, PensionLotteryTab.MATCH).forEach { tab ->
+                AppSelectableChip(
+                    label = tab.label,
+                    selected = selectedTab == tab,
+                    onClick = { onSelect(tab) },
+                    modifier = Modifier.weight(1f),
+                )
             }
-            AppSelectableChip(label = "번호 생성", selected = false, onClick = onOpenGenerator)
+            AppSelectableChip(
+                label = "번호 생성",
+                selected = false,
+                onClick = onOpenGenerator,
+                modifier = Modifier.weight(1f),
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            PensionLotteryTab.entries.drop(2).forEach { tab ->
-                AppSelectableChip(label = tab.label, selected = selectedTab == tab, onClick = { onSelect(tab) })
+            listOf(PensionLotteryTab.STATS, PensionLotteryTab.SCORE).forEach { tab ->
+                AppSelectableChip(
+                    label = tab.label,
+                    selected = selectedTab == tab,
+                    onClick = { onSelect(tab) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf(
+                PensionLotteryTab.PURCHASE,
+                PensionLotteryTab.WINNING,
+                PensionLotteryTab.ACCOUNTING_STATS,
+            ).forEach { tab ->
+                AppSelectableChip(
+                    label = tab.label,
+                    selected = selectedTab == tab,
+                    onClick = { onSelect(tab) },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PensionLotteryPurchaseSection(
+    onSave: (String, String, () -> Unit) -> Unit,
+) {
+    var purchaseDate by remember { mutableStateOf(LocalDate.now().toString()) }
+    var purchaseNumber by remember { mutableStateOf("") }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = LocalDate.parse(purchaseDate)
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli(),
+    )
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            purchaseDate = Instant.ofEpochMilli(millis)
+                                .atZone(ZoneId.systemDefault())
+                                .toLocalDate()
+                                .toString()
+                        }
+                        showDatePicker = false
+                    },
+                ) { Text("선택") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("취소") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    AppSectionCard {
+        AppSectionHeader(
+            title = "연금복권 구입 번호 입력",
+            subtitle = "6자리 번호를 1~5조 전체로 구입하며 금액은 5,000원으로 자동 계산됩니다.",
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = purchaseDate,
+                onValueChange = { purchaseDate = it },
+                modifier = Modifier.weight(1f),
+                label = { Text("구입일") },
+                singleLine = true,
+            )
+            AppSecondaryButton(text = "달력", onClick = { showDatePicker = true })
+        }
+        OutlinedTextField(
+            value = purchaseNumber,
+            onValueChange = { purchaseNumber = it.digitsOnly().take(6) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("구입 번호 (6자리)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+        )
+        Text(
+            text = "구입 금액 ${formatWon(5_000L)} · 1~5조 전체",
+            color = PensionStatHighText,
+            fontWeight = FontWeight.SemiBold,
+        )
+        AppSaveButton(
+            text = "구입 번호 저장",
+            onClick = {
+                onSave(purchaseDate, purchaseNumber) {
+                    purchaseNumber = ""
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = purchaseNumber.length == 6,
+        )
+    }
+}
+
+@Composable
+private fun PensionLotteryPurchaseCard(
+    result: PensionLotteryPurchaseResult,
+    onDelete: (Long) -> Unit,
+) {
+    val purchase = result.purchase
+    val purchaseNumber = purchase.pensionNumber
+    if (purchaseNumber == null) {
+        LotteryPurchaseCard(purchase = purchase, onDelete = onDelete)
+        return
+    }
+
+    val mainMatchedPositions = when {
+        result.draw == null || result.mainMatchingSuffixLength == 0 -> emptySet()
+        else -> (purchaseNumber.length - result.mainMatchingSuffixLength until purchaseNumber.length).toSet()
+    }
+    val purchaseMatchedPositions = if (result.isBonusMatch) purchaseNumber.indices.toSet() else mainMatchedPositions
+    val prizeLabel = result.prizeHits.joinToString(" + ") { hit ->
+        "${hit.rank.label} ${hit.ticketCount}매"
+    }
+    val resultLabel = when {
+        result.draw == null -> "추첨 대기"
+        result.prizeHits.isNotEmpty() &&
+            result.draw.bonusNumber == null &&
+            result.mainMatchingSuffixLength < 6 -> "$prizeLabel · 보너스 미확인"
+        result.prizeHits.isNotEmpty() -> prizeLabel
+        result.draw.bonusNumber == null -> "보너스 확인 필요"
+        else -> "미당첨"
+    }
+    val resultColor = if (result.prizeHits.isNotEmpty()) {
+        PensionStatHighText
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    AppSectionCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("${purchase.roundNo}회차", fontWeight = FontWeight.Bold)
+            Text(
+                text = resultLabel,
+                modifier = Modifier.weight(1f),
+                color = resultColor,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
+            )
+        }
+        Text(
+            text = "${purchase.purchaseDate} 구입 · 1~5조 전체 · ${formatWon(purchase.amount.toLong())}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text("구입 번호", fontWeight = FontWeight.SemiBold)
+        PensionLotteryNumberRow(purchaseNumber, highlightedPositions = purchaseMatchedPositions)
+        result.draw?.let { draw ->
+            Text("1등 당첨 번호 · ${draw.groupNo}조", fontWeight = FontWeight.SemiBold)
+            PensionLotteryNumberRow(draw.winningNumber, highlightedPositions = mainMatchedPositions)
+            draw.bonusNumber?.let { bonusNumber ->
+                Text("보너스 당첨 번호 · 각조", fontWeight = FontWeight.SemiBold)
+                PensionLotteryNumberRow(
+                    winningNumber = bonusNumber,
+                    highlightedPositions = if (result.isBonusMatch) bonusNumber.indices.toSet() else emptySet(),
+                )
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            AppSecondaryButton(text = "삭제", onClick = { onDelete(purchase.id) })
+        }
+    }
+}
+
+@Composable
+private fun PensionLotteryAccountingStatsSection(
+    totalPurchase: Long,
+    totalWinning: Long,
+    selectedRange: LotteryAccountingStatsRange,
+    stats: List<LottoPeriodStatRow>,
+    onSelectRange: (LotteryAccountingStatsRange) -> Unit,
+) {
+    val net = totalWinning - totalPurchase
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AppSectionCard {
+            AppSectionHeader(title = "연금복권 구입/당첨 요약")
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatMiniCard(title = "구입", value = formatWon(totalPurchase), modifier = Modifier.weight(1f))
+                StatMiniCard(title = "당첨", value = formatWon(totalWinning), modifier = Modifier.weight(1f))
+                StatMiniCard(title = "손익", value = formatWon(net), modifier = Modifier.weight(1f))
+            }
+        }
+        AppSectionCard {
+            AppSectionHeader(title = "연금복권 ${selectedRange.label} 흐름")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                LotteryAccountingStatsRange.entries.forEach { range ->
+                    AppSelectableChip(
+                        label = range.label,
+                        selected = selectedRange == range,
+                        onClick = { onSelectRange(range) },
+                    )
+                }
+            }
+            if (stats.isEmpty()) {
+                Text(
+                    text = "연금복권 통계 데이터가 없습니다.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val maxValue = stats.maxOf { row ->
+                    maxOf(row.purchaseAmount, row.winningAmount, 1L)
+                }.toFloat()
+                stats.sortedByDescending(LottoPeriodStatRow::period).forEach { row ->
+                    Text(
+                        text = formatPensionStatsPeriod(row.period, selectedRange),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    AmountBar(
+                        label = "구입 합계 ${formatWon(row.purchaseAmount)}",
+                        ratio = row.purchaseAmount / maxValue,
+                        color = PensionStatLowText,
+                    )
+                    AmountBar(
+                        label = "당첨 합계 ${formatWon(row.winningAmount)}",
+                        ratio = row.winningAmount / maxValue,
+                        color = PensionStatHighText,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatPensionStatsPeriod(period: String, range: LotteryAccountingStatsRange): String {
+    if (range != LotteryAccountingStatsRange.WEEKLY) return formatStatsPeriod(period, range)
+
+    val drawDate = runCatching { LocalDate.parse(period) }.getOrNull() ?: return period
+    val previousDrawDate = drawDate.minusWeeks(1)
+    return "${previousDrawDate.monthValue}/${previousDrawDate.dayOfMonth} ~ " +
+        "${drawDate.monthValue}/${drawDate.dayOfMonth}"
 }
 
 @Composable

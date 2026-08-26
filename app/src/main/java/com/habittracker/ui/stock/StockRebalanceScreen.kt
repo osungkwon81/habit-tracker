@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.habittracker.data.stock.KisCurrentPrice
 import com.habittracker.data.stock.StockRebalanceLine
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppConfirmDialog
@@ -24,28 +25,35 @@ import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
 
+private data class PendingRebalanceOrder(
+    val line: StockRebalanceLine,
+    val quote: KisCurrentPrice?,
+)
+
 @Composable
 fun StockRebalanceScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var confirmationLine by remember { mutableStateOf<StockRebalanceLine?>(null) }
+    var pendingOrder by remember { mutableStateOf<PendingRebalanceOrder?>(null) }
     StockStatusDialog(uiState, viewModel::clearStatusMessage)
 
     LaunchedEffect(uiState.isConfigSaved) {
         if (uiState.isConfigSaved) viewModel.loadReferenceStocks()
     }
 
-    confirmationLine?.let { line ->
+    pendingOrder?.let { pending ->
+        val line = pending.line
+        val orderPrice = pending.quote?.currentPrice?.toLongOrNull() ?: line.referencePrice
         AppConfirmDialog(
             title = "실전 리밸런싱 주문",
             message = "${line.productName} (${line.productCode})\n" +
-                "${line.orderSide?.label} ${line.orderQuantity}주 · ${line.referencePrice.toWon()} 지정가\n\n" +
+                "${line.orderSide?.label} ${line.orderQuantity}주 · ${orderPrice.toWon()} 지정가\n\n" +
                 "실제 계좌에 주문을 전송합니다.",
             confirmText = "주문 전송",
             onConfirm = {
-                viewModel.executeRebalanceLine(line)
-                confirmationLine = null
+                viewModel.executeRebalanceLine(line, pending.quote)
+                pendingOrder = null
             },
-            onDismiss = { confirmationLine = null },
+            onDismiss = { pendingOrder = null },
         )
     }
 
@@ -127,7 +135,10 @@ fun StockRebalanceScreen(viewModel: StockViewModel) {
         if (uiState.rebalancePlan.isNotEmpty()) {
             item { StockSectionTitle("계산 결과") }
         }
-        items(uiState.rebalancePlan.size) { index ->
+        items(
+            count = uiState.rebalancePlan.size,
+            key = { index -> uiState.rebalancePlan[index].productCode },
+        ) { index ->
             val line = uiState.rebalancePlan[index]
             AppSectionCard {
                 Text("${line.productName} (${line.productCode})", style = MaterialTheme.typography.titleMedium)
@@ -145,15 +156,19 @@ fun StockRebalanceScreen(viewModel: StockViewModel) {
                     AppStatusText("${line.orderSide.label} ${line.orderQuantity}주 · ${line.referencePrice.toWon()} 지정가")
                     AppPrimaryButton(
                         text = "${line.orderSide.label} 주문 확인",
-                        onClick = { confirmationLine = line },
+                        onClick = {
+                            viewModel.prepareRebalanceLine(line) { quote ->
+                                pendingOrder = PendingRebalanceOrder(line, quote)
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !uiState.safetyConfig.globalOrderBlocked,
+                        enabled = !uiState.safetyConfig.globalOrderBlocked && !uiState.isSubmittingOrder,
                     )
                 }
             }
         }
         item {
-            AppSupportText("리밸런싱 계산은 현재가 스냅샷 기준입니다. 각 주문은 매수가능금액·매도가능수량·급락 차단·주문 한도를 다시 검사합니다.")
+            AppSupportText("리밸런싱 계산은 현재가 스냅샷 기준입니다. 매도는 확인 직전 최신 현재가 지정가로 갱신하고, 각 주문의 가능 수량·급락 차단·주문 한도를 다시 검사합니다.")
         }
     }
 }

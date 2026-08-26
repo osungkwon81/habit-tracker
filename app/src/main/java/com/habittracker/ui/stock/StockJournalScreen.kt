@@ -216,7 +216,10 @@ fun StockJournalScreen(viewModel: StockViewModel) {
         if (uiState.automationEvents.isEmpty()) {
             item { AppSectionCard { AppSupportText("저장된 주식 알림·오류 기록이 없습니다.") } }
         }
-        items(uiState.automationEvents.size) { index ->
+        items(
+            count = uiState.automationEvents.size,
+            key = { index -> uiState.automationEvents[index].id },
+        ) { index ->
             val event = uiState.automationEvents[index]
             if (index == uiState.automationEvents.lastIndex && uiState.canLoadMoreAutomationEvents) {
                 LaunchedEffect(event.id, uiState.automationEvents.size) {
@@ -250,7 +253,10 @@ fun StockJournalScreen(viewModel: StockViewModel) {
         item {
             AppSupportText("KIS 외부 주문은 KIS 앱·HTS 등 이 앱 밖의 체결이며, 세부 주문 채널은 구분하지 않습니다.")
         }
-        items(uiState.orders.size) { index ->
+        items(
+            count = uiState.orders.size,
+            key = { index -> uiState.orders[index].id },
+        ) { index ->
             val order = uiState.orders[index]
             val source = StockOrderSource.values().firstOrNull { it.name == order.source }
             val allocations = allocationsBySellOrder[order.id].orEmpty()

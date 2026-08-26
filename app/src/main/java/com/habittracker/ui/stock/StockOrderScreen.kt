@@ -131,12 +131,14 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                         onClick = { viewModel.updateOrderDivisionCode("00") },
                         modifier = Modifier.weight(1f),
                     )
-                    AppSelectableChip(
-                        label = "시장가",
-                        selected = uiState.orderDivisionCode == "01",
-                        onClick = { viewModel.updateOrderDivisionCode("01") },
-                        modifier = Modifier.weight(1f),
-                    )
+                    if (uiState.orderSide == KisOrderSide.BUY) {
+                        AppSelectableChip(
+                            label = "시장가",
+                            selected = uiState.orderDivisionCode == "01",
+                            onClick = { viewModel.updateOrderDivisionCode("01") },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
                 AppTextField(
                     value = uiState.orderUnitPrice,
@@ -144,9 +146,10 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                     label = when {
                         uiState.orderDivisionCode == "01" -> "시장가 주문단가"
                         uiState.isLoadingOrderPrice -> "지정가 (현재가 조회 중)"
+                        uiState.orderSide == KisOrderSide.SELL -> "현재가 지정가"
                         else -> "지정가"
                     },
-                    enabled = uiState.orderDivisionCode != "01",
+                    enabled = uiState.orderSide == KisOrderSide.BUY && uiState.orderDivisionCode != "01",
                     singleLine = true,
                 )
                 if (uiState.orderDivisionCode == "00") {
@@ -219,11 +222,17 @@ fun StockOrderScreen(viewModel: StockViewModel) {
                 }
                 AppPrimaryButton(
                     text = if (uiState.isSubmittingOrder) "주문 전송 중" else "실전 ${uiState.orderSide.label} 주문 확인",
-                    onClick = { showConfirmation = true },
+                    onClick = {
+                        viewModel.prepareCashOrderConfirmation {
+                            showConfirmation = true
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.isConfigSaved &&
                         !uiState.safetyConfig.globalOrderBlocked &&
                         !uiState.isSubmittingOrder &&
+                        !uiState.isLoadingOrderPrice &&
+                        !uiState.isLoadingOrderAvailability &&
                         uiState.productCode.length in 6..7 &&
                         uiState.orderQuantity.toLongOrNull()?.let { quantity ->
                             quantity > 0L && quantity <= (uiState.orderAvailability?.availableQuantity ?: 0L)

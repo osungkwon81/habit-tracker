@@ -23,6 +23,8 @@ data class LottoPurchaseEntity(
     val lottoType: String,
     @ColumnInfo(name = "round_no")
     val roundNo: Int? = null,
+    @ColumnInfo(name = "pension_number")
+    val pensionNumber: String? = null,
     @ColumnInfo(name = "amount")
     val amount: Int,
     @ColumnInfo(name = "memo")

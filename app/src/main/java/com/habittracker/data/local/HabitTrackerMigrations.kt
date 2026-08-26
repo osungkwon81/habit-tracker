@@ -860,6 +860,28 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_30_31 = object : Migration(30, 31) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `lotto_purchase`
+                ADD COLUMN `pension_number` TEXT
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private val MIGRATION_31_32 = object : Migration(31, 32) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                ALTER TABLE `pension_lottery_draw`
+                ADD COLUMN `bonus_number` TEXT
+                """.trimIndent(),
+            )
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -886,6 +908,8 @@ object HabitTrackerMigrations {
         MIGRATION_27_28,
         MIGRATION_28_29,
         MIGRATION_29_30,
+        MIGRATION_30_31,
+        MIGRATION_31_32,
     )
 }
 

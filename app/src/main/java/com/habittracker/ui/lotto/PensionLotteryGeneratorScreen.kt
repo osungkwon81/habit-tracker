@@ -50,6 +50,7 @@ fun PensionLotteryGeneratorScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var deleteTarget by remember { mutableStateOf<PensionLotteryGenerationHistory?>(null) }
+    var backupDeleteTarget by remember { mutableStateOf<PensionLotteryBackupNumber?>(null) }
 
     deleteTarget?.let { history ->
         AppConfirmDialog(
@@ -61,6 +62,19 @@ fun PensionLotteryGeneratorScreen(
                 deleteTarget = null
             },
             onDismiss = { deleteTarget = null },
+        )
+    }
+
+    backupDeleteTarget?.let { backup ->
+        AppConfirmDialog(
+            title = "예비 번호 삭제",
+            message = "${backup.number.groupNo}조 ${backup.number.winningNumber} 예비 번호를 삭제합니다.",
+            confirmText = "삭제",
+            onConfirm = {
+                viewModel.deleteBackup(backup.generationId)
+                backupDeleteTarget = null
+            },
+            onDismiss = { backupDeleteTarget = null },
         )
     }
 
@@ -84,10 +98,26 @@ fun PensionLotteryGeneratorScreen(
         item {
             PensionLotteryGeneratorRuleCard(uiState)
         }
-        if (uiState.generatedNumbers.isEmpty()) {
+        if (uiState.hasGenerationConditionChanged) {
+            item {
+                AppSectionCard {
+                    AppSectionHeader(
+                        title = "적용 조건 변경",
+                        subtitle = "최근 당첨번호를 반영한 현재 조건과 생성번호의 적용 조건이 다릅니다.",
+                    )
+                    AppStatusText("현재 조건으로 네 번호를 다시 생성해 주세요.")
+                }
+            }
+        }
+        if (!uiState.hasUnsavedGeneration || uiState.hasGenerationConditionChanged) {
             item {
                 AppPrimaryButton(
-                    text = if (uiState.isGenerating) "번호 생성 중" else "두 가지 번호 생성",
+                    text = when {
+                        uiState.isGenerating -> "번호 생성 중"
+                        uiState.hasGenerationConditionChanged -> "변경 조건으로 네 번호 재생성"
+                        uiState.generatedNumbers.isEmpty() -> "이번 주 고정 번호 4개 생성"
+                        else -> "새 주 고정 번호 4개 생성"
+                    },
                     onClick = viewModel::generate,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.canGenerate && !uiState.isGenerating && !uiState.isSaving,
@@ -101,7 +131,7 @@ fun PensionLotteryGeneratorScreen(
             item {
                 AppEmptyCard(
                     if (uiState.canGenerate) {
-                        "출현형과 미출현 혼합형 번호를 생성해 주세요."
+                        "출현형 2개와 미출현 혼합형 2개를 생성해 주세요."
                     } else {
                         "번호 생성을 위해 저장된 당첨번호가 17회 이상 필요합니다."
                     },
@@ -111,43 +141,48 @@ fun PensionLotteryGeneratorScreen(
             item {
                 AppSectionHeader(
                     title = "현재 추천 번호",
-                    subtitle = if (uiState.hasUnsavedGeneration) {
-                        "방금 생성됨 · 저장 전"
-                    } else {
-                        uiState.generationHistory.firstOrNull()?.generatedAt?.format(PensionGenerationTimeFormatter)
+                    subtitle = when {
+                        uiState.hasGenerationConditionChanged -> "적용 조건 변경 · 재생성 필요"
+                        uiState.hasUnsavedGeneration -> "방금 생성됨 · 저장 전"
+                        else -> uiState.generationHistory.firstOrNull()?.generatedAt?.let { generatedAt ->
+                            "${generatedAt.format(PensionGenerationTimeFormatter)} · 고정 저장"
+                        }
                     },
                 )
             }
-            item {
-                AppSaveButton(
-                    text = when {
-                        uiState.isSaving -> "생성 번호 저장 중"
-                        uiState.hasUnsavedGeneration -> "생성 번호 저장"
-                        else -> "저장 완료"
-                    },
-                    onClick = viewModel::saveGeneratedNumbers,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.hasUnsavedGeneration && !uiState.isGenerating && !uiState.isSaving,
-                )
+            if (uiState.hasUnsavedGeneration) {
+                item {
+                    AppSaveButton(
+                        text = when {
+                            uiState.isSaving -> "고정 번호 저장 중"
+                            uiState.hasGenerationConditionChanged -> "조건 변경 · 재생성 필요"
+                            else -> "4개 번호 고정 저장"
+                        },
+                        onClick = viewModel::saveGeneratedNumbers,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !uiState.hasGenerationConditionChanged &&
+                            !uiState.isGenerating &&
+                            !uiState.isSaving,
+                    )
+                }
             }
             items(uiState.generatedNumbers, key = { result -> result.type.name }) { result ->
+                val backup = uiState.backupNumbers.firstOrNull { savedBackup ->
+                    savedBackup.number.type == result.type
+                }
                 PensionLotteryGeneratedNumberCard(
                     result = result,
+                    isFixed = !uiState.hasUnsavedGeneration,
+                    backup = backup,
                     isRegenerating = uiState.regeneratingType == result.type,
-                    regenerateEnabled = !uiState.isGenerating && !uiState.isSaving,
+                    isGeneratingBackup = uiState.generatingBackupType == result.type,
+                    actionEnabled = !uiState.hasGenerationConditionChanged &&
+                        !uiState.isGenerating &&
+                        !uiState.isSaving,
                     onRegenerate = { viewModel.regenerate(result.type) },
+                    onGenerateBackup = { viewModel.generateBackup(result.type) },
+                    onDeleteBackup = { backupDeleteTarget = backup },
                 )
-            }
-            if (!uiState.hasUnsavedGeneration) {
-                uiState.generationHistory.firstOrNull()?.let { latestHistory ->
-                    item {
-                        AppSecondaryButton(
-                            text = "현재 추천 번호 삭제",
-                            onClick = { deleteTarget = latestHistory },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
             }
         }
         val previousHistory = if (uiState.hasUnsavedGeneration) {
@@ -197,10 +232,19 @@ private fun PensionLotteryGeneratorRuleCard(uiState: PensionLotteryGeneratorUiSt
             } ?: "계산 대기",
         )
         GeneratorRuleRow(
-            label = "마지막 숫자",
-            value = "출현 상위 3개·미출현 우선 / 서로 다르게",
+            label = "마지막 숫자 후보",
+            value = if (
+                uiState.appearedLastDigitCandidates.isNotEmpty() &&
+                uiState.coldMixLastDigitCandidates.isNotEmpty()
+            ) {
+                "출현 ${uiState.appearedLastDigitCandidates.joinToString("·")} · " +
+                    "혼합 ${uiState.coldMixLastDigitCandidates.joinToString("·")} / 서로 다르게"
+            } else {
+                "계산 대기"
+            },
         )
-        GeneratorRuleRow(label = "추천 구성", value = "출현형 1개 · 미출현 혼합형 1개")
+        GeneratorRuleRow(label = "주간 고정 구성", value = "출현형 2개 · 미출현 혼합형 2개")
+        GeneratorRuleRow(label = "예비 번호", value = "고정 번호별 1개 생성 · 삭제 가능")
     }
 }
 
@@ -229,9 +273,14 @@ private fun GeneratorRuleRow(
 @Composable
 private fun PensionLotteryGeneratedNumberCard(
     result: PensionLotteryGeneratedNumber,
+    isFixed: Boolean,
+    backup: PensionLotteryBackupNumber?,
     isRegenerating: Boolean,
-    regenerateEnabled: Boolean,
+    isGeneratingBackup: Boolean,
+    actionEnabled: Boolean,
     onRegenerate: () -> Unit,
+    onGenerateBackup: () -> Unit,
+    onDeleteBackup: () -> Unit,
 ) {
     AppSectionCard {
         Row(
@@ -244,12 +293,26 @@ private fun PensionLotteryGeneratedNumberCard(
                 subtitle = result.type.description,
                 modifier = Modifier.weight(1f),
             )
-            PensionRegenerateIcon(
-                contentDescription = "${result.type.label} 다시 생성",
-                isLoading = isRegenerating,
-                enabled = regenerateEnabled,
-                onClick = onRegenerate,
-            )
+            if (isFixed) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                ) {
+                    Text(
+                        text = "고정",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            } else {
+                PensionRegenerateIcon(
+                    contentDescription = "${result.type.label} 다시 생성",
+                    isLoading = isRegenerating,
+                    enabled = actionEnabled,
+                    onClick = onRegenerate,
+                )
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -284,6 +347,57 @@ private fun PensionLotteryGeneratedNumberCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (isFixed) {
+            if (backup == null) {
+                AppSecondaryButton(
+                    text = if (isGeneratingBackup) "예비 번호 생성 중" else "예비 번호 생성",
+                    onClick = onGenerateBackup,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = actionEnabled,
+                )
+            } else {
+                PensionLotteryBackupNumberCard(
+                    backup = backup,
+                    onDelete = onDeleteBackup,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PensionLotteryBackupNumberCard(
+    backup: PensionLotteryBackupNumber,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("예비 번호", fontWeight = FontWeight.Bold)
+                Text(
+                    text = "${backup.number.groupNo}조 ${backup.number.winningNumber}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            AppSecondaryButton(
+                text = "예비 번호 삭제",
+                onClick = onDelete,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }

@@ -252,7 +252,7 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item { uiState.statusMessage?.let { message -> AppStatusText(message) } }
         if (imageUris.isNotEmpty()) {
             item { Text(text = "첨부 이미지", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            items(imageUris.distinct()) { uri ->
+            items(imageUris.distinct(), key = { uri -> uri }) { uri ->
                 AppSectionCard(modifier = Modifier.clickable { expandedImageUri = uri }) {
                     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         DiaryImage(uri = uri, modifier = Modifier.fillMaxWidth().height(200.dp))

@@ -32,6 +32,12 @@ enum class KisStockMarket(
     UNIFIED("UN", "SOR"),
 }
 
+enum class KisQuoteUnitPolicy {
+    STOCK,
+    ETF_ETN,
+    UNKNOWN,
+}
+
 data class KisAccountRef(
     val accountNumber: String,
     val accountProductCode: String,
@@ -59,6 +65,9 @@ data class KisCashOrderDraft(
 data class KisCurrentPrice(
     val productCode: String,
     val currentPrice: String,
+    val quoteUnit: Long,
+    val quoteUnitPolicy: KisQuoteUnitPolicy,
+    val market: KisStockMarket,
     val changeRatePercent: Double,
     val baseDateTime: String,
 )
@@ -271,9 +280,32 @@ internal class KisDomesticStockClient {
         ).body.requireOutputObject("KIS 현재가 응답")
         val currentPrice = output.optString("stck_prpr").takeIf(String::isNotBlank)
             ?: throw IOException("KIS 현재가 응답에 가격이 없습니다. (종목=$productCode)")
+        val quoteUnit = output.optString("aspr_unit")
+            .substringBefore('.')
+            .toLongOrNull()
+            ?.takeIf { it > 0L }
+            ?: throw IOException("KIS 현재가 응답에 호가 단위가 없습니다. (종목=$productCode)")
+        val faceValue = output.optString("stck_fcam")
+            .substringBefore('.')
+            .toLongOrNull()
+        val securityDescription = listOf(
+            output.optString("rprs_mrkt_kor_name"),
+            output.optString("bstp_kor_isnm"),
+        ).joinToString(" ").uppercase()
+        val quoteUnitPolicy = when {
+            productCode.length == 7 ||
+                securityDescription.contains("ETF") ||
+                securityDescription.contains("ETN") ||
+                faceValue == 0L -> KisQuoteUnitPolicy.ETF_ETN
+            faceValue?.let { it > 0L } == true -> KisQuoteUnitPolicy.STOCK
+            else -> KisQuoteUnitPolicy.UNKNOWN
+        }
         return KisCurrentPrice(
             productCode = productCode,
             currentPrice = currentPrice,
+            quoteUnit = quoteUnit,
+            quoteUnitPolicy = quoteUnitPolicy,
+            market = market,
             changeRatePercent = output.optString("prdy_ctrt").toDoubleOrNull() ?: 0.0,
             baseDateTime = LocalDateTime.now().toString(),
         )

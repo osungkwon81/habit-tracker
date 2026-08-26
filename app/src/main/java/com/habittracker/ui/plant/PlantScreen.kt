@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -120,11 +121,13 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
                     AppEmptyCard("오늘 물줘야 할 화분이 없습니다.")
                 } else {
                     uiState.duePlants.forEach { plant ->
-                        DuePlantRow(
-                            plant = plant,
-                            onComplete = { viewModel.completeWatering(plant.id) },
-                            onIncreaseInterval = { viewModel.increaseWateringIntervalOneDay(plant.id) },
-                        )
+                        key(plant.id) {
+                            DuePlantRow(
+                                plant = plant,
+                                onComplete = { viewModel.completeWatering(plant.id) },
+                                onIncreaseInterval = { viewModel.increaseWateringIntervalOneDay(plant.id) },
+                            )
+                        }
                     }
                 }
             }
@@ -141,11 +144,13 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
                     AppEmptyCard("등록된 화분이 없습니다.")
                 } else {
                     uiState.plants.forEach { plant ->
-                        PlantCard(
-                            plant = plant,
-                            onEdit = { viewModel.openPlant(plant) },
-                            onDelete = { deleteTarget = plant },
-                        )
+                        key(plant.id) {
+                            PlantCard(
+                                plant = plant,
+                                onEdit = { viewModel.openPlant(plant) },
+                                onDelete = { deleteTarget = plant },
+                            )
+                        }
                     }
                 }
                 uiState.statusMessage?.let { message ->
@@ -453,9 +458,10 @@ private fun PlantImage(
         initialValue = plantImageCache.get(cacheKey),
         key1 = cacheKey,
     ) {
+        value = plantImageCache.get(cacheKey)
         if (value != null) return@produceState
         value = withContext(Dispatchers.IO) {
-            plantImageCache.get(cacheKey) ?: runCatching {
+            runCatching {
                 decodeSampledBitmap(context, Uri.parse(uri), maxSizePx)
             }.getOrNull()?.also { decodedBitmap ->
                 plantImageCache.put(cacheKey, decodedBitmap)

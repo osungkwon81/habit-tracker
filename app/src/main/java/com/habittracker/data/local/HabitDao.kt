@@ -168,26 +168,28 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_purchase
+        WHERE lotto_type = :lottoType
         ORDER BY purchase_date DESC, id DESC
         LIMIT :limit
         """,
     )
-    fun observeLottoPurchases(limit: Int): Flow<List<LottoPurchaseEntity>>
+    fun observeLottoPurchases(lottoType: String, limit: Int): Flow<List<LottoPurchaseEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLottoPurchase(purchase: LottoPurchaseEntity): Long
 
-    @Query("DELETE FROM lotto_purchase WHERE id = :purchaseId")
-    suspend fun deleteLottoPurchaseById(purchaseId: Long)
+    @Query("DELETE FROM lotto_purchase WHERE id = :purchaseId AND lotto_type = :lottoType")
+    suspend fun deleteLottoPurchaseById(purchaseId: Long, lottoType: String)
 
     @Query(
         """
         SELECT * FROM lotto_winning
+        WHERE lotto_type = :lottoType
         ORDER BY round_no DESC, id DESC
         LIMIT :limit
         """,
     )
-    fun observeLottoWinnings(limit: Int): Flow<List<LottoWinningEntity>>
+    fun observeLottoWinnings(lottoType: String, limit: Int): Flow<List<LottoWinningEntity>>
 
     @Query(
         """
@@ -226,8 +228,8 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLottoWinning(winning: LottoWinningEntity): Long
 
-    @Query("DELETE FROM lotto_winning WHERE id = :winningId")
-    suspend fun deleteLottoWinningById(winningId: Long)
+    @Query("DELETE FROM lotto_winning WHERE id = :winningId AND lotto_type = :lottoType")
+    suspend fun deleteLottoWinningById(winningId: Long, lottoType: String)
 
     @Query("SELECT COALESCE(SUM(amount), 0) FROM lotto_purchase WHERE lotto_type = :lottoType")
     fun observeTotalLottoPurchaseAmount(lottoType: String): Flow<Long>
@@ -238,12 +240,22 @@ interface HabitDao {
     @Query(
         """
         WITH purchases AS (
-            SELECT date(
-                purchase_date,
-                printf('+%d days', (6 - CAST(strftime('%w', purchase_date) AS INTEGER) + 7) % 7)
-            ) AS period,
+            SELECT CASE
+                       WHEN :lottoType = '연금' THEN date(
+                           purchase_date,
+                           printf(
+                               '+%d days',
+                               ((4 - CAST(strftime('%w', purchase_date) AS INTEGER) + 6) % 7) + 1
+                           )
+                       )
+                       ELSE date(
+                           purchase_date,
+                           printf('+%d days', (6 - CAST(strftime('%w', purchase_date) AS INTEGER) + 7) % 7)
+                       )
+                   END AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = :lottoType
             GROUP BY period
         ),
         winning_dates AS (
@@ -253,12 +265,16 @@ interface HabitDao {
                    END AS winning_date,
                    amount
             FROM lotto_winning
+            WHERE lotto_type = :lottoType
         ),
         winnings AS (
-            SELECT date(
-                winning_date,
-                printf('+%d days', (6 - CAST(strftime('%w', winning_date) AS INTEGER) + 7) % 7)
-            ) AS period,
+            SELECT CASE
+                       WHEN :lottoType = '연금' THEN winning_date
+                       ELSE date(
+                           winning_date,
+                           printf('+%d days', (6 - CAST(strftime('%w', winning_date) AS INTEGER) + 7) % 7)
+                       )
+                   END AS period,
                    SUM(amount) AS amount
             FROM winning_dates
             GROUP BY period
@@ -278,7 +294,7 @@ interface HabitDao {
         LIMIT :limit
         """,
     )
-    fun observeLottoWeeklyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
+    fun observeLottoWeeklyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>>
 
     @Query(
         """
@@ -286,6 +302,7 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 7) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = :lottoType
             GROUP BY period
         ),
         winning_dates AS (
@@ -295,6 +312,7 @@ interface HabitDao {
                    END AS winning_date,
                    amount
             FROM lotto_winning
+            WHERE lotto_type = :lottoType
         ),
         winnings AS (
             SELECT substr(winning_date, 1, 7) AS period,
@@ -317,7 +335,7 @@ interface HabitDao {
         LIMIT :limit
         """,
     )
-    fun observeLottoMonthlyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
+    fun observeLottoMonthlyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>>
 
     @Query(
         """
@@ -325,6 +343,7 @@ interface HabitDao {
             SELECT substr(purchase_date, 1, 4) AS period,
                    SUM(amount) AS amount
             FROM lotto_purchase
+            WHERE lotto_type = :lottoType
             GROUP BY period
         ),
         winning_dates AS (
@@ -334,6 +353,7 @@ interface HabitDao {
                    END AS winning_date,
                    amount
             FROM lotto_winning
+            WHERE lotto_type = :lottoType
         ),
         winnings AS (
             SELECT substr(winning_date, 1, 4) AS period,
@@ -356,7 +376,7 @@ interface HabitDao {
         LIMIT :limit
         """,
     )
-    fun observeLottoYearlyStats(limit: Int): Flow<List<LottoPeriodStatRow>>
+    fun observeLottoYearlyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>>
 
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     suspend fun getAllLottoDrawsDesc(): List<LottoDrawEntity>
@@ -537,7 +557,7 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM plant
-        ORDER BY next_watering_date ASC, updated_at DESC, id DESC
+        ORDER BY next_watering_date ASC, id ASC
         """,
     )
     fun observePlants(): Flow<List<PlantEntity>>

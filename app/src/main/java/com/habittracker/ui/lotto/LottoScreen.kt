@@ -255,13 +255,15 @@ fun LottoScreen(
             }
             LottoTab.PURCHASE -> {
                 item {
-                    PurchaseSection(
+                    LotteryPurchaseSection(
+                        lotteryName = "로또",
                         defaultRoundNo = uiState.nextRoundNo,
+                        requiresRoundNo = true,
                         onSave = viewModel::savePurchase,
                     )
                 }
                 if (uiState.purchases.isEmpty()) {
-                    item { AppEmptyCard("구입 이력이 없습니다.") }
+                    item { AppEmptyCard("로또 구입 이력이 없습니다.") }
                 } else {
                     itemsIndexed(uiState.purchases, key = { _, purchase -> purchase.id }) { index, purchase ->
                         if (index == uiState.purchases.lastIndex && uiState.canLoadMorePurchases) {
@@ -269,7 +271,7 @@ fun LottoScreen(
                                 viewModel.loadMorePurchases()
                             }
                         }
-                        LottoPurchaseCard(purchase = purchase, onDelete = viewModel::deletePurchase)
+                        LotteryPurchaseCard(purchase = purchase, onDelete = viewModel::deletePurchase)
                     }
                 }
             }
@@ -298,13 +300,14 @@ fun LottoScreen(
             }
             LottoTab.WINNING -> {
                 item {
-                    WinningSection(
+                    LotteryWinningSection(
+                        lotteryName = "로또",
                         defaultRoundNo = uiState.latestSavedRoundNo,
                         onSave = viewModel::saveWinning,
                     )
                 }
                 if (uiState.winnings.isEmpty()) {
-                    item { AppEmptyCard("내 당첨 이력이 없습니다.") }
+                    item { AppEmptyCard("로또 당첨 이력이 없습니다.") }
                 } else {
                     itemsIndexed(uiState.winnings, key = { _, winning -> winning.id }) { index, winning ->
                         if (index == uiState.winnings.lastIndex && uiState.canLoadMoreWinnings) {
@@ -312,7 +315,7 @@ fun LottoScreen(
                                 viewModel.loadMoreWinnings()
                             }
                         }
-                        LottoWinningCard(winning = winning, onDelete = viewModel::deleteWinning)
+                        LotteryWinningCard(winning = winning, onDelete = viewModel::deleteWinning)
                     }
                 }
             }
@@ -335,8 +338,6 @@ fun LottoScreen(
                     LottoStatsSection(
                         totalPurchase = uiState.totalPurchaseAmount,
                         totalWinning = uiState.totalWinningAmount,
-                        pensionPurchase = uiState.pensionPurchaseAmount,
-                        pensionWinning = uiState.pensionWinningAmount,
                         selectedRange = uiState.selectedStatsRange,
                         stats = uiState.stats,
                         winningTypeStats = uiState.winningTypeStats,
@@ -839,12 +840,13 @@ private fun RoundSavedTicketDeck(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PurchaseSection(
+internal fun LotteryPurchaseSection(
+    lotteryName: String,
     defaultRoundNo: Int?,
-    onSave: (String, String, String, String, String, () -> Unit) -> Unit,
+    requiresRoundNo: Boolean,
+    onSave: (String, String, String, String, () -> Unit) -> Unit,
 ) {
     var purchaseDate by remember { mutableStateOf(LocalDate.now().toString()) }
-    var lottoType by remember { mutableStateOf("로또") }
     var roundNo by remember(defaultRoundNo) { mutableStateOf(defaultRoundNo?.toString().orEmpty()) }
     var amount by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
@@ -876,26 +878,12 @@ private fun PurchaseSection(
     }
 
     AppSectionCard {
-        AppSectionHeader(title = "구입 이력 입력")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            AppSelectableChip(
-                label = "로또",
-                selected = lottoType == "로또",
-                onClick = { lottoType = "로또" },
-                modifier = Modifier.weight(1f),
-            )
-            AppSelectableChip(
-                label = "연금",
-                selected = lottoType == "연금",
-                onClick = { lottoType = "연금" },
-                modifier = Modifier.weight(1f),
-            )
-        }
+        AppSectionHeader(title = "$lotteryName 구입 이력 입력")
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = purchaseDate, onValueChange = { purchaseDate = it }, modifier = Modifier.weight(1f), label = { Text("구입일") }, singleLine = true)
             AppSecondaryButton(text = "달력", onClick = { showDatePicker = true })
         }
-        if (lottoType == "로또") {
+        if (requiresRoundNo) {
             OutlinedTextField(
                 value = roundNo,
                 onValueChange = { roundNo = it.digitsOnly() },
@@ -919,7 +907,6 @@ private fun PurchaseSection(
             onClick = {
                 onSave(
                     purchaseDate,
-                    lottoType,
                     roundNo,
                     amount,
                     memo,
@@ -1011,14 +998,14 @@ private fun PhysicalQrRoundCard(
 }
 
 @Composable
-private fun LottoPurchaseCard(purchase: LottoPurchaseEntity, onDelete: (Long) -> Unit) {
+internal fun LotteryPurchaseCard(purchase: LottoPurchaseEntity, onDelete: (Long) -> Unit) {
     AppSectionCard {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = listOfNotNull(
                         purchase.purchaseDate.toString(),
-                        purchase.lottoType,
+                        lotteryTypeLabel(purchase.lottoType),
                         purchase.roundNo?.let { "${it}회차" },
                     ).joinToString(" · "),
                     style = MaterialTheme.typography.titleMedium,
@@ -1033,34 +1020,18 @@ private fun LottoPurchaseCard(purchase: LottoPurchaseEntity, onDelete: (Long) ->
 }
 
 @Composable
-private fun WinningSection(
+internal fun LotteryWinningSection(
+    lotteryName: String,
     defaultRoundNo: Int?,
-    onSave: (String, String, String, String, () -> Unit) -> Unit,
+    onSave: (String, String, String, () -> Unit) -> Unit,
 ) {
     val defaultRoundText = defaultRoundNo?.toString().orEmpty()
-    var lottoType by remember { mutableStateOf("로또") }
-    var roundNo by remember(defaultRoundText, lottoType) {
-        mutableStateOf(if (lottoType == "로또") defaultRoundText else "")
-    }
+    var roundNo by remember(defaultRoundText) { mutableStateOf(defaultRoundText) }
     var amount by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
 
     AppSectionCard {
-        AppSectionHeader(title = "내 당첨 이력 입력")
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            AppSelectableChip(
-                label = "로또",
-                selected = lottoType == "로또",
-                onClick = { lottoType = "로또" },
-                modifier = Modifier.weight(1f),
-            )
-            AppSelectableChip(
-                label = "연금",
-                selected = lottoType == "연금",
-                onClick = { lottoType = "연금" },
-                modifier = Modifier.weight(1f),
-            )
-        }
+        AppSectionHeader(title = "$lotteryName 당첨 이력 입력")
         OutlinedTextField(value = roundNo, onValueChange = { roundNo = it.digitsOnly() }, modifier = Modifier.fillMaxWidth(), label = { Text("회차") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         OutlinedTextField(value = amount, onValueChange = { amount = it.digitsOnly() }, modifier = Modifier.fillMaxWidth(), label = { Text("당첨 금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
         if (amount.isNotBlank()) {
@@ -1070,8 +1041,8 @@ private fun WinningSection(
         AppSaveButton(
             text = "당첨 이력 저장",
             onClick = {
-                onSave(lottoType, roundNo, amount, memo) {
-                    roundNo = if (lottoType == "로또") defaultRoundText else ""
+                onSave(roundNo, amount, memo) {
+                    roundNo = defaultRoundText
                     amount = ""
                     memo = ""
                 }
@@ -1082,12 +1053,12 @@ private fun WinningSection(
 }
 
 @Composable
-private fun LottoWinningCard(winning: LottoWinningEntity, onDelete: (Long) -> Unit) {
+internal fun LotteryWinningCard(winning: LottoWinningEntity, onDelete: (Long) -> Unit) {
     AppSectionCard {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "${winning.lottoType} · ${winning.roundNo}회차",
+                    text = "${lotteryTypeLabel(winning.lottoType)} · ${winning.roundNo}회차",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
@@ -1104,17 +1075,14 @@ private fun LottoWinningCard(winning: LottoWinningEntity, onDelete: (Long) -> Un
 private fun LottoStatsSection(
     totalPurchase: Long,
     totalWinning: Long,
-    pensionPurchase: Long,
-    pensionWinning: Long,
-    selectedRange: LottoStatsRange,
+    selectedRange: LotteryAccountingStatsRange,
     stats: List<LottoPeriodStatRow>,
     winningTypeStats: List<LottoWinningTypeStat>,
     scorePerformances: List<LottoScorePerformance>,
     controlComparisons: List<LottoControlComparison>,
-    onSelectRange: (LottoStatsRange) -> Unit,
+    onSelectRange: (LotteryAccountingStatsRange) -> Unit,
 ) {
     val net = totalWinning - totalPurchase
-    val pensionNet = pensionWinning - pensionPurchase
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         AppSectionCard {
             AppSectionHeader(title = "로또 구입/당첨 요약")
@@ -1122,14 +1090,6 @@ private fun LottoStatsSection(
                 StatMiniCard(title = "구입", value = formatWon(totalPurchase), modifier = Modifier.weight(1f))
                 StatMiniCard(title = "당첨", value = formatWon(totalWinning), modifier = Modifier.weight(1f))
                 StatMiniCard(title = "손익", value = formatWon(net), modifier = Modifier.weight(1f))
-            }
-        }
-        AppSectionCard {
-            AppSectionHeader(title = "연금 구입/당첨 요약")
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatMiniCard(title = "구입", value = formatWon(pensionPurchase), modifier = Modifier.weight(1f))
-                StatMiniCard(title = "당첨", value = formatWon(pensionWinning), modifier = Modifier.weight(1f))
-                StatMiniCard(title = "손익", value = formatWon(pensionNet), modifier = Modifier.weight(1f))
             }
         }
         AppSectionCard {
@@ -1146,9 +1106,9 @@ private fun LottoStatsSection(
             ControlComparisonSummary(controlComparisons)
         }
         AppSectionCard {
-            AppSectionHeader(title = "로또+연금 ${selectedRange.label} 흐름")
+            AppSectionHeader(title = "로또 ${selectedRange.label} 흐름")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                LottoStatsRange.entries.forEach { range ->
+                LotteryAccountingStatsRange.entries.forEach { range ->
                     AppSelectableChip(
                         label = range.label,
                         selected = selectedRange == range,
@@ -1378,7 +1338,7 @@ private fun SavedTicketAnalysisText(ticket: LottoTicketEntity) {
 }
 
 @Composable
-private fun StatMiniCard(title: String, value: String, modifier: Modifier = Modifier) {
+internal fun StatMiniCard(title: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = title, color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
         Text(text = value, color = LottoTextStrongColor, fontWeight = FontWeight.Bold)
@@ -1386,7 +1346,7 @@ private fun StatMiniCard(title: String, value: String, modifier: Modifier = Modi
 }
 
 @Composable
-private fun AmountBar(label: String, ratio: Float, color: Color) {
+internal fun AmountBar(label: String, ratio: Float, color: Color) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(text = label, color = LottoTextMutedColor, style = MaterialTheme.typography.bodySmall)
         Box(modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.outlineVariant)) {
@@ -1482,17 +1442,22 @@ private fun formatWinningStatusWithMatchCount(rank: Int?, matchCount: Int?): Str
     return matchCount?.let { "${formatWinningStatus(rank, it)} ${it}개" } ?: formatWinningStatus(null, null)
 }
 
-private fun formatWon(amount: Long): String {
+internal fun formatWon(amount: Long): String {
     val sign = if (amount < 0) "-" else ""
     val formatted = NumberFormat.getNumberInstance(Locale.KOREA).format(kotlin.math.abs(amount))
     return "$sign${formatted}원"
 }
 
-private fun formatStatsPeriod(period: String, range: LottoStatsRange): String {
+private fun lotteryTypeLabel(lottoType: String): String = when (lottoType) {
+    "연금" -> "연금복권"
+    else -> lottoType
+}
+
+internal fun formatStatsPeriod(period: String, range: LotteryAccountingStatsRange): String {
     return when (range) {
-        LottoStatsRange.WEEKLY -> formatWeeklyPeriod(period)
-        LottoStatsRange.MONTHLY -> period
-        LottoStatsRange.YEARLY -> "${period}년"
+        LotteryAccountingStatsRange.WEEKLY -> formatWeeklyPeriod(period)
+        LotteryAccountingStatsRange.MONTHLY -> period
+        LotteryAccountingStatsRange.YEARLY -> "${period}년"
     }
 }
 

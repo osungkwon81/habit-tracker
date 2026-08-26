@@ -59,6 +59,7 @@ data class StockOrderAvailability(
     val availableQuantity: Long,
     val availableAmount: Long?,
     val currentPrice: Long,
+    val quoteUnit: Long?,
 )
 
 /** KIS 체결내역과 앱 주문 기록을 비교한 한 번의 동기화 결과다. */
