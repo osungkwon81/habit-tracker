@@ -5,6 +5,7 @@ enum class AppDestination(
     val label: String,
 ) {
     HOME("home", "홈"),
+    MORE("more", "전체"),
     ENTRY("entry", "기록"),
     DIARY("diary", "일기"),
     MEMO("memo", "메모"),
@@ -29,6 +30,6 @@ enum class AppDestination(
         candidateRoute == route || candidateRoute?.startsWith("$route/") == true
 
     companion object {
-        val bottomNavigation = listOf(HOME, CARD, STOCK, MEMO, PLANT, LOTTO)
+        val bottomNavigation = listOf(HOME, ENTRY, STATS, MORE)
     }
 }

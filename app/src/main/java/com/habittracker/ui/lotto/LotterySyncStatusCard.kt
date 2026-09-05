@@ -24,8 +24,8 @@ fun LotterySyncStatusCard(
         AppSectionHeader(
             title = "공식 당첨번호 자동 동기화",
             subtitle = when (product) {
-                LotteryProduct.LOTTO_645 -> "매주 토요일 22:00경 확인합니다."
-                LotteryProduct.PENSION_720 -> "매주 목요일 20:30경 확인합니다."
+                LotteryProduct.LOTTO_645 -> "매주 토요일 21:05경 확인합니다."
+                LotteryProduct.PENSION_720 -> "매주 목요일 19:35경 확인합니다."
             },
         )
         status.message?.let { message -> AppStatusText(message) }

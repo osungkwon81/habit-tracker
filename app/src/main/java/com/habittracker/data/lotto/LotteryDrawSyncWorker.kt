@@ -20,7 +20,14 @@ class LotteryDrawSyncWorker(
         val expectedDrawDate = inputData.getString(expectedDrawDateKey)
             ?.let { value -> runCatching { LocalDate.parse(value) }.getOrNull() }
             ?: LotteryDrawSyncScheduler.expectedDrawDate(product)
-        val repository = (applicationContext as HabitTrackerApplication).appContainer.habitRepository
+        val repository = try {
+            (applicationContext as HabitTrackerApplication).appContainer.awaitRepository()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e(logTag, "복권 동기화 DB 초기화 실패", error)
+            return Result.failure(workDataOf(errorKey to "저장소를 준비하지 못했습니다."))
+        }
 
         return try {
             repository.markLotterySyncRunning(product)
@@ -35,6 +42,16 @@ class LotteryDrawSyncWorker(
                     throw cancelled
                 } catch (error: Exception) {
                     Log.w(logTag, "로또 구매번호 결과 알림 생성 실패: round=${result.latestOfficialRound}", error)
+                }
+            } else {
+                try {
+                    repository.getPurchasedPensionLotteryResult(result.latestOfficialRound)?.let { purchaseResult ->
+                        PensionLotteryTicketResultNotifier.showIfNeeded(applicationContext, purchaseResult)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.w(logTag, "연금복권 구매번호 결과 알림 생성 실패: round=${result.latestOfficialRound}", error)
                 }
             }
             LotteryDrawSyncScheduler.scheduleNext(applicationContext, product)

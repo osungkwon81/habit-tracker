@@ -49,6 +49,14 @@ import com.habittracker.ui.components.AppSpacing
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
+import com.habittracker.ui.components.AppPrimaryButton
 
 private val CalendarRecordDiaryTone = Color(0xFFF8F4EA)
 private val CalendarRecordTone = Color(0xFFEAF6EE)
@@ -70,7 +78,7 @@ fun HomeScreen(
 ) {
     // 화면이 STARTED 이상일 때만 Flow를 수집해 백그라운드의 불필요한 작업을 막는다.
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val monthDays = buildCalendarDays(uiState.currentMonth)
+    val monthDays = remember(uiState.currentMonth) { buildCalendarDays(uiState.currentMonth) }
     val recordedDates = remember(uiState.summaries, uiState.diarySummaries) {
         (uiState.summaries.keys + uiState.diarySummaries.keys).toSet().sortedDescending()
     }
@@ -97,35 +105,16 @@ fun HomeScreen(
                 iconRes = R.drawable.ic_launcher_art_v3,
                 eyebrow = "HABIT · HOME",
                 status = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
+                action = {
+                    AppPrimaryButton(text = "오늘 기록하기", onClick = { onOpenRecord(today) }, modifier = Modifier.fillMaxWidth())
+                },
             )
-        }
-        item {
-            WorkspaceSection(
-                onOpenRecord = { onOpenRecord(selectedDate ?: today) },
-                onOpenDiary = onOpenDiary,
-                onOpenMemo = onOpenMemo,
-                onOpenLotto = onOpenLotto,
-                onOpenPlant = onOpenPlant,
-                onOpenCard = onOpenCard,
-            )
-        }
-        item {
-            AppSectionCard {
-                AppSectionHeader(
-                    title = "달력 상태",
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
-                ) {
-                    CalendarLegendItem(label = "기록+일기", color = CalendarRecordDiaryTone, modifier = Modifier.weight(1f))
-                    CalendarLegendItem(label = "기록", color = CalendarRecordTone, modifier = Modifier.weight(1f))
-                    CalendarLegendItem(label = "일기", color = CalendarDiaryTone, modifier = Modifier.weight(1f))
-                }
-            }
         }
         item {
             CalendarSection(
+                month = uiState.currentMonth,
+                onPrevious = viewModel::goToPreviousMonth,
+                onNext = viewModel::goToNextMonth,
                 days = monthDays,
                 summaries = uiState.summaries,
                 diarySummaries = uiState.diarySummaries,
@@ -139,7 +128,17 @@ fun HomeScreen(
                 selectedDate = selectedDate,
                 summary = selectedDate?.let(uiState.summaries::get),
                 diarySummary = selectedDate?.let(uiState.diarySummaries::get),
-                recordDetails = uiState.selectedRecordDetails,
+                recordDetails = uiState.selectedRecordDetails.takeIf { uiState.selectedDate == selectedDate }.orEmpty(),
+            )
+        }
+        item {
+            WorkspaceSection(
+                onOpenRecord = { onOpenRecord(selectedDate ?: today) },
+                onOpenDiary = onOpenDiary,
+                onOpenMemo = onOpenMemo,
+                onOpenLotto = onOpenLotto,
+                onOpenPlant = onOpenPlant,
+                onOpenCard = onOpenCard,
             )
         }
     }
@@ -159,22 +158,22 @@ private fun WorkspaceSection(
             title = "바로가기",
         )
         val actions = listOf(
-            HomeQuickAction(R.drawable.home_quick_plant, "화분", "물주기 일정", Color(0xFF3C7158), onOpenPlant),
-            HomeQuickAction(R.drawable.home_quick_record, "기록", "습관·일정 한 번에 기록", Color(0xFF0F6B73), onOpenRecord),
-            HomeQuickAction(R.drawable.home_quick_memo, "메모", "빠른 메모·잠금", Color(0xFF6D4C8E), onOpenMemo),
-            HomeQuickAction(R.drawable.home_quick_card, "카드 이력", "월별 사용·결제액", Color(0xFF665F55), onOpenCard),
-            HomeQuickAction(R.drawable.home_quick_lotto, "동행복권", "로또·연금복권", Color(0xFF315C9A), onOpenLotto),
-            HomeQuickAction(R.drawable.home_quick_diary, "일기", "사진과 하루 기록", Color(0xFFB36B2C), onOpenDiary),
+            HomeQuickAction("기록", "선택한 날짜 기록", onOpenRecord),
+            HomeQuickAction("일기", "사진과 하루 기록", onOpenDiary),
+            HomeQuickAction("메모", "빠른 메모·잠금", onOpenMemo),
+            HomeQuickAction("카드 이력", "사용·결제액", onOpenCard),
+            HomeQuickAction("화분", "물주기 일정", onOpenPlant),
+            HomeQuickAction("동행복권", "로또·연금복권", onOpenLotto),
         )
         actions.chunked(2).forEach { rowItems ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
             ) {
-                rowItems.forEachIndexed { index, action ->
+                rowItems.forEach { action ->
                     QuickActionCard(
                         action = action,
-                        modifier = Modifier.weight(if (index == 0) 0.94f else 1.06f),
+                        modifier = Modifier.weight(1f),
                     )
                 }
                 if (rowItems.size == 1) {
@@ -186,10 +185,8 @@ private fun WorkspaceSection(
 }
 
 private data class HomeQuickAction(
-    @DrawableRes val iconRes: Int,
     val title: String,
     val subtitle: String,
-    val accent: Color,
     val onClick: () -> Unit,
 )
 
@@ -202,7 +199,6 @@ private fun QuickActionCard(
         modifier = modifier
             .clip(MaterialTheme.shapes.large)
             .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, action.accent.copy(alpha = 0.22f), MaterialTheme.shapes.large)
             .clickable(onClick = action.onClick)
             .padding(12.dp),
     ) {
@@ -211,19 +207,6 @@ private fun QuickActionCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(action.accent.copy(alpha = 0.12f)),
-            ) {
-                Image(
-                    painter = painterResource(action.iconRes),
-                    contentDescription = action.title,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -233,24 +216,27 @@ private fun QuickActionCard(
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = action.subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text("›", style = MaterialTheme.typography.titleLarge, color = action.accent)
+            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
 private fun CalendarSection(
+    month: YearMonth,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     days: List<LocalDate?>,
     summaries: Map<LocalDate, RecordSummaryRow>,
     diarySummaries: Map<LocalDate, DiarySummaryRow>,
@@ -259,9 +245,12 @@ private fun CalendarSection(
     onSelectDate: (LocalDate) -> Unit,
 ) {
     AppSectionCard {
-        AppSectionHeader(
-            title = "달력",
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = onPrevious, modifier = Modifier.semantics { contentDescription = "이전 달" }) { Text("‹") }
+            Text("${month.year}년 ${month.monthValue}월", style = MaterialTheme.typography.titleLarge)
+            TextButton(onClick = onNext, modifier = Modifier.semantics { contentDescription = "다음 달" }) { Text("›") }
+        }
+        Text("● 기록  ·  ━ 일기", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf("일", "월", "화", "수", "목", "금", "토").forEachIndexed { index, label ->
                 Text(
@@ -277,7 +266,7 @@ private fun CalendarSection(
         days.chunked(7).forEach { week ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 week.forEach { date ->
                     val summary = date?.let(summaries::get)
@@ -305,35 +294,33 @@ private fun RowScope.CalendarDayCell(
     isToday: Boolean,
     onClick: () -> Unit,
 ) {
-    val backgroundColor = when {
-        summary?.isHoliday == true -> CalendarHolidayTone
-        summary != null && hasDiary -> CalendarRecordDiaryTone
-        summary != null -> CalendarRecordTone
-        hasDiary -> CalendarDiaryTone
-        else -> CalendarEmptyTone
-    }
+    val backgroundColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
 
     Box(
         modifier = Modifier
             .weight(1f)
-            .aspectRatio(1f)
-            .clip(RoundedCornerShape(16.dp))
+            .heightIn(min = 56.dp)
+            .clip(MaterialTheme.shapes.small)
             .background(backgroundColor)
             .border(
-                width = if (isSelected || isToday) 2.dp else 1.dp,
+                width = 1.dp,
                 color = when {
                     isSelected -> MaterialTheme.colorScheme.primary
-                    isToday -> CalendarTodayBorder
-                    else -> MaterialTheme.colorScheme.outlineVariant
+                    isToday -> MaterialTheme.colorScheme.primary
+                    else -> Color.Transparent
                 },
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.small,
             )
-            .let { base -> if (date != null) base.clickable(onClick = onClick) else base }
-            .padding(8.dp),
+            .let { base -> if (date != null) base.selectable(selected = isSelected, role = Role.Button, onClick = onClick)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일"
+                    stateDescription = listOfNotNull(if (isToday) "오늘" else null, if (summary?.isHoliday == true) "휴일" else null, if (summary != null) "기록 있음" else null, if (hasDiary) "일기 있음" else null).joinToString(", ")
+                } else base }
+            .padding(vertical = 4.dp),
     ) {
         if (date != null) {
             Column(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -343,6 +330,11 @@ private fun RowScope.CalendarDayCell(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (summary?.isHoliday == true || isWeekend) CalendarWeekendTone else Color.Black,
+                )
+                Text(
+                    text = (if (summary != null) "●" else " ") + (if (hasDiary) "━" else " "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
         }

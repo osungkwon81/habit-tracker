@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -24,7 +25,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.habittracker.ui.components.AppOutlinedTextField as OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -130,13 +131,6 @@ fun LottoScreen(
                 iconRes = R.drawable.home_quick_lotto,
                 eyebrow = "LOTTO · ANALYSIS",
                 status = "생성기 ver. ${LottoNumberGenerator.CURRENT_GENERATION_VERSION}",
-                action = {
-                    AppSecondaryButton(
-                        text = "동행복권 선택으로 돌아가기",
-                        onClick = onBackToLotteryHome,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item {
@@ -425,9 +419,9 @@ private fun LottoSourceButton(
     val contentColor = if (selected && color == ChatGptAccent) Color.White else MaterialTheme.colorScheme.onSurface
     Button(
         onClick = onClick,
-        modifier = modifier.height(52.dp),
+        modifier = modifier.sizeIn(minHeight = 52.dp),
         enabled = enabled,
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = androidx.compose.material3.ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = contentColor,
@@ -451,7 +445,7 @@ private fun GeneratedTicketSection(
 ) {
     val accentColor = if (sourceLabel == "분산형") GeminiAccent else ChatGptAccent
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = LottoCardColor),
         border = androidx.compose.foundation.BorderStroke(
             width = if (isLatest) 2.dp else 1.dp,
@@ -473,9 +467,7 @@ private fun GeneratedTicketSection(
             if (tickets.isEmpty()) {
                 Text(text = "아직 생성된 번호가 없습니다.", color = LottoTextMutedColor)
             } else {
-                Button(onClick = { onSaveBatch(sourceLabel, tickets.take(5)) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(text = "상위 5게임 저장")
-                }
+                AppSaveButton(text = "상위 5게임 저장", onClick = { onSaveBatch(sourceLabel, tickets.take(5)) }, modifier = Modifier.fillMaxWidth())
                 tickets.take(5).forEachIndexed { index, ticket ->
                     Card(colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.08f))) {
                         Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -500,7 +492,7 @@ private fun SaveSection(
     onBonusNumberChange: (String) -> Unit,
     onSave: () -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "당첨 번호 저장", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             OutlinedTextField(value = roundInput, onValueChange = onRoundChange, modifier = Modifier.fillMaxWidth(), label = { Text("회차 번호") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
@@ -532,13 +524,11 @@ private fun SearchSection(
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
 ) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(text = "당첨 번호 조회", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             OutlinedTextField(value = queryRoundInput, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth(), label = { Text("회차 번호 입력, 비우면 최신 목록") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-            Button(onClick = onSearch, modifier = Modifier.fillMaxWidth(), enabled = !isLoading) {
-                Text(if (isLoading) "조회 중..." else "조회")
-            }
+            AppPrimaryButton(text = if (isLoading) "조회 중…" else "조회", onClick = onSearch, modifier = Modifier.fillMaxWidth(), enabled = !isLoading)
         }
     }
 }
@@ -550,7 +540,7 @@ private fun LottoDrawCard(draw: LottoDrawEntity) {
         "MANUAL" -> "직접 입력"
         else -> "기존 데이터"
     }
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = "${draw.roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             LottoNumberRow(numbers = draw.numbers(), bonusNumber = draw.bonusNumber)
@@ -567,7 +557,7 @@ private fun SavedTicketGroupCard(
     val groupedBySource = tickets.groupBy(::normalizeSourceLabel)
     val savedDate = tickets.maxByOrNull(LottoTicketEntity::createdAt)?.createdAt?.toLocalDate()
 
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -746,7 +736,7 @@ private fun RoundSavedTicketDeck(
         else -> "당첨 번호 없음"
     }
 
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = LottoCardColor)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -1357,7 +1347,7 @@ internal fun AmountBar(label: String, ratio: Float, color: Color) {
 
 @Composable
 private fun LottoNumbersCard(numbers: List<Int>, bonusNumber: Int? = null) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background)) {
+    AppSectionCard {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             LottoNumberRow(numbers = numbers, bonusNumber = bonusNumber)
         }

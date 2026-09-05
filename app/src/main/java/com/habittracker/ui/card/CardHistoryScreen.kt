@@ -20,9 +20,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.habittracker.ui.components.AppOutlinedTextField as OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +45,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
@@ -67,6 +70,17 @@ private val CardSeriesColors = listOf(Color(0xFF285A4B), Color(0xFFDA8B45), Colo
 @Composable
 fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
+    var pendingDeletion by remember { mutableStateOf<com.habittracker.data.local.entity.CardHistoryEntity?>(null) }
+    pendingDeletion?.let { history ->
+        com.habittracker.ui.components.AppConfirmDialog(
+            title = "카드 이력을 삭제할까요?",
+            message = "${history.useDate} · ${formatWon(history.amount)}\n삭제한 이력은 복원할 수 없습니다.",
+            confirmText = "삭제",
+            onConfirm = { viewModel.deleteHistory(history.id); pendingDeletion = null },
+            onDismiss = { pendingDeletion = null },
+        )
+    }
     var inputUseDate by remember { mutableStateOf(LocalDate.now().minusDays(1).toString()) }
     val summaryDate = inputUseDate.toLocalDateOrNull() ?: LocalDate.now().minusDays(1)
     val topSummary = remember(uiState.histories, summaryDate) {
@@ -133,7 +147,7 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             CardHistoryListCard(
                 histories = uiState.recentHistories,
                 selectedMonthLabel = "${uiState.selectedMonth.year}년 ${uiState.selectedMonth.monthValue}월",
-                onDelete = viewModel::deleteHistory,
+                onDelete = { id -> pendingDeletion = uiState.recentHistories.firstOrNull { it.id == id } },
             )
         }
         item {
@@ -583,27 +597,100 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
             Text(text = "선택한 결제월의 카드 이력이 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             return@AppSectionCard
         }
-        histories.forEach { history ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(text = history.useDate.toString(), fontWeight = FontWeight.Bold)
-                    Text(text = formatWon(history.amount), color = MaterialTheme.colorScheme.onSurface)
-                    history.memo?.takeIf(String::isNotBlank)?.let {
-                        Text(text = it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(text = "일", modifier = Modifier.width(44.dp), style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        text = "사용 금액",
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 12.dp),
+                        textAlign = TextAlign.Start,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Text(text = "관리", modifier = Modifier.width(52.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium)
+                }
+                histories.forEachIndexed { index, history ->
+                    val dailyAmount = histories.getOrNull(index + 1)?.let { nextHistory ->
+                        history.amount - nextHistory.amount
+                    }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${history.useDate.dayOfMonth}일",
+                                modifier = Modifier.width(44.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = formatWon(history.amount),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                dailyAmount?.let { amount ->
+                                    Text(
+                                        text = "(${formatNumber(amount)})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            TextButton(
+                                onClick = { onDelete(history.id) },
+                                modifier = Modifier.width(52.dp),
+                            ) {
+                                Text(text = "삭제")
+                            }
+                        }
+                        history.memo?.takeIf(String::isNotBlank)?.let { memo ->
+                            Text(
+                                text = memo,
+                                modifier = Modifier.padding(start = 56.dp, end = 56.dp, bottom = 10.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (index < histories.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
                     }
                 }
-                AppSecondaryButton(text = "삭제", onClick = { onDelete(history.id) })
             }
         }
     }
 }
 
-private fun formatWon(value: Long): String =
-    NumberFormat.getNumberInstance(Locale.KOREA).format(value) + "원"
+private fun formatNumber(value: Long): String =
+    NumberFormat.getNumberInstance(Locale.KOREA).format(value)
+
+private fun formatWon(value: Long): String = "${formatNumber(value)}원"
 
 private fun buildRegistrationDateSummary(histories: List<CardHistoryEntity>, registrationDate: LocalDate): CardTopSummary {
     val latestByDate = histories

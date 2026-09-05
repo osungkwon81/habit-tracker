@@ -6,10 +6,13 @@ import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.repository.HabitRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
@@ -40,15 +43,16 @@ class PensionLotteryGeneratorViewModel(
         PensionLotteryGeneratorOperationState(message, generating, saving, regenerating, generatingBackup)
     }
 
+    private val analysisState = draws.map { it to buildGeneratorAnalysis(it) }.flowOn(Dispatchers.Default)
+    private val historyState = storedGeneratedNumbers.map { buildGenerationHistory(it) to buildBackupNumbers(it) }
+        .flowOn(Dispatchers.Default)
+
     val uiState: StateFlow<PensionLotteryGeneratorUiState> = combine(
-        draws,
-        storedGeneratedNumbers,
+        analysisState,
+        historyState,
         pendingGeneratedNumbers,
         operationState,
-    ) { savedDraws, storedNumbers, pendingNumbers, operation ->
-        val analysis = buildGeneratorAnalysis(savedDraws)
-        val generationHistory = buildGenerationHistory(storedNumbers)
-        val backupNumbers = buildBackupNumbers(storedNumbers)
+    ) { (savedDraws, analysis), (generationHistory, backupNumbers), pendingNumbers, operation ->
         val generatedNumbers = pendingNumbers.ifEmpty { generationHistory.firstOrNull()?.numbers.orEmpty() }
         val hasGenerationConditionChanged = analysis != null &&
             pendingNumbers.isNotEmpty() &&
@@ -83,14 +87,18 @@ class PensionLotteryGeneratorViewModel(
         initialValue = PensionLotteryGeneratorUiState(),
     )
 
+    fun clearStatusMessage() {
+        statusMessage.value = null
+    }
+
     fun generate() {
         if (isGenerating.value || isSaving.value) return
         val savedDraws = draws.value
         val excludedWinningNumbers = storedGeneratedNumbers.value
             .map(PensionLotteryGeneratedNumberEntity::winningNumber)
             .toSet()
+        isGenerating.value = true
         viewModelScope.launch(Dispatchers.Default) {
-            isGenerating.value = true
             statusMessage.value = null
             runCatching {
                 val analysis = requireNotNull(buildGeneratorAnalysis(savedDraws)) {
@@ -123,8 +131,8 @@ class PensionLotteryGeneratorViewModel(
             storedGeneratedNumbers.value.map(PensionLotteryGeneratedNumberEntity::winningNumber) +
                 currentNumbers.map(PensionLotteryGeneratedNumber::winningNumber)
             ).toSet()
+        isGenerating.value = true
         viewModelScope.launch(Dispatchers.Default) {
-            isGenerating.value = true
             regeneratingType.value = type
             statusMessage.value = null
             runCatching {
@@ -167,7 +175,7 @@ class PensionLotteryGeneratorViewModel(
             isSaving.value = true
             statusMessage.value = null
             runCatching {
-                val analysis = requireNotNull(buildGeneratorAnalysis(draws.value)) {
+                val analysis = requireNotNull(withContext(Dispatchers.Default) { buildGeneratorAnalysis(draws.value) }) {
                     "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
                 }
                 require(matchesCurrentGenerationConditions(numbers, analysis)) {
@@ -551,7 +559,7 @@ private fun buildGeneratorAnalysis(
     if (draws.size <= GENERATOR_ANALYSIS_WEEKS) return null
 
     val historicalDigitScores = draws.mapIndexedNotNull { index, draw ->
-        val previousDraws = draws.drop(index + 1).take(GENERATOR_ANALYSIS_WEEKS)
+        val previousDraws = draws.subList(index + 1, minOf(draws.size, index + 1 + GENERATOR_ANALYSIS_WEEKS))
         if (previousDraws.size < GENERATOR_ANALYSIS_WEEKS) {
             null
         } else {

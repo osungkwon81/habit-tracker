@@ -1,6 +1,7 @@
 package com.habittracker.ui.entry
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.ValueType
 import com.habittracker.data.local.entity.TaskItemMasterEntity
@@ -15,31 +16,36 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DailyEntryViewModel(
     private val repository: HabitRepository,
+    private val savedState: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
-    private val selectedDate = MutableStateFlow(LocalDate.now())
+    private val selectedDate = MutableStateFlow(savedState.get<String>("recordDate")?.let(LocalDate::parse) ?: LocalDate.now())
     private val statusMessage = MutableStateFlow<String?>(null)
+    private val isSaving = MutableStateFlow(false)
 
     // 선택 날짜가 바뀔 때 기존 수집을 취소하고 해당 날짜의 기록과 활성 항목을 다시 조합한다.
-    val uiState: StateFlow<DailyEntryUiState> = selectedDate
+    private val recordState = selectedDate
         .flatMapLatest { date ->
-            combine(repository.observeActiveTaskItems(), statusMessage) { taskItems, message ->
+            combine(repository.observeActiveTaskItems(), repository.observeRecordDetails(date)) { taskItems, details ->
                 val existingRecord = repository.getDailyRecord(date)
-                val details = repository.getRecordDetails(date)
                 DailyEntryUiState(
                     selectedDate = date,
                     hasExistingRecord = existingRecord != null,
                     memo = existingRecord?.memo.orEmpty(),
                     isHoliday = existingRecord?.isHoliday == true,
                     taskItems = mergeTaskItems(taskItems, details),
-                    statusMessage = message,
+                    isLoaded = true,
                 )
             }
         }
+    val uiState: StateFlow<DailyEntryUiState> = combine(recordState, statusMessage, isSaving) { record, message, saving ->
+        record.copy(statusMessage = message, isSaving = saving)
+    }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -52,10 +58,15 @@ class DailyEntryViewModel(
         }
     }
 
+    fun initializeRecord(rawDate: String) {
+        if (!savedState.contains("recordDate")) loadRecord(rawDate)
+    }
+
     fun loadRecord(rawDate: String) {
         runCatching { LocalDate.parse(rawDate) }
             .onSuccess { parsedDate ->
                 selectedDate.value = parsedDate
+                savedState["recordDate"] = parsedDate.toString()
                 statusMessage.value = null
             }
             .onFailure {
@@ -64,8 +75,14 @@ class DailyEntryViewModel(
     }
 
     fun saveDailyRecord(recordDate: LocalDate, memo: String, isHoliday: Boolean, items: List<TaskItemInputState>) {
+        if (isSaving.value) return
+        isSaving.value = true
         viewModelScope.launch {
             runCatching {
+                items.forEach { item ->
+                    require(item.numberValue.isBlank() || item.numberValue.toDoubleOrNull() != null) { "${item.name}: 숫자를 확인해 주세요." }
+                    require(item.durationMinutes.isBlank() || item.durationMinutes.toIntOrNull() != null) { "${item.name}: 시간은 분 단위 정수로 입력해 주세요." }
+                }
                 repository.saveDailyRecord(
                     recordDate = recordDate,
                     memo = memo.trim().takeIf(String::isNotEmpty),
@@ -90,8 +107,10 @@ class DailyEntryViewModel(
                     "$recordDate 기록이 저장되었습니다."
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 statusMessage.value = error.message ?: "저장에 실패했습니다."
             }
+            isSaving.value = false
         }
     }
 
@@ -110,7 +129,9 @@ class DailyEntryViewModel(
                 category = taskItem.category,
                 valueType = taskItem.valueType,
                 unit = taskItem.unit,
-                numberValue = detail?.numberValue?.toInt()?.toString().orEmpty(),
+                numberValue = detail?.numberValue?.let { value ->
+                    if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
+                }.orEmpty(),
                 booleanValue = detail?.booleanValue == true,
                 textValue = detail?.textValue.orEmpty(),
                 durationMinutes = detail?.durationMinutes?.toString().orEmpty(),
@@ -130,6 +151,8 @@ data class DailyEntryUiState(
     val isHoliday: Boolean = false,
     val taskItems: List<TaskItemInputState> = emptyList(),
     val statusMessage: String? = null,
+    val isLoaded: Boolean = false,
+    val isSaving: Boolean = false,
 )
 
 data class TaskItemInputState(

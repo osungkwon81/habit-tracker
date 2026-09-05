@@ -49,6 +49,7 @@ fun PensionLotteryGeneratorScreen(
     onBack: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     var deleteTarget by remember { mutableStateOf<PensionLotteryGenerationHistory?>(null) }
     var backupDeleteTarget by remember { mutableStateOf<PensionLotteryBackupNumber?>(null) }
 
@@ -86,13 +87,6 @@ fun PensionLotteryGeneratorScreen(
                 icon = "🎰",
                 eyebrow = "PENSION 720+ · GENERATOR",
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
-                action = {
-                    AppSecondaryButton(
-                        text = "연금720+ 분석으로 돌아가기",
-                        onClick = onBack,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item {

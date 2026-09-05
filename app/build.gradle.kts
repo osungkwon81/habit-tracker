@@ -19,7 +19,8 @@ android {
         applicationId = "com.habittracker"
         minSdk = 28
         targetSdk = 35
-        versionCode = 13
+        // Android Auto Backup이 더 새로운 DB 스키마를 구버전 APK에 복원하지 않도록 DB 버전과 함께 증가시킨다.
+        versionCode = 32
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

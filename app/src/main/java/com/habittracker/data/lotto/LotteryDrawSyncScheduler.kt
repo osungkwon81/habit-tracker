@@ -86,7 +86,7 @@ object LotteryDrawSyncScheduler {
             .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(context.applicationContext)
-            .enqueueUniqueWork(uniqueName, ExistingWorkPolicy.KEEP, request)
+            .enqueueUniqueWork(uniqueName, ExistingWorkPolicy.REPLACE, request)
     }
 
     private fun nextScheduledAt(product: LotteryProduct, now: ZonedDateTime): ZonedDateTime {

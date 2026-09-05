@@ -69,15 +69,14 @@ fun MonthlyStatsScreen(
                         onOpenEntry?.let {
                             AppSecondaryButton(text = "일일기록", onClick = it, modifier = Modifier.weight(1f))
                         }
-                        AppSecondaryButton(text = "통계", onClick = {}, modifier = Modifier.weight(1f))
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
                     ) {
-                        AppSecondaryButton(text = "월별", onClick = { viewModel.selectPeriodMode(StatsPeriodMode.MONTH) }, modifier = Modifier.weight(1f))
-                        AppSecondaryButton(text = "연도별", onClick = { viewModel.selectPeriodMode(StatsPeriodMode.YEAR) }, modifier = Modifier.weight(1f))
+                        com.habittracker.ui.components.AppSelectableChip(label = "월별", selected = uiState.periodMode == StatsPeriodMode.MONTH, onClick = { viewModel.selectPeriodMode(StatsPeriodMode.MONTH) }, modifier = Modifier.weight(1f))
+                        com.habittracker.ui.components.AppSelectableChip(label = "연도별", selected = uiState.periodMode == StatsPeriodMode.YEAR, onClick = { viewModel.selectPeriodMode(StatsPeriodMode.YEAR) }, modifier = Modifier.weight(1f))
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),

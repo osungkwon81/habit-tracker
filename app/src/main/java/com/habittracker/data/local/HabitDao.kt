@@ -40,6 +40,7 @@ import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -174,6 +175,17 @@ interface HabitDao {
         """,
     )
     fun observeLottoPurchases(lottoType: String, limit: Int): Flow<List<LottoPurchaseEntity>>
+
+    @Query(
+        """
+        SELECT * FROM lotto_purchase
+        WHERE lotto_type = '연금'
+          AND round_no = :roundNo
+          AND pension_number IS NOT NULL
+        ORDER BY purchase_date DESC, id DESC
+        """,
+    )
+    suspend fun getPensionLotteryPurchasesByRound(roundNo: Int): List<LottoPurchaseEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLottoPurchase(purchase: LottoPurchaseEntity): Long
@@ -952,7 +964,9 @@ interface HabitDao {
         ORDER BY tim.sort_order ASC, tim.name ASC
         """,
     )
-    suspend fun getRecordDetails(recordDate: LocalDate): List<RecordDetailRow>
+    fun observeRecordDetails(recordDate: LocalDate): Flow<List<RecordDetailRow>>
+
+    suspend fun getRecordDetails(recordDate: LocalDate): List<RecordDetailRow> = observeRecordDetails(recordDate).first()
 
     @Transaction
     @Query(

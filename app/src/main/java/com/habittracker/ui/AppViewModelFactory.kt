@@ -2,6 +2,7 @@
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.habittracker.HabitTrackerApplication
 import com.habittracker.ui.admin.AdminViewModel
@@ -31,7 +32,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         return when {
             modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(repository) as T
-            modelClass.isAssignableFrom(DailyEntryViewModel::class.java) -> DailyEntryViewModel(repository) as T
+            modelClass.isAssignableFrom(DailyEntryViewModel::class.java) -> DailyEntryViewModel(repository, extras.createSavedStateHandle()) as T
             modelClass.isAssignableFrom(MonthlyStatsViewModel::class.java) -> MonthlyStatsViewModel(repository) as T
             modelClass.isAssignableFrom(AdminViewModel::class.java) -> AdminViewModel(repository) as T
             modelClass.isAssignableFrom(DiaryViewModel::class.java) -> DiaryViewModel(repository) as T

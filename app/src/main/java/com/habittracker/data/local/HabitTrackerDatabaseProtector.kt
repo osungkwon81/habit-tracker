@@ -46,7 +46,6 @@ class HabitTrackerDatabaseProtector(
             val database = HabitTrackerDatabase.builder(appContext).build()
             try {
                 database.openHelper.writableDatabase
-                attach(database)
                 requestBackup(database, immediate = true)
                 return database
             } catch (error: Throwable) {

@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -25,30 +26,26 @@ class HomeViewModel(
     private val currentMonth = MutableStateFlow(YearMonth.now())
     private val selectedDate = MutableStateFlow<LocalDate?>(null)
 
-    /*
-     * 사용자가 월이나 날짜를 바꾸면 flatMapLatest가 이전 조회를 취소하고 새 기간의 Flow로 전환한다.
-     * 여러 원천 데이터를 HomeUiState 하나로 합쳐 화면에는 읽기 전용 StateFlow만 노출한다.
-     */
-    val uiState: StateFlow<HomeUiState> = combine(currentMonth, selectedDate) { month, date -> month to date }
-        .flatMapLatest { (month, date) ->
-            val selectedDetailsFlow = flow {
-                emit(if (date != null) repository.getRecordDetails(date) else emptyList())
-            }
-
+    private val monthlyState = currentMonth.flatMapLatest { month ->
             combine(
                 repository.observeMonthlySummaries(month.atDay(1), month.atEndOfMonth()),
                 repository.observeMonthlyDiarySummaries(month.atDay(1), month.atEndOfMonth()),
-                selectedDetailsFlow,
-            ) { summaries, diaries, details ->
+            ) { summaries, diaries ->
                 HomeUiState(
                     currentMonth = month,
-                    selectedDate = date,
                     summaries = summaries.associateBy(RecordSummaryRow::recordDate),
                     diarySummaries = diaries.associateBy(DiarySummaryRow::diaryDate),
-                    selectedRecordDetails = details,
                 )
             }
         }
+    private val selectedDetails = selectedDate.flatMapLatest<LocalDate?, Pair<LocalDate?, List<RecordDetailRow>>> { date ->
+        if (date == null) flow { emit(null to emptyList<RecordDetailRow>()) }
+        else repository.observeRecordDetails(date).map { date to it }
+    }
+    val uiState: StateFlow<HomeUiState> = combine(monthlyState, selectedDetails) { month, (date, details) ->
+        val visibleDate = date?.takeIf { YearMonth.from(it) == month.currentMonth }
+        month.copy(selectedDate = visibleDate, selectedRecordDetails = if (visibleDate != null) details else emptyList())
+    }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),

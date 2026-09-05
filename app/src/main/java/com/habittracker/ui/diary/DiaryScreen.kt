@@ -118,7 +118,7 @@ private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
             }
         }
         if (uiState.searchResults.isEmpty()) {
-            item { AppEmptyCard("저장된 일기가 없습니다.") }
+            item { AppEmptyCard(if (uiState.searchQuery.isBlank()) "아직 작성한 일기가 없습니다. 새 일기로 하루를 남겨 보세요." else "검색 결과가 없습니다. 다른 단어로 검색해 보세요.") }
         } else {
             itemsIndexed(uiState.searchResults, key = { _, result -> result.diaryDate }) { index, result ->
                 if (index == uiState.searchResults.lastIndex && uiState.canLoadMore) {

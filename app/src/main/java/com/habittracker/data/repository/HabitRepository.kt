@@ -57,6 +57,8 @@ import com.habittracker.data.lotto.LotteryProduct
 import com.habittracker.data.lotto.LotterySyncStatus
 import com.habittracker.data.lotto.OfficialLottoDraw
 import com.habittracker.data.lotto.OfficialPensionLotteryDraw
+import com.habittracker.data.lotto.PensionLotteryPurchasedNumberResult
+import com.habittracker.data.lotto.calculatePensionLotteryPrizeHits
 import com.habittracker.data.security.AndroidKeystoreStringCipher
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
@@ -181,6 +183,7 @@ class HabitRepository(
     private var kisBalanceCache: KisBalanceCacheEntry? = null
     private val kisConfigCipher = AndroidKeystoreStringCipher()
     private val kisDomesticStockClient = KisDomesticStockClient()
+    private val dailyRecords = DailyRecordStore(database, habitDao)
     private val lotteryDrawClient = DhlotteryDrawClient()
     private val lotteryDrawSyncStore = LotteryDrawSyncStore(context)
     private val regularMarketOpenTime = LocalTime.of(9, 0)
@@ -395,6 +398,26 @@ class HabitRepository(
         )
     }
 
+    suspend fun getPurchasedPensionLotteryResult(roundNo: Int): PensionLotteryPurchasedNumberResult? {
+        require(roundNo > 0) { "당첨 확인 회차가 올바르지 않습니다." }
+        val draw = habitDao.getPensionLotteryDraw(roundNo) ?: return null
+        val purchases = habitDao.getPensionLotteryPurchasesByRound(roundNo)
+        if (purchases.isEmpty()) return null
+
+        val prizeHitsByPurchase = purchases.map { purchase ->
+            calculatePensionLotteryPrizeHits(
+                purchaseNumber = purchase.pensionNumber,
+                winningNumber = draw.winningNumber,
+                bonusNumber = draw.bonusNumber,
+            )
+        }
+        return PensionLotteryPurchasedNumberResult(
+            roundNo = roundNo,
+            winningSetCount = prizeHitsByPurchase.count { hits -> hits.isNotEmpty() },
+            winningRanks = prizeHitsByPurchase.flatten().map { hit -> hit.rank }.toSet(),
+        )
+    }
+
     fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>> =
         habitDao.observePensionLotteryGeneratedNumbers()
 
@@ -497,19 +520,19 @@ class HabitRepository(
     fun observeActiveTaskItems(): Flow<List<TaskItemMasterEntity>> = habitDao.observeActiveTaskItems()
 
     fun observeMonthlySummaries(startDate: LocalDate, endDate: LocalDate): Flow<List<RecordSummaryRow>> =
-        habitDao.observeMonthlySummaries(startDate, endDate)
+        dailyRecords.observeSummaries(startDate, endDate)
 
     fun observeMonthlyDiarySummaries(startDate: LocalDate, endDate: LocalDate): Flow<List<DiarySummaryRow>> =
         habitDao.observeMonthlyDiarySummaries(startDate, endDate)
 
     fun observeMonthlyStats(startDate: LocalDate, endDate: LocalDate): Flow<List<MonthlyStatRow>> =
-        habitDao.observeMonthlyStats(startDate, endDate)
+        dailyRecords.observeMonthlyStats(startDate, endDate)
 
     fun observeDailyTaskStats(startDate: LocalDate, endDate: LocalDate): Flow<List<DailyTaskStatRow>> =
-        habitDao.observeDailyTaskStats(startDate, endDate)
+        dailyRecords.observeDailyTaskStats(startDate, endDate)
 
     suspend fun getDailyRecord(recordDate: LocalDate): DailyRecordEntity? =
-        habitDao.getDailyRecordByDate(recordDate)
+        dailyRecords.getRecord(recordDate)
 
     suspend fun getDiary(recordDate: LocalDate): DailyDiaryEntity? =
         habitDao.getDiaryByDate(recordDate)
@@ -2383,7 +2406,10 @@ class HabitRepository(
         habitDao.searchDiaries(query.trim(), limit)
 
     suspend fun getRecordDetails(recordDate: LocalDate): List<RecordDetailRow> =
-        habitDao.getRecordDetails(recordDate)
+        dailyRecords.getDetails(recordDate)
+
+    fun observeRecordDetails(recordDate: LocalDate): Flow<List<RecordDetailRow>> =
+        dailyRecords.observeDetails(recordDate)
 
     suspend fun getLatestLottoRoundNo(): Int? =
         habitDao.getLatestLottoRoundNo()
@@ -3328,41 +3354,7 @@ class HabitRepository(
 
     suspend fun saveDailyRecord(recordDate: LocalDate, memo: String?, isHoliday: Boolean, itemInputs: List<DailyRecordItemInput>) {
         persistChange {
-            database.withTransaction {
-                val existingRecord = habitDao.getDailyRecordByDate(recordDate)
-                val now = LocalDateTime.now()
-                val recordId = if (existingRecord == null) {
-                    habitDao.insertDailyRecord(
-                        DailyRecordEntity(
-                            recordDate = recordDate,
-                            memo = memo,
-                            isHoliday = isHoliday,
-                            createdAt = now,
-                            updatedAt = now,
-                        ),
-                    )
-                } else {
-                    habitDao.updateDailyRecord(existingRecord.copy(memo = memo, isHoliday = isHoliday, updatedAt = now))
-                    existingRecord.id
-                }
-                val safeRecordId = if (recordId > 0L) recordId else habitDao.getDailyRecordByDate(recordDate)?.id ?: throw IllegalStateException("Daily record was not persisted for $recordDate")
-                val sanitizedItems = itemInputs.filter { input -> input.hasMeaningfulValue() }.map { input ->
-                    DailyRecordItemEntity(
-                        dailyRecordId = safeRecordId,
-                        taskItemMasterId = input.taskItemMasterId,
-                        numberValue = input.numberValue,
-                        booleanValue = input.booleanValue,
-                        textValue = input.textValue?.trim()?.takeIf(String::isNotEmpty),
-                        durationMinutes = input.durationMinutes,
-                        checked = input.checked,
-                        note = input.note?.trim()?.takeIf(String::isNotEmpty),
-                    )
-                }
-                habitDao.deleteItemsByRecordId(safeRecordId)
-                if (sanitizedItems.isNotEmpty()) {
-                    habitDao.upsertDailyRecordItems(sanitizedItems)
-                }
-            }
+            dailyRecords.save(recordDate, memo, isHoliday, itemInputs)
         }
     }
 

@@ -107,6 +107,14 @@ class StockAutomationService : Service() {
     }
 
     private suspend fun monitorStocks() {
+        try {
+            (application as HabitTrackerApplication).appContainer.awaitRepository()
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            android.util.Log.e("StockAutomation", "Database initialization failed before monitoring", error)
+            stopSelf()
+            return
+        }
         while (serviceScope.isActive) {
             val safety = runCatching { repository.getStockSafetyConfig() }.getOrElse {
                 showErrorAlert(

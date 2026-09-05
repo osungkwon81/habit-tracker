@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import java.time.LocalDate
 import java.time.Year
 import java.time.YearMonth
@@ -47,6 +49,7 @@ class MonthlyStatsViewModel(
                         colorHex = repository.getTaskColorHex(stat.taskItemMasterId, stat.taskName),
                     )
                 }
+                val summariesById = summaries.associateBy { it.taskItemMasterId }
                 val chartGroups = dailyTaskStats
                     .groupBy { it.taskItemMasterId to it.taskName }
                     .mapNotNull { (_, points) ->
@@ -57,9 +60,9 @@ class MonthlyStatsViewModel(
                             valueType = first.valueType,
                             unit = first.unit,
                             colorHex = repository.getTaskColorHex(first.taskItemMasterId, first.taskName),
-                            totalNumber = summaries.firstOrNull { it.taskItemMasterId == first.taskItemMasterId }?.totalNumber,
-                            totalDuration = summaries.firstOrNull { it.taskItemMasterId == first.taskItemMasterId }?.totalDuration,
-                            completedCount = summaries.firstOrNull { it.taskItemMasterId == first.taskItemMasterId }?.completedCount ?: 0,
+                            totalNumber = summariesById[first.taskItemMasterId]?.totalNumber,
+                            totalDuration = summariesById[first.taskItemMasterId]?.totalDuration,
+                            completedCount = summariesById[first.taskItemMasterId]?.completedCount ?: 0,
                             periodMode = range.mode,
                             points = buildChartPoints(points, range.mode, first.valueType),
                         )
@@ -74,6 +77,7 @@ class MonthlyStatsViewModel(
                 )
             }
         }
+        .flowOn(Dispatchers.Default)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),

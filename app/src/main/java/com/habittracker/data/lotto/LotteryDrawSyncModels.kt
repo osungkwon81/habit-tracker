@@ -14,8 +14,8 @@ enum class LotteryProduct(
     val drawDay: DayOfWeek,
     val scheduledSyncTime: LocalTime,
 ) {
-    LOTTO_645("로또 6/45", DayOfWeek.SATURDAY, LocalTime.of(22, 0)),
-    PENSION_720("연금복권 720+", DayOfWeek.THURSDAY, LocalTime.of(20, 30)),
+    LOTTO_645("로또 6/45", DayOfWeek.SATURDAY, LocalTime.of(21, 5)),
+    PENSION_720("연금복권 720+", DayOfWeek.THURSDAY, LocalTime.of(19, 35)),
 }
 
 enum class LotterySyncState {
@@ -73,6 +73,65 @@ data class LottoPurchasedTicketResult(
     val winningRankCounts: Map<Int, Int>,
     val maximumMatchCount: Int,
 )
+
+data class PensionLotteryPurchasedNumberResult(
+    val roundNo: Int,
+    val winningSetCount: Int,
+    val winningRanks: Set<PensionLotteryPrizeRank>,
+)
+
+enum class PensionLotteryPrizeRank(val label: String) {
+    FIRST("1등"),
+    SECOND("2등"),
+    THIRD("3등"),
+    FOURTH("4등"),
+    FIFTH("5등"),
+    SIXTH("6등"),
+    SEVENTH("7등"),
+    BONUS("보너스"),
+}
+
+data class PensionLotteryPrizeHit(
+    val rank: PensionLotteryPrizeRank,
+    val ticketCount: Int,
+)
+
+fun calculatePensionLotteryPrizeHits(
+    purchaseNumber: String?,
+    winningNumber: String?,
+    bonusNumber: String?,
+): List<PensionLotteryPrizeHit> {
+    if (purchaseNumber == null || winningNumber == null) return emptyList()
+
+    if (purchaseNumber == winningNumber) {
+        return listOf(
+            PensionLotteryPrizeHit(PensionLotteryPrizeRank.FIRST, ticketCount = 1),
+            PensionLotteryPrizeHit(PensionLotteryPrizeRank.SECOND, ticketCount = 4),
+        )
+    }
+    if (purchaseNumber == bonusNumber) {
+        return listOf(PensionLotteryPrizeHit(PensionLotteryPrizeRank.BONUS, ticketCount = 5))
+    }
+
+    val rank = when (pensionLotteryMatchingSuffixLength(purchaseNumber, winningNumber)) {
+        5 -> PensionLotteryPrizeRank.THIRD
+        4 -> PensionLotteryPrizeRank.FOURTH
+        3 -> PensionLotteryPrizeRank.FIFTH
+        2 -> PensionLotteryPrizeRank.SIXTH
+        1 -> PensionLotteryPrizeRank.SEVENTH
+        else -> null
+    }
+    return rank?.let { listOf(PensionLotteryPrizeHit(it, ticketCount = 5)) }.orEmpty()
+}
+
+fun pensionLotteryMatchingSuffixLength(purchaseNumber: String?, winningNumber: String?): Int {
+    if (purchaseNumber == null || winningNumber == null) return 0
+    return purchaseNumber
+        .reversed()
+        .zip(winningNumber.reversed())
+        .takeWhile { (purchaseDigit, winningDigit) -> purchaseDigit == winningDigit }
+        .size
+}
 
 fun Throwable.toLotterySyncUserMessage(): String = when (this) {
     is SocketTimeoutException -> "동행복권 서버 응답 시간이 초과되었습니다."

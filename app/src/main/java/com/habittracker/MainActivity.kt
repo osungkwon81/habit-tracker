@@ -3,6 +3,29 @@
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import com.habittracker.ui.components.AppNavigationGuard
+import com.habittracker.ui.components.LocalAppNavigationGuard
+import com.habittracker.ui.components.LocalAppSnackbar
+import com.habittracker.ui.components.AppConfirmDialog
+import com.habittracker.ui.components.AppScreen
+import com.habittracker.ui.components.AppHeroCard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -83,18 +107,71 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun HabitTrackerApp() {
+    val container = (LocalContext.current.applicationContext as HabitTrackerApplication).appContainer
+    val readiness by container.readiness.collectAsStateWithLifecycle()
+    if (readiness?.isSuccess != true) {
+        AppScreen {
+            item { AppHeroCard(title = "Habit Tracker") }
+            item {
+                if (readiness == null) com.habittracker.ui.components.AppLoadingCard("기록을 불러오고 있습니다.")
+                else Text("저장소를 열지 못했습니다. 앱을 다시 열어 주세요.", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        return
+    }
     val navController = rememberNavController()
     // remember는 재구성 때마다 동일한 Factory를 새로 만들지 않도록 값을 보관한다.
     val viewModelFactory = remember { AppViewModelFactory() }
+    val snackbar = remember { SnackbarHostState() }
+    val guard = remember { AppNavigationGuard() }
+    val activity = LocalContext.current as? ComponentActivity
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val route = backStackEntry?.destination?.route
+    val isTopLevel = AppDestination.bottomNavigation.any { it.route == route }
+    BackHandler(enabled = guard.hasUnsavedChanges) {
+        guard.navigate { if (!navController.popBackStack()) activity?.finish() }
+    }
 
+    CompositionLocalProvider(LocalAppSnackbar provides snackbar, LocalAppNavigationGuard provides guard) {
+    guard.pendingAction?.let { action ->
+        AppConfirmDialog(
+            title = "작성 중인 기록을 나갈까요?",
+            message = "저장하지 않은 변경 내용은 사라집니다.",
+            confirmText = "변경 버리기",
+            onConfirm = {
+                guard.pendingAction = null
+                guard.hasUnsavedChanges = false
+                action()
+            },
+            onDismiss = { guard.pendingAction = null },
+        )
+    }
     Scaffold(
         bottomBar = { AppBottomNavigation(navController) },
+        snackbarHost = { SnackbarHost(snackbar) },
+        topBar = {
+            if (!isTopLevel && route != null) {
+                TextButton(onClick = { guard.navigate { navController.popBackStack() } }) { Text("‹ 뒤로") }
+            }
+        },
     ) { innerPadding ->
         NavHost(
             navController = navController,
             startDestination = AppDestination.HOME.route,
-            modifier = Modifier.padding(innerPadding),
+            modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
         ) {
+            composable(AppDestination.MORE.route) {
+                AppScreen {
+                    item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
+                    items(listOf(AppDestination.DIARY, AppDestination.MEMO, AppDestination.CARD, AppDestination.STOCK, AppDestination.PLANT, AppDestination.LOTTO, AppDestination.ADMIN)) { destination ->
+                        ListItem(
+                            headlineContent = { Text(destination.label) },
+                            trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                            modifier = Modifier.clickable { navController.navigate(destination.route) { launchSingleTop = true } },
+                        )
+                    }
+                }
+            }
             composable(AppDestination.HOME.route) {
                 val viewModel: HomeViewModel = viewModel(factory = viewModelFactory)
                 HomeScreen(
@@ -219,67 +296,60 @@ private fun HabitTrackerApp() {
         }
     }
 }
+}
 
 @Composable
 private fun AppBottomNavigation(navController: NavHostController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
+    val guard = LocalAppNavigationGuard.current
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
             AppDestination.bottomNavigation.forEach { destination ->
-                val selected = currentDestination?.hierarchy?.any { current ->
+                val selected = if (destination == AppDestination.MORE) {
+                    currentDestination != null && AppDestination.bottomNavigation.filterNot { it == AppDestination.MORE }.none { it.matches(currentDestination.route) }
+                } else currentDestination?.hierarchy?.any { current ->
                     destination.matches(current.route)
                 } == true
-                FloatingNavItem(
-                    label = destination.label,
+                NavigationBarItem(
+                    label = { Text(destination.label, maxLines = 1) },
+                    icon = { NavigationIcon(destination) },
                     selected = selected,
                     onClick = {
+                        if (destination.route != currentDestination?.route) guard.navigate {
                         val popped = navController.popBackStack(destination.route, false)
                         if (!popped) {
                             navController.navigate(destination.route) {
                                 launchSingleTop = true
                             }
                         }
+                        }
                     },
                 )
             }
-        }
     }
 }
 
 @Composable
-private fun FloatingNavItem(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(0.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            textAlign = TextAlign.Center,
-        )
+private fun NavigationIcon(destination: AppDestination) {
+    val color = androidx.compose.material3.LocalContentColor.current
+    Canvas(Modifier.size(24.dp)) {
+        val u = size.width / 24f
+        val stroke = Stroke(1.8f * u)
+        when (destination) {
+            AppDestination.HOME -> drawPath(Path().apply {
+                moveTo(3 * u, 11 * u); lineTo(12 * u, 3 * u); lineTo(21 * u, 11 * u)
+                lineTo(21 * u, 21 * u); lineTo(15 * u, 21 * u); lineTo(15 * u, 14 * u)
+                lineTo(9 * u, 14 * u); lineTo(9 * u, 21 * u); lineTo(3 * u, 21 * u); close()
+            }, color, style = stroke)
+            AppDestination.ENTRY -> {
+                drawRect(color, Offset(4 * u, 3 * u), androidx.compose.ui.geometry.Size(16 * u, 18 * u), style = stroke)
+                drawPath(Path().apply { moveTo(7 * u, 12 * u); lineTo(11 * u, 16 * u); lineTo(17 * u, 8 * u) }, color, style = stroke)
+            }
+            AppDestination.STATS -> listOf(12f, 5f, 9f).forEachIndexed { index, top ->
+                drawLine(color, Offset((5 + index * 7) * u, 21 * u), Offset((5 + index * 7) * u, top * u), 3 * u)
+            }
+            else -> listOf(6f, 18f).forEach { x -> listOf(6f, 18f).forEach { y -> drawCircle(color, 2.5f * u, Offset(x * u, y * u)) } }
+        }
     }
 }

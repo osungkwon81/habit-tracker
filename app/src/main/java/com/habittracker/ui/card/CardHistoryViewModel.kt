@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.temporal.ChronoUnit
@@ -22,23 +24,25 @@ class CardHistoryViewModel(
     private val selectedMonth = MutableStateFlow(billingCycleMonth(LocalDate.now(), paymentDay.value))
     private val statusMessage = MutableStateFlow<String?>(null)
 
-    val uiState: StateFlow<CardHistoryUiState> = combine(
+    private val contentState = combine(
         repository.observeCardHistories(),
         selectedMonth,
         paymentDay,
-        statusMessage,
-    ) { histories, month, day, message ->
+    ) { histories, month, day ->
+        val series = (listOf(month, month.minusMonths(1), month.minusMonths(2), month.minusYears(1)))
+            .distinct().associateWith { it.toSeries(histories, day) }
         CardHistoryUiState(
             selectedMonth = month,
             paymentDay = day,
-            histories = histories.sortedWith(compareByDescending<CardHistoryEntity> { it.useDate }.thenByDescending { it.id }),
+            histories = histories,
             recentHistories = histories
-                .filter { billingCycleMonth(it.useDate, day) == month }
-                .sortedWith(compareByDescending<CardHistoryEntity> { it.useDate }.thenByDescending { it.id }),
-            threeMonthSeries = buildRollingSeries(histories, month, day),
-            yearComparisonSeries = buildYearComparisonSeries(histories, month, day),
-            statusMessage = message,
+                .filter { billingCycleMonth(it.useDate, day) == month },
+            threeMonthSeries = listOf(month.minusMonths(2), month.minusMonths(1), month).map { series.getValue(it) }.filter { it.points.isNotEmpty() },
+            yearComparisonSeries = listOf(month, month.minusYears(1)).map { series.getValue(it) }.filter { it.points.isNotEmpty() },
         )
+    }.flowOn(Dispatchers.Default)
+    val uiState: StateFlow<CardHistoryUiState> = combine(contentState, statusMessage) { state, message ->
+        state.copy(statusMessage = message)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -132,19 +136,6 @@ data class CardChartPoint(
     val amount: Long,
 )
 
-private fun buildRollingSeries(histories: List<CardHistoryEntity>, selectedMonth: YearMonth, paymentDay: Int): List<CardMonthSeries> =
-    (0..2).map { offset -> selectedMonth.minusMonths(offset.toLong()) }
-        .distinct()
-        .sorted()
-        .map { month -> month.toSeries(histories, paymentDay) }
-        .filter { it.points.isNotEmpty() }
-
-private fun buildYearComparisonSeries(histories: List<CardHistoryEntity>, selectedMonth: YearMonth, paymentDay: Int): List<CardMonthSeries> =
-    listOf(
-        selectedMonth.toSeries(histories, paymentDay),
-        selectedMonth.minusYears(1).toSeries(histories, paymentDay),
-    ).filter { it.points.isNotEmpty() }
-
 private fun YearMonth.toSeries(histories: List<CardHistoryEntity>, paymentDay: Int): CardMonthSeries {
     val cycleStartDate = cycleStart(paymentDay)
     val cycleEndDate = cycleEnd(paymentDay)
@@ -157,7 +148,7 @@ private fun YearMonth.toSeries(histories: List<CardHistoryEntity>, paymentDay: I
             dayIndex = ChronoUnit.DAYS.between(cycleStartDate, history.useDate).toInt() + 1,
             amount = history.amount,
         )
-    }.sortedBy(CardChartPoint::dayIndex)
+    }
 
     return CardMonthSeries(
         label = "${year}년 ${monthValue}월",

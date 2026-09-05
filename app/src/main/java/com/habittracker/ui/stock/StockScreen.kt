@@ -883,37 +883,12 @@ private fun StockMenuCard(
     accent: Color,
     onClick: () -> Unit,
 ) {
-    Card(
+    androidx.compose.material3.ListItem(
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = { Text(description, style = MaterialTheme.typography.bodyMedium) },
+        trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(icon, style = MaterialTheme.typography.titleMedium, color = accent)
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text("›", style = MaterialTheme.typography.headlineSmall, color = accent, fontWeight = FontWeight.Light)
-        }
-    }
+    )
 }
 
 @Composable
@@ -935,39 +910,12 @@ internal fun StockHeroCard(
 
 @Composable
 internal fun StockStatusDialog(uiState: StockUiState, onDismiss: () -> Unit) {
-    uiState.statusMessage?.let { message ->
-        AppNoticeDialog(
-            message = message,
-            onDismiss = onDismiss,
-            title = when {
-                message.contains("실패") || message.contains("초과") -> "처리 실패"
-                message.contains("차단") || message.contains("확인") -> "확인 필요"
-                else -> "처리 결과"
-            },
-        )
-    }
+    com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, onDismiss)
 }
 
 @Composable
 internal fun StockSectionTitle(title: String) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .width(4.dp)
-                .height(20.dp)
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.primary),
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
+    com.habittracker.ui.components.AppSectionHeader(title = title)
 }
 
 private enum class StockRiskLevel {

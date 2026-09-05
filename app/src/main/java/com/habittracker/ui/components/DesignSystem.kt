@@ -2,11 +2,8 @@ package com.habittracker.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -16,17 +13,28 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -42,10 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -57,35 +61,19 @@ object AppSpacing {
     val lg = 32.dp
 }
 
-private val ButtonShape = RoundedCornerShape(18.dp)
-private val ActionNoticeMarkers = listOf(
-    "저장되었습니다",
-    "저장 되었습니다",
-    "저장했습니다",
-    "저장에 실패",
-    "저장할 ",
-    "저장되어 있습니다",
-    "등록에 실패",
-    "개 등록",
-    "추가했습니다",
-    "추가에 실패",
-    "삭제했습니다",
-    "삭제에 실패",
-    "수정했습니다",
-    "수정에 실패",
-    "처리했습니다",
-    "열었습니다",
-    "고정했습니다",
-    "해제했습니다",
-)
+private val ButtonShape = RoundedCornerShape(12.dp)
+val LocalAppSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("Snackbar host is missing") }
 
-fun String.shouldShowActionNoticeDialog(): Boolean = ActionNoticeMarkers.any(::contains)
+class AppNavigationGuard {
+    var hasUnsavedChanges by mutableStateOf(false)
+    var pendingAction by mutableStateOf<(() -> Unit)?>(null)
 
-fun String.actionNoticeDialogTitle(): String = when {
-    contains("실패") -> "처리 실패"
-    contains("저장할 ") || contains("저장되어 있습니다") -> "처리 안내"
-    else -> "처리 완료"
+    fun navigate(action: () -> Unit) {
+        if (hasUnsavedChanges) pendingAction = action else action()
+    }
 }
+
+val LocalAppNavigationGuard = staticCompositionLocalOf<AppNavigationGuard> { error("Navigation guard is missing") }
 
 /**
  * 모든 화면이 같은 여백과 배경을 사용하도록 만든 최상위 화면 컨테이너다.
@@ -96,23 +84,27 @@ fun String.actionNoticeDialogTitle(): String = when {
 @Composable
 fun AppScreen(
     modifier: Modifier = Modifier,
+    bottomBar: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
-    val backgroundBrush = Brush.verticalGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.background,
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-            MaterialTheme.colorScheme.background,
-        )
-    )
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .background(backgroundBrush)
-            .padding(horizontal = AppSpacing.sm, vertical = AppSpacing.sm),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
-        content = content,
-    )
+            .background(MaterialTheme.colorScheme.background)
+            .imePadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).widthIn(max = 840.dp).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = AppSpacing.sm, vertical = AppSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.md),
+            content = content,
+        )
+        bottomBar?.let {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Box(Modifier.widthIn(max = 840.dp).fillMaxWidth().padding(AppSpacing.sm)) { it() }
+        }
+    }
 }
 
 /**
@@ -130,97 +122,19 @@ fun AppHeroCard(
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,
 ) {
-    val primary = MaterialTheme.colorScheme.primary
-    Card(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = primary),
-        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Brush.linearGradient(listOf(Color(0xFF063F44), primary)))
-                .padding(horizontal = 22.dp, vertical = AppSpacing.md),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (iconRes != null || !icon.isNullOrBlank()) {
-                    Box(
-                        modifier = Modifier
-                            .size(58.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color.White.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (iconRes != null) {
-                            Image(
-                                painter = painterResource(iconRes),
-                                contentDescription = title,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop,
-                            )
-                        } else {
-                            Text(icon.orEmpty(), style = MaterialTheme.typography.headlineSmall)
-                        }
-                    }
-                }
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    if (!eyebrow.isNullOrBlank()) {
-                        Text(
-                            text = eyebrow,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color.White,
-                    )
-                    if (!description.isNullOrBlank()) {
-                        Text(
-                            text = description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.82f),
-                        )
-                    }
-                    if (!status.isNullOrBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 3.dp)
-                                .clip(RoundedCornerShape(50))
-                                .background(Color.White.copy(alpha = 0.14f))
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                        ) {
-                            Text(status, style = MaterialTheme.typography.labelSmall, color = Color.White)
-                        }
-                    }
-                }
-            }
-            action?.let {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.large)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
-                        .padding(AppSpacing.xs),
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
-                    ) {
-                        it()
-                    }
-                }
-            }
+        Text(title, modifier = Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface)
+        if (!description.isNullOrBlank()) {
+            Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (!status.isNullOrBlank()) {
+            Text(status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        action?.let {
+            Column(Modifier.fillMaxWidth().padding(top = AppSpacing.xs), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) { it() }
         }
     }
 }
@@ -230,17 +144,14 @@ fun AppSectionCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = AppSpacing.sm, vertical = 18.dp),
+                .padding(vertical = AppSpacing.sm),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
             content = content,
         )
@@ -257,7 +168,6 @@ fun AppPrimaryButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .height(52.dp)
             .sizeIn(minHeight = 52.dp),
         enabled = enabled,
         shape = ButtonShape,
@@ -268,7 +178,7 @@ fun AppPrimaryButton(
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 1.dp, pressedElevation = 0.dp),
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
@@ -314,7 +224,6 @@ fun AppSecondaryButton(
     Button(
         onClick = onClick,
         modifier = modifier
-            .height(52.dp)
             .sizeIn(minHeight = 52.dp),
         enabled = enabled,
         shape = ButtonShape,
@@ -345,9 +254,12 @@ fun AppTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingContent: (@Composable () -> Unit)? = null,
     trailingOverlay: (@Composable BoxScope.() -> Unit)? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    isError: Boolean = false,
+    supportingText: String? = null,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
-        OutlinedTextField(
+        AppOutlinedTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
@@ -358,22 +270,50 @@ fun AppTextField(
             label = { Text(label) },
             visualTransformation = visualTransformation,
             trailingIcon = trailingContent,
-            shape = MaterialTheme.shapes.medium,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                cursorColor = MaterialTheme.colorScheme.primary,
-            ),
+            keyboardOptions = keyboardOptions,
+            isError = isError,
+            supportingText = if (supportingText != null) { { Text(supportingText) } } else null,
         )
         trailingOverlay?.invoke(this)
     }
+}
+
+@Composable
+fun AppOutlinedTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+    readOnly: Boolean = false,
+    enabled: Boolean = true,
+    isError: Boolean = false,
+    supportingText: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
+) {
+    OutlinedTextField(
+        value = value, onValueChange = onValueChange, modifier = modifier,
+        label = label, singleLine = singleLine, minLines = minLines,
+        readOnly = readOnly, enabled = enabled, isError = isError,
+        supportingText = supportingText, trailingIcon = trailingIcon,
+        visualTransformation = visualTransformation,
+        keyboardOptions = keyboardOptions, keyboardActions = keyboardActions, textStyle = textStyle,
+        shape = MaterialTheme.shapes.medium,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+        ),
+    )
 }
 
 @Composable
@@ -388,18 +328,21 @@ fun AppSelectableChip(
             .border(
                 width = 1.dp,
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(999.dp),
+                shape = MaterialTheme.shapes.small,
             )
             .background(
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                shape = RoundedCornerShape(999.dp),
+                shape = MaterialTheme.shapes.small,
             )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
+            .clip(MaterialTheme.shapes.small)
+            .selectable(
+                selected = selected,
+                role = Role.Tab,
                 onClick = onClick,
             )
+            .sizeIn(minHeight = 48.dp)
             .padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
@@ -415,7 +358,7 @@ fun AppStatusText(message: String, modifier: Modifier = Modifier) {
         text = message,
         modifier = modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.primary,
+        color = if (message.contains("실패")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -479,6 +422,7 @@ fun AppSectionHeader(
     ) {
         Text(
             text = title,
+            modifier = Modifier.semantics { heading() },
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -502,45 +446,27 @@ fun AppNoticeDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            AppPrimaryButton(
-                text = "확인",
-                onClick = onDismiss,
-            )
+            TextButton(onClick = onDismiss) { Text("확인") }
         },
         title = { Text(title) },
         text = { Text(message, color = MaterialTheme.colorScheme.onSurface) },
     )
 }
 
-/**
- * ViewModel의 상태 메시지를 일회성 알림창으로 보여 주는 공통 상태 호이스팅 컴포넌트다.
- *
- * 화면은 메시지와 닫기 동작만 전달하고, 다이얼로그를 열어 둘 로컬 상태는 이곳에서 관리한다.
- * 새 메시지가 도착할 때 실행해야 하는 작업은 [LaunchedEffect]로 분리한다.
- */
+/** 작업 결과는 화면을 가리지 않는 공통 Snackbar로 전달한다. */
 @Composable
 fun AppActionNotice(
     message: String?,
     onDismiss: () -> Unit,
 ) {
-    var dialogMessage by remember { mutableStateOf<String?>(null) }
-
+    val snackbar = LocalAppSnackbar.current
+    val dismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(message) {
-        val currentMessage = message.orEmpty()
-        if (currentMessage.shouldShowActionNoticeDialog()) {
-            dialogMessage = currentMessage
+        if (!message.isNullOrBlank()) {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(message = message, withDismissAction = true)
+            dismiss()
         }
-    }
-
-    dialogMessage?.let { currentMessage ->
-        AppNoticeDialog(
-            message = currentMessage,
-            onDismiss = {
-                dialogMessage = null
-                onDismiss()
-            },
-            title = currentMessage.actionNoticeDialogTitle(),
-        )
     }
 }
 
@@ -557,10 +483,10 @@ fun AppConfirmDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            AppPrimaryButton(text = confirmText, onClick = onConfirm)
+            TextButton(onClick = onConfirm) { Text(confirmText) }
         },
         dismissButton = {
-            AppSecondaryButton(text = "취소", onClick = onDismiss)
+            TextButton(onClick = onDismiss) { Text("취소") }
         },
         title = { Text(title) },
         text = {

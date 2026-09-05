@@ -9,6 +9,9 @@ import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.lotto.LotteryProduct
 import com.habittracker.data.lotto.LotterySyncStatus
+import com.habittracker.data.lotto.PensionLotteryPrizeHit
+import com.habittracker.data.lotto.calculatePensionLotteryPrizeHits
+import com.habittracker.data.lotto.pensionLotteryMatchingSuffixLength
 import com.habittracker.data.lotto.toLotterySyncUserMessage
 import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +25,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 enum class PensionLotteryTab(val label: String) {
     INPUT("당첨번호 입력"),
@@ -208,45 +215,45 @@ class PensionLotteryViewModel(
         PensionLotteryAccountingState(purchases, winnings, totals, periods)
     }
 
-    val uiState: StateFlow<PensionLotteryUiState> = combine(
-        draws,
-        inputState,
-        listState,
-        accountingState,
-    ) { savedDraws, input, list, accounting ->
-        val rangeDraws = savedDraws.take(input.selectedRange.weeks)
-        val recentDraws = savedDraws.take(list.recentDrawLimit)
-        val drawsByRound = savedDraws.associateBy(PensionLotteryDrawEntity::roundNo)
-        val sixteenWeekScoreBandSummary = buildSixteenWeekScoreBandSummary(savedDraws)
-        val accountingStats = when (accounting.periods.selectedRange) {
-            LotteryAccountingStatsRange.WEEKLY -> accounting.periods.weekly
-            LotteryAccountingStatsRange.MONTHLY -> accounting.periods.monthly
-            LotteryAccountingStatsRange.YEARLY -> accounting.periods.yearly
-        }
+    private val drawAnalysis = draws.distinctUntilChanged()
+        .map { it to buildSixteenWeekScoreBandSummary(it) }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<PensionLotteryDrawEntity>() to buildSixteenWeekScoreBandSummary(emptyList()))
 
+    private val statistics = combine(drawAnalysis, selectedRange, recentDrawLimit, matchNumberInput) { (savedDraws, summary), range, limit, match ->
+        val rangeDraws = savedDraws.take(range.weeks)
+        val recentDraws = savedDraws.take(limit)
         PensionLotteryUiState(
-            selectedTab = input.selectedTab,
-            selectedRange = input.selectedRange,
-            roundInput = input.roundInput,
-            groupInput = input.groupInput,
-            numberInputs = input.numberInputs,
-            matchNumberInput = list.matchNumberInput,
-            statusMessage = list.statusMessage,
+            selectedRange = range,
+            matchNumberInput = match,
             latestRoundNo = savedDraws.firstOrNull()?.roundNo,
             totalDrawCount = savedDraws.size,
             recentDraws = recentDraws,
             hasMoreRecentDraws = recentDraws.size < savedDraws.size,
-            recentDigitScores = buildRecentDigitScores(savedDraws, recentDraws, input.selectedRange.weeks),
-            sixteenWeekScoreBandStats = sixteenWeekScoreBandSummary.stats,
-            sixteenWeekScoreBandDrawCount = sixteenWeekScoreBandSummary.drawCount,
-            sixteenWeekScoreBandsByRound = sixteenWeekScoreBandSummary.bandsByRound,
-            sixteenWeekZeroScoreCountStats = sixteenWeekScoreBandSummary.zeroScoreCountStats,
-            matchResults = buildMatchResults(rangeDraws, list.matchNumberInput),
-            exactMatchRounds = findExactMatchRounds(savedDraws, list.matchNumberInput),
-            matchDigitScores = calculatePensionNumberScores(rangeDraws, list.matchNumberInput),
+            recentDigitScores = buildRecentDigitScores(savedDraws, recentDraws, range.weeks),
+            sixteenWeekScoreBandStats = summary.stats,
+            sixteenWeekScoreBandDrawCount = summary.drawCount,
+            sixteenWeekScoreBandsByRound = summary.bandsByRound,
+            sixteenWeekZeroScoreCountStats = summary.zeroScoreCountStats,
+            matchResults = buildMatchResults(rangeDraws, match),
+            exactMatchRounds = findExactMatchRounds(savedDraws, match),
+            matchDigitScores = calculatePensionNumberScores(rangeDraws, match),
             duplicateStats = buildDuplicateStats(rangeDraws, savedDraws),
             positionStats = buildPositionStats(rangeDraws, savedDraws),
             positionScores = buildPositionScores(rangeDraws),
+        )
+    }.flowOn(Dispatchers.Default)
+
+    val uiState: StateFlow<PensionLotteryUiState> = combine(
+        statistics, inputState, listState, accountingState, drawAnalysis,
+    ) { stats, input, list, accounting, (savedDraws, _) ->
+        val drawsByRound = savedDraws.associateBy(PensionLotteryDrawEntity::roundNo)
+        stats.copy(
+            selectedTab = input.selectedTab,
+            roundInput = input.roundInput,
+            groupInput = input.groupInput,
+            numberInputs = input.numberInputs,
+            statusMessage = list.statusMessage,
             purchaseResults = accounting.purchases.map { purchase ->
                 PensionLotteryPurchaseResult(
                     purchase = purchase,
@@ -259,7 +266,11 @@ class PensionLotteryViewModel(
             totalPurchaseAmount = accounting.totals.totalPurchaseAmount,
             totalWinningAmount = accounting.totals.totalWinningAmount,
             selectedAccountingStatsRange = accounting.periods.selectedRange,
-            accountingStats = accountingStats,
+            accountingStats = when (accounting.periods.selectedRange) {
+                LotteryAccountingStatsRange.WEEKLY -> accounting.periods.weekly
+                LotteryAccountingStatsRange.MONTHLY -> accounting.periods.monthly
+                LotteryAccountingStatsRange.YEARLY -> accounting.periods.yearly
+            },
         )
     }.stateIn(
         scope = viewModelScope,
@@ -474,7 +485,7 @@ data class PensionLotteryPurchaseResult(
     val purchase: LottoPurchaseEntity,
     val draw: PensionLotteryDrawEntity?,
 ) {
-    val mainMatchingSuffixLength: Int = matchingSuffixLength(
+    val mainMatchingSuffixLength: Int = pensionLotteryMatchingSuffixLength(
         purchaseNumber = purchase.pensionNumber,
         winningNumber = draw?.winningNumber,
     )
@@ -482,60 +493,9 @@ data class PensionLotteryPurchaseResult(
         purchase.pensionNumber != null && purchase.pensionNumber == draw?.bonusNumber
     val prizeHits: List<PensionLotteryPrizeHit> = calculatePensionLotteryPrizeHits(
         purchaseNumber = purchase.pensionNumber,
-        draw = draw,
+        winningNumber = draw?.winningNumber,
+        bonusNumber = draw?.bonusNumber,
     )
-}
-
-enum class PensionLotteryPrizeRank(val label: String) {
-    FIRST("1등"),
-    SECOND("2등"),
-    THIRD("3등"),
-    FOURTH("4등"),
-    FIFTH("5등"),
-    SIXTH("6등"),
-    SEVENTH("7등"),
-    BONUS("보너스"),
-}
-
-data class PensionLotteryPrizeHit(
-    val rank: PensionLotteryPrizeRank,
-    val ticketCount: Int,
-)
-
-private fun calculatePensionLotteryPrizeHits(
-    purchaseNumber: String?,
-    draw: PensionLotteryDrawEntity?,
-): List<PensionLotteryPrizeHit> {
-    if (purchaseNumber == null || draw == null) return emptyList()
-
-    if (purchaseNumber == draw.winningNumber) {
-        return listOf(
-            PensionLotteryPrizeHit(PensionLotteryPrizeRank.FIRST, ticketCount = 1),
-            PensionLotteryPrizeHit(PensionLotteryPrizeRank.SECOND, ticketCount = 4),
-        )
-    }
-    if (purchaseNumber == draw.bonusNumber) {
-        return listOf(PensionLotteryPrizeHit(PensionLotteryPrizeRank.BONUS, ticketCount = 5))
-    }
-
-    val rank = when (matchingSuffixLength(purchaseNumber, draw.winningNumber)) {
-        5 -> PensionLotteryPrizeRank.THIRD
-        4 -> PensionLotteryPrizeRank.FOURTH
-        3 -> PensionLotteryPrizeRank.FIFTH
-        2 -> PensionLotteryPrizeRank.SIXTH
-        1 -> PensionLotteryPrizeRank.SEVENTH
-        else -> null
-    }
-    return rank?.let { listOf(PensionLotteryPrizeHit(it, ticketCount = 5)) }.orEmpty()
-}
-
-private fun matchingSuffixLength(purchaseNumber: String?, winningNumber: String?): Int {
-    if (purchaseNumber == null || winningNumber == null) return 0
-    return purchaseNumber
-        .reversed()
-        .zip(winningNumber.reversed())
-        .takeWhile { (purchaseDigit, winningDigit) -> purchaseDigit == winningDigit }
-        .size
 }
 
 data class PensionLotteryMatchResult(
@@ -682,7 +642,7 @@ private fun buildRecentDigitScores(
     weeks: Int,
 ): Map<Int, List<Int>> {
     return recentDraws.mapIndexed { startIndex, draw ->
-        val scoringDraws = draws.drop(startIndex + 1).take(weeks)
+        val scoringDraws = draws.subList(startIndex + 1, minOf(draws.size, startIndex + 1 + weeks))
         val scoresByPosition = List(6) { IntArray(10) }
         scoringDraws.forEachIndexed { index, scoringDraw ->
             val weight = scoringDraws.size - index
@@ -700,7 +660,7 @@ private fun buildSixteenWeekScoreBandSummary(
     draws: List<PensionLotteryDrawEntity>,
 ): PensionLotteryScoreBandSummary {
     val scoresByRound = draws.mapIndexedNotNull { startIndex, draw ->
-        val scoringDraws = draws.drop(startIndex + 1).take(PensionLotteryRange.SIXTEEN.weeks)
+        val scoringDraws = draws.subList(startIndex + 1, minOf(draws.size, startIndex + 1 + PensionLotteryRange.SIXTEEN.weeks))
         if (scoringDraws.size < PensionLotteryRange.SIXTEEN.weeks) {
             null
         } else {

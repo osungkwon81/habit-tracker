@@ -154,6 +154,20 @@
 
 ## 개발 환경
 
+### 화면 디자인 기준
+
+- Material 3 기반의 밝은 중립 배경과 청록 포인트를 사용한다. 제목·본문·보조 정보의 크기와 대비로 정보 계층을 구분한다.
+- 화면은 `AppScreen`, 제목은 `AppHeroCard`, 일반 정보 묶음은 `AppSectionCard`를 사용한다. 일반 섹션은 구분선과 여백으로 나누며 장식용 그라데이션·그림자·중첩 카드를 추가하지 않는다.
+- 버튼은 `AppPrimaryButton` / `AppSecondaryButton`, 입력창은 `AppTextField` / `AppOutlinedTextField`, 선택 필터는 `AppSelectableChip`으로 통일한다. 숫자 입력은 해당 키보드와 오류 상태를 제공한다.
+- 기본 탐색은 홈·기록·통계·전체의 4개 목적지다. 일기·메모·카드·주식·화분·복권·항목 관리는 전체 메뉴에서 접근한다.
+- 작업 결과는 공통 Snackbar, 삭제·미저장 이탈·주문 전 확인은 명시적인 확인 대화상자를 사용한다.
+- 일일 기록의 저장 버튼은 하단에 유지하고, 초안은 화면 재생성 시 복원한다. 달력 상태는 색 외에 기호와 접근성 설명을 함께 제공한다.
+- 참고: [Android 모바일 레이아웃·탐색 가이드](https://developer.android.com/design/ui/mobile/guides/layout-and-content/layout-and-nav-patterns), [Material 3 in Compose](https://developer.android.com/develop/ui/compose/designsystems/material3), [Todoist 모바일 탐색](https://www.todoist.com/help/todoist/features/customize-the-todoist-navigation-bar-L4qpkI0xj). 2026년 9월 기준으로 확인했으며 신규 실험 API나 의존성 업그레이드 없이 적용한다.
+
+배포 전에는 작은 화면·큰 글꼴·키보드 표시 상태, 일일 기록 작성 중 날짜 변경 및 화면 재생성, 카드 삭제 취소, 초기 DB 열기와 복원 경로를 기기에서 확인한다.
+
+### 개발 도구
+
 - Android Studio
 - JDK 17
 - Android SDK 35

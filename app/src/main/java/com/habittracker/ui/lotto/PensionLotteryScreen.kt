@@ -19,7 +19,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.habittracker.ui.components.AppOutlinedTextField as OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -83,13 +83,6 @@ fun PensionLotteryScreen(
                 icon = "🎟️",
                 eyebrow = "PENSION LOTTERY · 720+",
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
-                action = {
-                    AppSecondaryButton(
-                        text = "동행복권 선택으로 돌아가기",
-                        onClick = onBackToLotteryHome,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item {

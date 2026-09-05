@@ -16,6 +16,9 @@ import androidx.compose.ui.unit.dp
 private val LightColors = lightColorScheme(
     primary = Primary600,
     secondary = Primary100,
+    secondaryContainer = Color(0xFFE2EEE8),
+    onSecondaryContainer = Color(0xFF123D33),
+    surfaceTint = Primary600,
     tertiary = Gray100,
     background = Gray25,
     surface = Gray0,
@@ -27,7 +30,11 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = Gray600,
     outline = Gray200,
     outlineVariant = Gray100,
-    error = Gray800,
+    error = Color(0xFFB3261E),
+    errorContainer = Color(0xFFFCE8E6),
+    onErrorContainer = Color(0xFF601410),
+    primaryContainer = Color(0xFFE2EEE8),
+    onPrimaryContainer = Color(0xFF123D33),
     onError = Gray0,
 )
 
@@ -48,8 +55,8 @@ private val AppTypography = Typography(
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 25.sp,
-        lineHeight = 31.sp,
+        fontSize = 24.sp,
+        lineHeight = 32.sp,
         fontWeight = FontWeight.Bold,
         letterSpacing = (-0.3).sp,
     ),
@@ -62,7 +69,7 @@ private val AppTypography = Typography(
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontSize = 18.sp,
+        fontSize = 16.sp,
         lineHeight = 24.sp,
         fontWeight = FontWeight.SemiBold,
     ),
@@ -108,10 +115,10 @@ private val AppTypography = Typography(
 )
 
 private val AppShapes = Shapes(
-    small = RoundedCornerShape(14.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(30.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(20.dp),
 )
 
 @Composable

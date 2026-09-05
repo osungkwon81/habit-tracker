@@ -34,7 +34,7 @@ class StockAutomationBootReceiver : BroadcastReceiver() {
                         ) == PackageManager.PERMISSION_GRANTED
                 if (
                     canPostNotifications &&
-                    application.appContainer.habitRepository.getStockSafetyConfig().monitoringEnabled
+                    application.appContainer.awaitRepository().getStockSafetyConfig().monitoringEnabled
                 ) {
                     StockAutomationService.start(context.applicationContext)
                 }
