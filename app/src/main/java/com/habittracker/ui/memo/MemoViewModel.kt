@@ -117,6 +117,16 @@ class MemoViewModel(
         content.value = value
     }
 
+    fun appendRecognizedContent(value: String) {
+        val recognizedText = value.trim()
+        if (recognizedText.isEmpty()) return
+        content.value = when {
+            content.value.isBlank() -> recognizedText
+            content.value.endsWith("\n") -> content.value + recognizedText
+            else -> content.value + "\n" + recognizedText
+        }
+    }
+
     fun updateLocked(value: Boolean) {
         isLocked.value = value
         if (!value) {

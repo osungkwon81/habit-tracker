@@ -50,6 +50,7 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
+import com.habittracker.ui.components.AppVoiceInputButton
 import java.time.format.DateTimeFormatter
 
 @Composable
@@ -179,6 +180,7 @@ private fun MemoListScreen(
 @Composable
 private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
     var showEditorPassword by remember(uiState.selectedMemoId, uiState.isLocked) { mutableStateOf(false) }
+    var speechStatusMessage by remember { mutableStateOf<String?>(null) }
 
     AppScreen {
         item {
@@ -205,6 +207,13 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                     onValueChange = viewModel::updateContent,
                     label = "내용",
                     minLines = 10,
+                    trailingContent = {
+                        AppVoiceInputButton(
+                            onRecognizedText = viewModel::appendRecognizedContent,
+                            onStatusMessage = { speechStatusMessage = it },
+                        )
+                    },
+                    supportingText = speechStatusMessage,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = uiState.isLocked, onCheckedChange = viewModel::updateLocked)

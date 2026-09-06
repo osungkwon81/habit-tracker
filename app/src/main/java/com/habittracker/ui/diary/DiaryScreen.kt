@@ -63,6 +63,7 @@ import com.habittracker.ui.components.AppSelectableChip
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import com.habittracker.ui.components.AppTextField
+import com.habittracker.ui.components.AppVoiceInputButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -149,6 +150,7 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
     var title by remember(uiState.diaryDate, uiState.title) { mutableStateOf(TextFieldValue(uiState.title)) }
     var body by remember(uiState.diaryDate, uiState.body) { mutableStateOf(TextFieldValue(uiState.body)) }
     var selectedWeather by remember(uiState.diaryDate, uiState.weather) { mutableStateOf(uiState.weather) }
+    var speechStatusMessage by remember(uiState.diaryDate) { mutableStateOf<String?>(null) }
     val imageUris = remember(uiState.diaryDate, uiState.imageUris) { mutableStateListOf<String>().apply { addAll(uiState.imageUris) } }
     var expandedImageUri by remember { mutableStateOf<String?>(null) }
     val weatherOptions = listOf(
@@ -246,7 +248,25 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
             }
         }
         item { AppTextField(value = title.text, onValueChange = { title = TextFieldValue(it) }, label = "제목", singleLine = true) }
-        item { AppTextField(value = body.text, onValueChange = { body = TextFieldValue(it) }, label = "일기 내용", minLines = 10) }
+        item {
+            AppTextField(
+                value = body.text,
+                onValueChange = { body = TextFieldValue(it) },
+                label = "일기 내용",
+                minLines = 10,
+                trailingContent = {
+                    AppVoiceInputButton(
+                        onRecognizedText = { recognizedText ->
+                            val separator = if (body.text.isEmpty() || body.text.last().isWhitespace()) "" else "\n"
+                            val updatedText = body.text + separator + recognizedText.trim()
+                            body = TextFieldValue(updatedText, selection = TextRange(updatedText.length))
+                        },
+                        onStatusMessage = { speechStatusMessage = it },
+                    )
+                },
+                supportingText = speechStatusMessage,
+            )
+        }
         item { AppSecondaryButton(text = "사진 첨부", onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.fillMaxWidth()) }
         item { AppSaveButton(text = "일기 저장", onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) }, modifier = Modifier.fillMaxWidth()) }
         item { uiState.statusMessage?.let { message -> AppStatusText(message) } }
