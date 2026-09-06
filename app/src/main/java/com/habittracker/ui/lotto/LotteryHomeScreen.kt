@@ -86,7 +86,7 @@ fun LotteryHomeScreen(
                 AppHeroCard(
                     title = "동행복권",
                     description = "관리할 복권 종류를 선택합니다.",
-                    iconRes = R.drawable.home_quick_lotto,
+                    iconRes = R.drawable.ic_category_lotto,
                     eyebrow = "LOTTERY · SELECT",
                 )
             }

@@ -102,7 +102,7 @@ fun HomeScreen(
             AppHeroCard(
                 title = "오늘의 생활",
                 description = "자주 쓰는 기능과 오늘 필요한 정보를 빠르게 확인하세요.",
-                iconRes = R.drawable.ic_launcher_art_v3,
+                iconRes = R.drawable.ic_launcher_art_v4,
                 eyebrow = "MY DAILY DASHBOARD",
                 status = "${today.year}년 ${today.monthValue}월 ${today.dayOfMonth}일",
                 action = {
@@ -163,11 +163,11 @@ private fun WorkspaceSection(
             subtitle = "사용 빈도가 높은 메뉴를 먼저 배치했어요.",
         )
         val actions = listOf(
-            HomeQuickAction(R.drawable.ic_stock_wallet, "주식", "포트폴리오와 자동화", Color(0xFFDDEFEA), Color(0xFF145B52), onOpenStock),
-            HomeQuickAction(R.drawable.home_quick_card, "카드", "사용 이력과 결제 예정", Color(0xFFF2E9DD), Color(0xFF76552D), onOpenCard),
-            HomeQuickAction(R.drawable.home_quick_lotto, "동행복권", "로또·연금복권", Color(0xFFFFE8B8), Color(0xFF805B00), onOpenLotto),
-            HomeQuickAction(R.drawable.home_quick_plant, "화분", "오늘의 물주기", Color(0xFFE2EFDF), Color(0xFF3E6540), onOpenPlant),
-            HomeQuickAction(R.drawable.home_quick_memo, "메모", "빠른 메모와 잠금", Color(0xFFEAE5F3), Color(0xFF5E4B7B), onOpenMemo),
+            HomeQuickAction(R.drawable.ic_category_stock, "주식", "포트폴리오와 자동화", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenStock),
+            HomeQuickAction(R.drawable.ic_category_card, "카드", "사용 이력과 결제 예정", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenCard),
+            HomeQuickAction(R.drawable.ic_category_lotto, "동행복권", "로또·연금복권", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenLotto),
+            HomeQuickAction(R.drawable.ic_category_plant, "화분", "오늘의 물주기", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
+            HomeQuickAction(R.drawable.ic_category_memo, "메모", "빠른 메모와 잠금", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenMemo),
         )
         FeatureSpotlightCard(action = actions.first())
         actions.drop(1).chunked(2).forEach { rowItems ->

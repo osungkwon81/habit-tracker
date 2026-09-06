@@ -334,7 +334,7 @@ private fun StockPortfolioDashboardCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StockDashboardSectionIcon(
-                iconRes = R.drawable.ic_stock_wallet,
+                iconRes = R.drawable.ic_category_stock,
                 contentDescription = "보유 주식 요약",
                 accent = MaterialTheme.colorScheme.primary,
             )

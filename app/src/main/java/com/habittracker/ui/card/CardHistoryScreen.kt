@@ -92,7 +92,7 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             AppHeroCard(
                 title = "카드 이력",
                 description = "카드 사용 내역과 월별 결제 예정액을 관리합니다.",
-                iconRes = R.drawable.home_quick_card,
+                iconRes = R.drawable.ic_category_card,
                 eyebrow = "MONEY · CARD",
                 action = {
                     CardTopSummaryContent(summary = topSummary)

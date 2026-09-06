@@ -58,7 +58,7 @@ fun MonthlyStatsScreen(
             AppHeroCard(
                 title = "통계",
                 description = "기간별 완료 기록과 운동 수치를 비교합니다.",
-                iconRes = R.drawable.home_quick_record,
+                iconRes = R.drawable.ic_category_record,
                 eyebrow = "HABIT · INSIGHTS",
                 action = {
                     Row(

@@ -128,7 +128,7 @@ fun LottoScreen(
             AppHeroCard(
                 title = "로또 관리",
                 description = "번호 생성과 구입·추첨 이력을 관리합니다.",
-                iconRes = R.drawable.home_quick_lotto,
+                iconRes = R.drawable.ic_category_lotto,
                 eyebrow = "LOTTO · ANALYSIS",
                 status = "생성기 ver. ${LottoNumberGenerator.CURRENT_GENERATION_VERSION}",
             )

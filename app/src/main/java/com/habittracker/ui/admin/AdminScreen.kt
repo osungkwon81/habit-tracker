@@ -64,7 +64,7 @@ fun AdminScreen(
             AppHeroCard(
                 title = "관리",
                 description = "일일 기록에 사용할 항목을 추가하고 정리합니다.",
-                iconRes = R.drawable.home_quick_record,
+                iconRes = R.drawable.ic_category_record,
                 eyebrow = "HABIT · SETTINGS",
                 action = {
                     onOpenEntry?.let { openEntry ->

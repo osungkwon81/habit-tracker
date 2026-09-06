@@ -134,7 +134,7 @@ fun DailyEntryScreen(
             AppHeroCard(
                 title = "일일 기록",
                 description = "날짜별 습관과 운동 기록을 입력합니다.",
-                iconRes = R.drawable.home_quick_record,
+                iconRes = R.drawable.ic_category_record,
                 eyebrow = "HABIT · DAILY",
                 action = {
                     onOpenAdmin?.let { openAdmin ->
