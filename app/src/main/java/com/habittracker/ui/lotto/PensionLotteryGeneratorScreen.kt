@@ -205,7 +205,7 @@ private fun PensionLotteryGeneratorRuleCard(uiState: PensionLotteryGeneratorUiSt
     AppSectionCard {
         AppSectionHeader(
             title = "적용 조건",
-            subtitle = "과거 각 회차는 해당 회차를 제외한 직전 16회로 계산합니다.",
+            subtitle = "최근 16회 패턴을 최근 156회 흐름과 혼합해 반영합니다.",
         )
         GeneratorRuleRow(
             label = "16주 점수 구간",

@@ -466,7 +466,8 @@ private data class PensionLotteryGeneratorAnalysis(
     val targetZeroScoreCount: Int,
     val targetZeroScoreDrawCount: Int,
     val allTimeCounts: List<IntArray>,
-    val recentWeightedScores: List<IntArray>,
+    val trendWeightedScores: List<IntArray>,
+    val groupSelectionWeights: Map<Int, Int>,
     val appearedDigits: List<List<Int>>,
     val topAppearedLastDigits: List<Int>,
     val zeroScoreDigits: List<List<Int>>,
@@ -577,11 +578,27 @@ private fun buildGeneratorAnalysis(
     }
     val targetZeroScoreCount = (0..6).maxBy { zeroScoreCount -> zeroScoreCounts.getValue(zeroScoreCount) }
     val latestDraws = draws.take(GENERATOR_ANALYSIS_WEEKS)
-    val duplicateCounts = PENSION_DUPLICATE_LABELS.associateWith { label ->
+    val longTermDraws = draws.take(LONG_TERM_TREND_WEEKS)
+    val recentDuplicateCounts = PENSION_DUPLICATE_LABELS.associateWith { label ->
         latestDraws.count { draw -> pensionDuplicateLabel(draw.winningNumber) == label }
     }
-    val targetDuplicateLabel = PENSION_DUPLICATE_LABELS.maxBy { label -> duplicateCounts.getValue(label) }
+    val longTermDuplicateCounts = PENSION_DUPLICATE_LABELS.associateWith { label ->
+        longTermDraws.count { draw -> pensionDuplicateLabel(draw.winningNumber) == label }
+    }
+    val targetDuplicateLabel = PENSION_DUPLICATE_LABELS.maxBy { label ->
+        blendedFrequencyScore(
+            recentCount = recentDuplicateCounts.getValue(label),
+            recentTotal = latestDraws.size,
+            longTermCount = longTermDuplicateCounts.getValue(label),
+            longTermTotal = longTermDraws.size,
+        )
+    }
     val recentWeightedScores = buildPositionWeightedScores(latestDraws)
+    val longTermWeightedScores = buildPositionWeightedScores(longTermDraws)
+    val trendWeightedScores = blendPositionScores(
+        recentScores = recentWeightedScores,
+        longTermScores = longTermWeightedScores,
+    )
     val allTimeCounts = buildPositionDigitCounts(draws)
     val appearedDigits = recentWeightedScores.map { scores ->
         scores.indices.filter { digit -> scores[digit] > 0 }
@@ -600,14 +617,15 @@ private fun buildGeneratorAnalysis(
         targetScoreBand = targetScoreBand,
         targetScoreBandDrawCount = scoreBandCounts.getValue(targetScoreBand),
         targetDuplicateLabel = targetDuplicateLabel,
-        targetDuplicateDrawCount = duplicateCounts.getValue(targetDuplicateLabel),
+        targetDuplicateDrawCount = recentDuplicateCounts.getValue(targetDuplicateLabel),
         targetZeroScoreCount = targetZeroScoreCount,
         targetZeroScoreDrawCount = zeroScoreCounts.getValue(targetZeroScoreCount),
         allTimeCounts = allTimeCounts,
-        recentWeightedScores = recentWeightedScores,
+        trendWeightedScores = trendWeightedScores,
+        groupSelectionWeights = buildGroupSelectionWeights(latestDraws, longTermDraws),
         appearedDigits = appearedDigits,
         topAppearedLastDigits = appearedDigits.last()
-            .sortedByDescending { digit -> recentWeightedScores.last()[digit] }
+            .sortedByDescending { digit -> trendWeightedScores.last()[digit] }
             .take(3),
         zeroScoreDigits = zeroScoreDigits,
         lowestPositiveScoreDigits = lowestPositiveScoreDigits,
@@ -709,7 +727,11 @@ private fun generateCandidate(
 
         return PensionLotteryGeneratedNumber(
             type = type,
-            groupNo = availableGroups.random(random),
+            groupNo = weightedGroup(
+                candidates = availableGroups,
+                weights = analysis.groupSelectionWeights,
+                random = random,
+            ),
             winningNumber = selection.winningNumber,
             digitScores = digitScores,
             totalScore = totalScore,
@@ -739,7 +761,7 @@ private fun buildAppearedSelection(
     digits[LAST_DIGIT_POSITION] = weightedDigit(
         candidates = lastDigitCandidates,
         random = random,
-    ) { digit -> analysis.recentWeightedScores[LAST_DIGIT_POSITION][digit] }
+    ) { digit -> analysis.trendWeightedScores[LAST_DIGIT_POSITION][digit] }
     for (position in 0 until LAST_DIGIT_POSITION) {
         digits[position] = analysis.appearedDigits[position].random(random)
     }
@@ -804,7 +826,7 @@ private fun buildColdMixSelection(
             weightedDigit(
                 candidates = candidates,
                 random = random,
-            ) { digit -> analysis.recentWeightedScores[position][digit] }
+            ) { digit -> analysis.trendWeightedScores[position][digit] }
         } else {
             candidates.random(random)
         }
@@ -869,10 +891,69 @@ private fun buildPositionWeightedScores(draws: List<PensionLotteryDrawEntity>): 
     return scores
 }
 
+private fun blendPositionScores(
+    recentScores: List<IntArray>,
+    longTermScores: List<IntArray>,
+): List<IntArray> = recentScores.indices.map { position ->
+    val recentTotal = recentScores[position].sum().coerceAtLeast(1)
+    val longTermTotal = longTermScores[position].sum().coerceAtLeast(1)
+    IntArray(10) { digit ->
+        (blendedFrequencyScore(
+            recentCount = recentScores[position][digit],
+            recentTotal = recentTotal,
+            longTermCount = longTermScores[position][digit],
+            longTermTotal = longTermTotal,
+        ) * TREND_SCORE_SCALE).roundToInt()
+    }
+}
+
+private fun buildGroupSelectionWeights(
+    recentDraws: List<PensionLotteryDrawEntity>,
+    longTermDraws: List<PensionLotteryDrawEntity>,
+): Map<Int, Int> = (1..5).associateWith { groupNo ->
+    val recentFrequency = recentDraws.count { draw -> draw.groupNo == groupNo }.toDouble() /
+        recentDraws.size.coerceAtLeast(1)
+    val longTermFrequency = longTermDraws.count { draw -> draw.groupNo == groupNo }.toDouble() /
+        longTermDraws.size.coerceAtLeast(1)
+    val adjustedFrequency = UNIFORM_GROUP_WEIGHT * UNIFORM_GROUP_FREQUENCY +
+        RECENT_TREND_WEIGHT * recentFrequency +
+        LONG_TERM_GROUP_WEIGHT * longTermFrequency
+    (adjustedFrequency * TREND_SCORE_SCALE).roundToInt().coerceAtLeast(1)
+}
+
+private fun blendedFrequencyScore(
+    recentCount: Int,
+    recentTotal: Int,
+    longTermCount: Int,
+    longTermTotal: Int,
+): Double = RECENT_TREND_WEIGHT * recentCount.toDouble() / recentTotal.coerceAtLeast(1) +
+    LONG_TERM_TREND_WEIGHT * longTermCount.toDouble() / longTermTotal.coerceAtLeast(1)
+
+private fun weightedGroup(
+    candidates: List<Int>,
+    weights: Map<Int, Int>,
+    random: Random,
+): Int {
+    val totalWeight = candidates.sumOf { groupNo -> weights[groupNo]?.coerceAtLeast(1) ?: 1 }
+    var remaining = random.nextInt(totalWeight)
+    candidates.forEach { groupNo ->
+        remaining -= weights[groupNo]?.coerceAtLeast(1) ?: 1
+        if (remaining < 0) return groupNo
+    }
+    return candidates.last()
+}
+
 private fun differingPositionCount(first: String, second: String): Int =
     first.indices.count { index -> first[index] != second[index] }
 
 private const val GENERATOR_ANALYSIS_WEEKS = 16
+private const val LONG_TERM_TREND_WEEKS = 156
+private const val RECENT_TREND_WEIGHT = 0.25
+private const val LONG_TERM_TREND_WEIGHT = 0.75
+private const val UNIFORM_GROUP_WEIGHT = 0.25
+private const val LONG_TERM_GROUP_WEIGHT = 0.50
+private const val UNIFORM_GROUP_FREQUENCY = 0.20
+private const val TREND_SCORE_SCALE = 1_000
 private const val MAX_GENERATION_ATTEMPTS = 20_000
 private const val MAX_SET_GENERATION_ATTEMPTS = 10
 private const val MAX_SET_CANDIDATE_ATTEMPTS = 2_000

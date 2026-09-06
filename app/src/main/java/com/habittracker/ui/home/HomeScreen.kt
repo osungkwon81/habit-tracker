@@ -70,8 +70,8 @@ private val CalendarTodayBorder = Color(0xFFD4A017)
 fun HomeScreen(
     viewModel: HomeViewModel,
     onOpenRecord: (LocalDate) -> Unit,
-    onOpenDiary: () -> Unit,
     onOpenMemo: () -> Unit,
+    onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
@@ -100,14 +100,29 @@ fun HomeScreen(
     AppScreen {
         item {
             AppHeroCard(
-                title = "생활 기록",
-                description = "기록과 일정을 한곳에서 관리합니다.",
+                title = "오늘의 생활",
+                description = "자주 쓰는 기능과 오늘 필요한 정보를 빠르게 확인하세요.",
                 iconRes = R.drawable.ic_launcher_art_v3,
-                eyebrow = "HABIT · HOME",
-                status = "${uiState.currentMonth.year}년 ${uiState.currentMonth.monthValue}월",
+                eyebrow = "MY DAILY DASHBOARD",
+                status = "${today.year}년 ${today.monthValue}월 ${today.dayOfMonth}일",
                 action = {
-                    AppPrimaryButton(text = "오늘 기록하기", onClick = { onOpenRecord(today) }, modifier = Modifier.fillMaxWidth())
+                    AppPrimaryButton(text = "오늘 기록 남기기", onClick = { onOpenRecord(today) }, modifier = Modifier.fillMaxWidth())
                 },
+            )
+        }
+        item {
+            WorkspaceSection(
+                onOpenStock = onOpenStock,
+                onOpenMemo = onOpenMemo,
+                onOpenLotto = onOpenLotto,
+                onOpenPlant = onOpenPlant,
+                onOpenCard = onOpenCard,
+            )
+        }
+        item {
+            AppSectionHeader(
+                title = "생활 기록",
+                subtitle = "날짜를 선택하면 기록과 일기를 한눈에 볼 수 있어요.",
             )
         }
         item {
@@ -131,41 +146,31 @@ fun HomeScreen(
                 recordDetails = uiState.selectedRecordDetails.takeIf { uiState.selectedDate == selectedDate }.orEmpty(),
             )
         }
-        item {
-            WorkspaceSection(
-                onOpenRecord = { onOpenRecord(selectedDate ?: today) },
-                onOpenDiary = onOpenDiary,
-                onOpenMemo = onOpenMemo,
-                onOpenLotto = onOpenLotto,
-                onOpenPlant = onOpenPlant,
-                onOpenCard = onOpenCard,
-            )
-        }
     }
 }
 
 @Composable
 private fun WorkspaceSection(
-    onOpenRecord: () -> Unit,
-    onOpenDiary: () -> Unit,
+    onOpenStock: () -> Unit,
     onOpenMemo: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
-    AppSectionCard {
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
         AppSectionHeader(
-            title = "바로가기",
+            title = "자주 쓰는 기능",
+            subtitle = "사용 빈도가 높은 메뉴를 먼저 배치했어요.",
         )
         val actions = listOf(
-            HomeQuickAction("기록", "선택한 날짜 기록", onOpenRecord),
-            HomeQuickAction("일기", "사진과 하루 기록", onOpenDiary),
-            HomeQuickAction("메모", "빠른 메모·잠금", onOpenMemo),
-            HomeQuickAction("카드 이력", "사용·결제액", onOpenCard),
-            HomeQuickAction("화분", "물주기 일정", onOpenPlant),
-            HomeQuickAction("동행복권", "로또·연금복권", onOpenLotto),
+            HomeQuickAction(R.drawable.ic_stock_wallet, "주식", "포트폴리오와 자동화", Color(0xFFDDEFEA), Color(0xFF145B52), onOpenStock),
+            HomeQuickAction(R.drawable.home_quick_card, "카드", "사용 이력과 결제 예정", Color(0xFFF2E9DD), Color(0xFF76552D), onOpenCard),
+            HomeQuickAction(R.drawable.home_quick_lotto, "동행복권", "로또·연금복권", Color(0xFFFFE8B8), Color(0xFF805B00), onOpenLotto),
+            HomeQuickAction(R.drawable.home_quick_plant, "화분", "오늘의 물주기", Color(0xFFE2EFDF), Color(0xFF3E6540), onOpenPlant),
+            HomeQuickAction(R.drawable.home_quick_memo, "메모", "빠른 메모와 잠금", Color(0xFFEAE5F3), Color(0xFF5E4B7B), onOpenMemo),
         )
-        actions.chunked(2).forEach { rowItems ->
+        FeatureSpotlightCard(action = actions.first())
+        actions.drop(1).chunked(2).forEach { rowItems ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
@@ -185,10 +190,39 @@ private fun WorkspaceSection(
 }
 
 private data class HomeQuickAction(
+    @DrawableRes val iconRes: Int,
     val title: String,
     val subtitle: String,
+    val containerColor: Color,
+    val accentColor: Color,
     val onClick: () -> Unit,
 )
+
+@Composable
+private fun FeatureSpotlightCard(action: HomeQuickAction) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(action.containerColor)
+            .border(1.dp, action.accentColor.copy(alpha = 0.16f), MaterialTheme.shapes.extraLarge)
+            .clickable(onClick = action.onClick)
+            .padding(AppSpacing.md),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FeatureIcon(action = action, size = 56)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(action.title, style = MaterialTheme.typography.titleLarge, color = action.accentColor)
+                Text(action.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("›", style = MaterialTheme.typography.headlineMedium, color = action.accentColor)
+        }
+    }
+}
 
 @Composable
 private fun QuickActionCard(
@@ -198,37 +232,58 @@ private fun QuickActionCard(
     Box(
         modifier = modifier
             .clip(MaterialTheme.shapes.large)
-            .background(MaterialTheme.colorScheme.surface)
+            .background(action.containerColor)
+            .border(1.dp, action.accentColor.copy(alpha = 0.12f), MaterialTheme.shapes.large)
             .clickable(onClick = action.onClick)
-            .padding(12.dp),
+            .padding(14.dp),
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = action.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = action.subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            FeatureIcon(action = action, size = 44)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = action.title,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = action.accentColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = action.subtitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text("›", style = MaterialTheme.typography.titleLarge, color = action.accentColor)
             }
-            Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun FeatureIcon(action: HomeQuickAction, size: Int) {
+    Box(
+        modifier = Modifier
+            .size(size.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(Color.White.copy(alpha = 0.62f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(action.iconRes),
+            contentDescription = null,
+            modifier = Modifier.size((size - 10).dp),
+            contentScale = ContentScale.Fit,
+        )
     }
 }
 

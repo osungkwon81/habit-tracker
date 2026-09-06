@@ -50,7 +50,10 @@ object LottoTicketResultNotifier {
             val rankSummary = result.winningRankCounts.entries
                 .sortedBy { entry -> entry.key }
                 .joinToString(" · ") { (rank, count) -> "${rank}등 ${count}게임" }
-            "$sourceSummary 중 $rankSummary 당첨입니다."
+            val prizeSummary = result.estimatedPrizeAmount?.let { amount ->
+                " · 공식 예상 당첨금 ${"%,d".format(amount)}원"
+            }.orEmpty()
+            "$sourceSummary 중 $rankSummary 당첨입니다.$prizeSummary"
         } else {
             "$sourceSummary 번호를 확인했습니다. 최고 ${result.maximumMatchCount}개 일치로 미당첨입니다."
         }

@@ -30,6 +30,6 @@ enum class AppDestination(
         candidateRoute == route || candidateRoute?.startsWith("$route/") == true
 
     companion object {
-        val bottomNavigation = listOf(HOME, ENTRY, STATS, MORE)
+        val bottomNavigation = listOf(HOME, STOCK, CARD, LOTTO, MORE)
     }
 }

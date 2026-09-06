@@ -804,11 +804,12 @@ private fun RoundSavedTicketDeck(
                                     setTickets.forEachIndexed { ticketIndex, ticket ->
                                         val winningRank = draw?.let { winningDraw -> calculateWinningRank(ticket, winningDraw) }
                                         val matchCount = draw?.numbers()?.let { winningNumbers -> ticket.numbers().count(winningNumbers::contains) }
+                                        val estimatedPrize = winningRank?.let { rank -> draw?.prizeAmount(rank) }
                                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text(text = "${ticketIndex + 1}번 번호", fontWeight = FontWeight.SemiBold, color = LottoTextStrongColor)
                                                 Text(
-                                                    text = formatWinningStatusWithMatchCount(winningRank, matchCount),
+                                                    text = formatWinningStatusWithMatchCount(winningRank, matchCount, estimatedPrize),
                                                     color = if (winningRank != null) ChatGptAccent else LottoTextMutedColor,
                                                     style = MaterialTheme.typography.bodySmall,
                                                     fontWeight = FontWeight.Bold,
@@ -969,13 +970,14 @@ private fun PhysicalQrRoundCard(
                         val matchCount = draw?.numbers()?.let { winningNumbers ->
                             ticket.numbers().count(winningNumbers::contains)
                         }
+                        val estimatedPrize = rank?.let { winningRank -> draw?.prizeAmount(winningRank) }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text("${index + 1}번 번호", fontWeight = FontWeight.SemiBold)
                             Text(
-                                formatWinningStatusWithMatchCount(rank, matchCount),
+                                formatWinningStatusWithMatchCount(rank, matchCount, estimatedPrize),
                                 color = if (rank != null) ChatGptAccent else LottoTextMutedColor,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
@@ -1428,8 +1430,14 @@ private fun formatWinningStatus(rank: Int?, matchCount: Int?): String {
     }
 }
 
-private fun formatWinningStatusWithMatchCount(rank: Int?, matchCount: Int?): String {
-    return matchCount?.let { "${formatWinningStatus(rank, it)} ${it}개" } ?: formatWinningStatus(null, null)
+private fun formatWinningStatusWithMatchCount(
+    rank: Int?,
+    matchCount: Int?,
+    estimatedPrizeAmount: Long? = null,
+): String {
+    val status = matchCount?.let { "${formatWinningStatus(rank, it)} ${it}개" }
+        ?: formatWinningStatus(null, null)
+    return estimatedPrizeAmount?.let { "$status · 예상 ${formatWon(it)}" } ?: status
 }
 
 internal fun formatWon(amount: Long): String {

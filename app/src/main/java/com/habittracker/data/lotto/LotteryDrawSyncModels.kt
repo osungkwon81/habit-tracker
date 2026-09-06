@@ -50,6 +50,7 @@ data class OfficialLottoDraw(
     val drawDate: LocalDate,
     val numbers: List<Int>,
     val bonusNumber: Int,
+    val prizeAmounts: Map<Int, Long>,
     val sourceReference: String,
     val sourceContentHash: String,
 )
@@ -72,6 +73,7 @@ data class LottoPurchasedTicketResult(
     val physicalQrTicketCount: Int,
     val winningRankCounts: Map<Int, Int>,
     val maximumMatchCount: Int,
+    val estimatedPrizeAmount: Long?,
 )
 
 data class PensionLotteryPurchasedNumberResult(

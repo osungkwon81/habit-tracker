@@ -298,12 +298,18 @@ class HabitRepository(
                         roundNo = official.roundNo,
                         numbers = official.numbers,
                         bonusNumber = official.bonusNumber,
+                        prizeAmounts = official.prizeAmounts,
                         dataSource = lottoDrawSourceOfficial,
                         sourceReference = official.sourceReference,
                         sourceContentHash = official.sourceContentHash,
                     )
                     val drawToSave = existing?.copy(
                         bonusNumber = official.bonusNumber,
+                        rank1PrizeAmount = official.prizeAmounts[1] ?: existing.rank1PrizeAmount,
+                        rank2PrizeAmount = official.prizeAmounts[2] ?: existing.rank2PrizeAmount,
+                        rank3PrizeAmount = official.prizeAmounts[3] ?: existing.rank3PrizeAmount,
+                        rank4PrizeAmount = official.prizeAmounts[4] ?: existing.rank4PrizeAmount,
+                        rank5PrizeAmount = official.prizeAmounts[5] ?: existing.rank5PrizeAmount,
                         dataSource = lottoDrawSourceOfficial,
                         sourceReference = official.sourceReference,
                         sourceContentHash = official.sourceContentHash,
@@ -389,12 +395,19 @@ class HabitRepository(
         val maximumMatchCount = tickets.maxOf { ticket ->
             ticket.numbers().count(winningNumbers::contains)
         }
+        val estimatedPrizeAmount = rankCounts.entries
+            .map { (rank, count) ->
+                draw.prizeAmount(rank)?.let { amount -> Math.multiplyExact(amount, count.toLong()) }
+            }
+            .takeIf { amounts -> amounts.none { it == null } }
+            ?.sumOf { it ?: 0L }
         return LottoPurchasedTicketResult(
             roundNo = roundNo,
             totalTicketCount = tickets.size,
             physicalQrTicketCount = tickets.count { ticket -> ticket.sourceLabel == lottoQrSource },
             winningRankCounts = rankCounts,
             maximumMatchCount = maximumMatchCount,
+            estimatedPrizeAmount = estimatedPrizeAmount,
         )
     }
 

@@ -38,12 +38,18 @@ class DhlotteryDrawClient {
                 require(bonusNumber in 1..45 && bonusNumber !in numbers) {
                     "공식 로또 보너스 번호 값이 올바르지 않습니다."
                 }
+                val prizeAmounts = (1..5).mapNotNull { rank ->
+                    item.optLong("rnk${rank}WnAmt")
+                        .takeIf { amount -> amount > 0L }
+                        ?.let { amount -> rank to amount }
+                }.toMap()
                 add(
                     OfficialLottoDraw(
                         roundNo = item.getInt("ltEpsd"),
                         drawDate = item.getString("ltRflYmd").toBasicDate(),
                         numbers = numbers.sorted(),
                         bonusNumber = bonusNumber,
+                        prizeAmounts = prizeAmounts,
                         sourceReference = url.toString(),
                         sourceContentHash = hash,
                     ),

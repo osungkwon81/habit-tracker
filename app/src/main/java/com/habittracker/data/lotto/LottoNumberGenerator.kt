@@ -56,7 +56,8 @@ object LottoNumberGenerator {
     private const val adaptiveSignificanceZ = 2.40
     private const val adaptiveMaximumLift = 0.08
     private const val adaptiveSegmentCount = 3
-    private const val recentSumWindow = 30
+    private const val recentTrendWindow = 16
+    private const val recentTrendBlendWeight = 0.25
     private const val minimumSumImprovementRate = 0.01
     private val baseAppearanceRate = pickCount.toDouble() / maxNumber
     private val theoreticalSumAverage = pickCount * (maxNumber + 1) / 2.0
@@ -83,10 +84,9 @@ object LottoNumberGenerator {
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
-            history = normalizedHistory,
             gameCount = gameCount,
             generator = { generateRandomCombination(randomSource) },
-            validator = { numbers -> isBalancedCandidate(numbers, trendProfile) },
+            validator = ::isValidCandidate,
             scorer = { numbers ->
                 scoreCandidate(
                     numbers = numbers,
@@ -125,10 +125,9 @@ object LottoNumberGenerator {
         val lastDraw = normalizedHistory.first()
 
         return generateRankedTickets(
-            history = normalizedHistory,
             gameCount = gameCount,
             generator = { generateRandomCombination(randomSource) },
-            validator = ::isDiversifiedCandidate,
+            validator = ::isValidCandidate,
             scorer = { numbers ->
                 scoreCandidate(
                     numbers = numbers,
@@ -194,7 +193,8 @@ object LottoNumberGenerator {
           "defaultGameCount": $defaultGameCount,
           "candidateMaxAttemptMultiplier": 20,
           "history": {
-            "recentWindow": $recentSumWindow,
+            "recentWindow": $recentTrendWindow,
+            "recentBlendWeight": $recentTrendBlendWeight,
             "analysisWindow": 180,
             "minimumBacktestTrainingDraws": $minimumBacktestTrainingDraws,
             "minimumBacktestSamples": $minimumBacktestSamples,
@@ -203,10 +203,10 @@ object LottoNumberGenerator {
             "backtestSampleCount": $backtestSampleCount,
             "historyAnalysisMaximumScore": $historyAnalysisMaximumScore,
             "evidenceWindows": [
-              {"size": 10, "weight": 0.40, "priorDraws": 18.0},
-              {"size": 30, "weight": 0.30, "priorDraws": 28.0},
-              {"size": 90, "weight": 0.20, "priorDraws": 45.0},
-              {"size": "ALL", "weight": 0.10, "priorDraws": 80.0}
+              {"size": 16, "weight": 0.20, "priorDraws": 32.0},
+              {"size": 52, "weight": 0.25, "priorDraws": 52.0},
+              {"size": 156, "weight": 0.25, "priorDraws": 90.0},
+              {"size": "ALL", "weight": 0.30, "priorDraws": 160.0}
             ]
           },
           "modes": {
@@ -215,20 +215,10 @@ object LottoNumberGenerator {
             "PRECISE": {"candidatePoolSize": ${LottoGenerationMode.PRECISE.candidatePoolSize}, "finalistPoolSize": ${LottoGenerationMode.PRECISE.finalistPoolSize}}
           },
           "baseFilter": {
-            "sum": [65, 215],
-            "oddCount": [0, 6],
-            "lowNumberMax": 22,
-            "lowCount": [0, 6],
-            "highNumberMin": 32,
-            "highCountMax": 5,
-            "middleRange": [16, 30],
-            "middleCount": [0, 5],
-            "spread": [13, 44],
-            "variance": [20.0, 290.0],
-            "minimumDecadeBuckets": 2,
-            "maximumSameTailCount": 3,
-            "maximumConsecutiveRun": 3,
-            "minimumAcValue": 3
+            "numberRange": [1, 45],
+            "pickCount": 6,
+            "duplicatesAllowed": false,
+            "statisticalPatterns": "SCORING_ONLY"
           },
           "candidateSampling": {
             "method": "UNIFORM_WITHOUT_REPLACEMENT",
@@ -253,7 +243,7 @@ object LottoNumberGenerator {
             "segmentCount": $adaptiveSegmentCount,
             "significanceZ": $adaptiveSignificanceZ,
             "sum": {
-              "recentWindow": $recentSumWindow,
+              "recentWindow": $recentTrendWindow,
               "fixedAverage": $theoreticalSumAverage,
               "minimumImprovementRate": $minimumSumImprovementRate,
               "inactiveBehavior": "STRUCTURAL_ONLY"
@@ -356,7 +346,7 @@ object LottoNumberGenerator {
         includeBacktest: Boolean = true,
         backtestStrategy: CoverageStrategy,
     ): TrendProfile {
-        val recentWindow = history.take(minOf(recentSumWindow, history.size)).ifEmpty { history }
+        val recentWindow = history.take(minOf(recentTrendWindow, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
         val longPairFrequency = buildPairFrequencyMap(history)
         val historyAnalysis = buildHistoryAnalysisProfile(history)
@@ -370,10 +360,22 @@ object LottoNumberGenerator {
         }
 
         return TrendProfile(
-            recentSumAverage = recentWindow.map(List<Int>::sum).average(),
-            recentOddAverage = recentWindow.map { draw -> draw.count { it % 2 != 0 } }.average(),
-            recentLowAverage = recentWindow.map { draw -> draw.count { it <= 22 } }.average(),
-            recentBucketAverage = recentWindow.map(::decadeBucketCount).average(),
+            recentSumAverage = blendRecentTrend(
+                recentWindow.map(List<Int>::sum).average(),
+                historyAnalysis.sumAverage,
+            ),
+            recentOddAverage = blendRecentTrend(
+                recentWindow.map { draw -> draw.count { it % 2 != 0 } }.average(),
+                historyAnalysis.oddAverage,
+            ),
+            recentLowAverage = blendRecentTrend(
+                recentWindow.map { draw -> draw.count { it <= 22 } }.average(),
+                historyAnalysis.lowAverage,
+            ),
+            recentBucketAverage = blendRecentTrend(
+                recentWindow.map(::decadeBucketCount).average(),
+                historyAnalysis.bucketAverage,
+            ),
             numberEvidence = buildNumberEvidence(history),
             pairEvidence = buildPairEvidence(history, longFrequency, longPairFrequency),
             currentGaps = lastSeenGap,
@@ -395,57 +397,15 @@ object LottoNumberGenerator {
         return selected.sorted()
     }
 
-    private fun isBaseCoverageCandidate(numbers: List<Int>): Boolean {
-        if (numbers.size != pickCount || numbers.distinct().size != pickCount) return false
-        val sum = numbers.sum()
-        if (sum !in 65..215) return false
-        val highCount = numbers.count { it >= 32 }
-        if (highCount > 5) return false
-        val middleCount = numbers.count { it in 16..30 }
-        if (middleCount > 5) return false
-        val spread = numbers.last() - numbers.first()
-        if (spread !in 13..44) return false
-        if (numberVariance(numbers) !in 20.0..290.0) return false
-        if (decadeBucketCount(numbers) < 2) return false
-        val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
-        if (tailDuplicates > 3) return false
-        if (maxConsecutiveRun(numbers) > 3) return false
-        return acValue(numbers) >= 3
-    }
+    private fun blendRecentTrend(recentAverage: Double, longAverage: Double): Double =
+        recentAverage * recentTrendBlendWeight + longAverage * (1.0 - recentTrendBlendWeight)
 
-    private fun isBalancedCandidate(numbers: List<Int>, trendProfile: TrendProfile): Boolean {
-        if (!isBaseCoverageCandidate(numbers)) return false
-        val sum = numbers.sum()
-        val oddCount = numbers.count { it % 2 != 0 }
-        val lowCount = numbers.count { it <= 22 }
-        val highCount = numbers.count { it >= 32 }
-        val bucketCounts = decadeBucketCounts(numbers)
-
-        if (
-            trendProfile.sumValidationProfile.applied &&
-            abs(sum - trendProfile.recentSumAverage) > 42.0
-        ) {
-            return false
-        }
-        if (abs(oddCount - trendProfile.recentOddAverage) > 2.5) return false
-        if (abs(lowCount - trendProfile.recentLowAverage) > 2.5) return false
-        if (highCount !in 0..5) return false
-        if (bucketCounts.values.any { it > 3 }) return false
-        return numberVariance(numbers) in 35.0..263.0
-    }
-
-    private fun isDiversifiedCandidate(numbers: List<Int>): Boolean {
-        if (!isBaseCoverageCandidate(numbers)) return false
-        val tailDuplicates = numbers.groupBy { it % 10 }.values.maxOfOrNull(List<Int>::size) ?: 1
-
-        if (numbers.last() - numbers.first() < 22) return false
-        if (decadeBucketCount(numbers) < 3) return false
-        if (tailDuplicates > 3) return false
-        return acValue(numbers) >= 4
-    }
+    private fun isValidCandidate(numbers: List<Int>): Boolean =
+        numbers.size == pickCount &&
+            numbers.distinct().size == pickCount &&
+            numbers.all { it in 1..maxNumber }
 
     private fun generateRankedTickets(
-        history: List<List<Int>>,
         gameCount: Int,
         generator: () -> List<Int>,
         validator: (List<Int>) -> Boolean,
@@ -461,7 +421,7 @@ object LottoNumberGenerator {
 
         while (candidates.size < mode.candidatePoolSize && attempt < maxAttempts) {
             val candidate = generator().sorted()
-            if (validator(candidate) && !isHistoricalDuplicate(candidate, history)) {
+            if (validator(candidate)) {
                 candidates += candidate
             }
             attempt++
@@ -770,10 +730,10 @@ object LottoNumberGenerator {
 
     private fun buildNumberEvidence(history: List<List<Int>>): Map<Int, Double> {
         val windows = listOf(
-            EvidenceWindow(size = 10, weight = 0.40, priorDraws = 18.0),
-            EvidenceWindow(size = 30, weight = 0.30, priorDraws = 28.0),
-            EvidenceWindow(size = 90, weight = 0.20, priorDraws = 45.0),
-            EvidenceWindow(size = history.size, weight = 0.10, priorDraws = 80.0),
+            EvidenceWindow(size = 16, weight = 0.20, priorDraws = 32.0),
+            EvidenceWindow(size = 52, weight = 0.25, priorDraws = 52.0),
+            EvidenceWindow(size = 156, weight = 0.25, priorDraws = 90.0),
+            EvidenceWindow(size = history.size, weight = 0.30, priorDraws = 160.0),
         )
 
         return (1..maxNumber).associateWith { number ->
@@ -868,9 +828,9 @@ object LottoNumberGenerator {
     }
 
     private fun buildSumValidationProfile(history: List<List<Int>>): SumValidationProfile {
-        // 최근 합 평균은 고정 이론 평균보다 지속적으로 오차가 작을 때만 생성 조건에 사용한다.
+        // 최근 합 평균은 고정 이론 평균보다 지속적으로 오차가 작을 때만 분포 점수에 사용한다.
         val chronologicalHistory = history.asReversed()
-        val evaluationRoundCount = chronologicalHistory.size - recentSumWindow
+        val evaluationRoundCount = chronologicalHistory.size - recentTrendWindow
         if (evaluationRoundCount <= 0) return SumValidationProfile()
 
         var recentAbsoluteErrorTotal = 0.0
@@ -879,16 +839,16 @@ object LottoNumberGenerator {
         val segmentFixedErrors = DoubleArray(adaptiveSegmentCount)
         val segmentSamples = IntArray(adaptiveSegmentCount)
 
-        for (targetIndex in recentSumWindow until chronologicalHistory.size) {
+        for (targetIndex in recentTrendWindow until chronologicalHistory.size) {
             val recentAverage = chronologicalHistory
-                .subList(targetIndex - recentSumWindow, targetIndex)
+                .subList(targetIndex - recentTrendWindow, targetIndex)
                 .map(List<Int>::sum)
                 .average()
             val actualSum = chronologicalHistory[targetIndex].sum().toDouble()
             val recentError = abs(actualSum - recentAverage)
             val fixedError = abs(actualSum - theoreticalSumAverage)
             val segmentIndex = (
-                (targetIndex - recentSumWindow) * adaptiveSegmentCount /
+                (targetIndex - recentTrendWindow) * adaptiveSegmentCount /
                     evaluationRoundCount
                 ).coerceIn(0, adaptiveSegmentCount - 1)
 
@@ -1025,10 +985,7 @@ object LottoNumberGenerator {
             while (randomScores.size < backtestRandomCandidateCount && randomAttempt < maximumRandomAttempts) {
                 randomAttempt++
                 val randomNumbers = generateRandomCombination(baselineRandom)
-                val randomEligible = when (strategy) {
-                    CoverageStrategy.BALANCED -> isBalancedCandidate(randomNumbers, trainingProfile)
-                    CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(randomNumbers)
-                } && !isHistoricalDuplicate(randomNumbers, trainingHistory)
+                val randomEligible = isValidCandidate(randomNumbers)
                 if (!randomEligible) continue
                 randomScores += scoreCandidate(
                     numbers = randomNumbers,
@@ -1040,10 +997,7 @@ object LottoNumberGenerator {
             }
             if (randomScores.isEmpty()) continue
 
-            val actualEligible = when (strategy) {
-                CoverageStrategy.BALANCED -> isBalancedCandidate(actualNumbers, trainingProfile)
-                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(actualNumbers)
-            } && !isHistoricalDuplicate(actualNumbers, trainingHistory)
+            val actualEligible = isValidCandidate(actualNumbers)
             val actualCandidateScore = actualNumbers.takeIf { actualEligible }?.let { numbers ->
                 scoreCandidate(
                     numbers = numbers,
@@ -1130,10 +1084,7 @@ object LottoNumberGenerator {
         while (candidates.size < backtestStrategyCandidateCount && attempt < maximumAttempts) {
             attempt++
             val numbers = generateRandomCombination(randomSource)
-            val eligible = when (strategy) {
-                CoverageStrategy.BALANCED -> isBalancedCandidate(numbers, trainingProfile)
-                CoverageStrategy.DIVERSIFIED -> isDiversifiedCandidate(numbers)
-            } && !isHistoricalDuplicate(numbers, trainingHistory)
+            val eligible = isValidCandidate(numbers)
             if (eligible) candidates += numbers
         }
         return candidates.map { numbers ->
@@ -1393,9 +1344,6 @@ object LottoNumberGenerator {
 
         return spreadBonus - birthdayPenalty - birthdayHeavyPenalty - simplePatternPenalty - sameTailPenalty - roundNumberPenalty
     }
-
-    private fun isHistoricalDuplicate(numbers: List<Int>, history: List<List<Int>>): Boolean =
-        history.any { past -> past == numbers }
 
     private fun acValue(numbers: List<Int>): Int {
         val diffs = mutableSetOf<Int>()

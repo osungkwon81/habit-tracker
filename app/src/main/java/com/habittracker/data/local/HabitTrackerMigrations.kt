@@ -882,6 +882,20 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_32_33 = object : Migration(32, 33) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            listOf(
+                "rank1_prize_amount",
+                "rank2_prize_amount",
+                "rank3_prize_amount",
+                "rank4_prize_amount",
+                "rank5_prize_amount",
+            ).forEach { column ->
+                database.execSQL("ALTER TABLE `lotto_draw` ADD COLUMN `$column` INTEGER")
+            }
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -910,6 +924,7 @@ object HabitTrackerMigrations {
         MIGRATION_29_30,
         MIGRATION_30_31,
         MIGRATION_31_32,
+        MIGRATION_32_33,
     )
 }
 

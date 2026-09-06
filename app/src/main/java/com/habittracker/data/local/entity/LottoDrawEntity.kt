@@ -24,6 +24,16 @@ data class LottoDrawEntity(
     val number6: Int,
     @ColumnInfo(name = "bonus_number")
     val bonusNumber: Int? = null,
+    @ColumnInfo(name = "rank1_prize_amount")
+    val rank1PrizeAmount: Long? = null,
+    @ColumnInfo(name = "rank2_prize_amount")
+    val rank2PrizeAmount: Long? = null,
+    @ColumnInfo(name = "rank3_prize_amount")
+    val rank3PrizeAmount: Long? = null,
+    @ColumnInfo(name = "rank4_prize_amount")
+    val rank4PrizeAmount: Long? = null,
+    @ColumnInfo(name = "rank5_prize_amount")
+    val rank5PrizeAmount: Long? = null,
     @ColumnInfo(name = "data_source", defaultValue = "'LEGACY'")
     val dataSource: String = "MANUAL",
     @ColumnInfo(name = "source_reference")
@@ -35,11 +45,21 @@ data class LottoDrawEntity(
 ) {
     fun numbers(): List<Int> = listOf(number1, number2, number3, number4, number5, number6)
 
+    fun prizeAmount(rank: Int): Long? = when (rank) {
+        1 -> rank1PrizeAmount
+        2 -> rank2PrizeAmount
+        3 -> rank3PrizeAmount
+        4 -> rank4PrizeAmount
+        5 -> rank5PrizeAmount
+        else -> null
+    }
+
     companion object {
         fun from(
             roundNo: Int,
             numbers: List<Int>,
             bonusNumber: Int? = null,
+            prizeAmounts: Map<Int, Long> = emptyMap(),
             dataSource: String = "MANUAL",
             sourceReference: String? = null,
             sourceContentHash: String? = null,
@@ -51,6 +71,9 @@ data class LottoDrawEntity(
             require(bonusNumber == null || bonusNumber in 1..45) { "보너스 번호는 1부터 45 사이여야 합니다." }
             require(bonusNumber == null || bonusNumber !in numbers) { "보너스 번호는 당첨 번호와 중복될 수 없습니다." }
             require(dataSource.isNotBlank()) { "추첨 데이터 출처가 필요합니다." }
+            require(prizeAmounts.keys.all { it in 1..5 } && prizeAmounts.values.all { it > 0L }) {
+                "등수별 당첨금 값이 올바르지 않습니다."
+            }
             val sanitizedSourceReference = sourceReference?.trim()?.takeIf(String::isNotEmpty)
             val sanitizedSourceContentHash = sourceContentHash?.trim()?.takeIf(String::isNotEmpty)
             require((sanitizedSourceReference == null) == (sanitizedSourceContentHash == null)) {
@@ -66,6 +89,11 @@ data class LottoDrawEntity(
                 number5 = sortedNumbers[4],
                 number6 = sortedNumbers[5],
                 bonusNumber = bonusNumber,
+                rank1PrizeAmount = prizeAmounts[1],
+                rank2PrizeAmount = prizeAmounts[2],
+                rank3PrizeAmount = prizeAmounts[3],
+                rank4PrizeAmount = prizeAmounts[4],
+                rank5PrizeAmount = prizeAmounts[5],
                 dataSource = dataSource,
                 sourceReference = sanitizedSourceReference,
                 sourceContentHash = sanitizedSourceContentHash,

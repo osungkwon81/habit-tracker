@@ -163,7 +163,7 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MORE.route) {
                 AppScreen {
                     item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.DIARY, AppDestination.MEMO, AppDestination.CARD, AppDestination.STOCK, AppDestination.PLANT, AppDestination.LOTTO, AppDestination.ADMIN)) { destination ->
+                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.STATS, AppDestination.ADMIN)) { destination ->
                         ListItem(
                             headlineContent = { Text(destination.label) },
                             trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -177,8 +177,8 @@ private fun HabitTrackerApp() {
                 HomeScreen(
                     viewModel = viewModel,
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
-                    onOpenDiary = { navController.navigate(AppDestination.DIARY.route) },
                     onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
+                    onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
                     onOpenCard = { navController.navigate(AppDestination.CARD.route) },
@@ -304,29 +304,31 @@ private fun AppBottomNavigation(navController: NavHostController) {
     val currentDestination = navBackStackEntry?.destination
 
     val guard = LocalAppNavigationGuard.current
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-            AppDestination.bottomNavigation.forEach { destination ->
-                val selected = if (destination == AppDestination.MORE) {
-                    currentDestination != null && AppDestination.bottomNavigation.filterNot { it == AppDestination.MORE }.none { it.matches(currentDestination.route) }
-                } else currentDestination?.hierarchy?.any { current ->
-                    destination.matches(current.route)
-                } == true
-                NavigationBarItem(
-                    label = { Text(destination.label, maxLines = 1) },
-                    icon = { NavigationIcon(destination) },
-                    selected = selected,
-                    onClick = {
-                        if (destination.route != currentDestination?.route) guard.navigate {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+        AppDestination.bottomNavigation.forEach { destination ->
+            val selected = if (destination == AppDestination.MORE) {
+                currentDestination != null && AppDestination.bottomNavigation
+                    .filterNot { it == AppDestination.MORE }
+                    .none { it.matches(currentDestination.route) }
+            } else currentDestination?.hierarchy?.any { current ->
+                destination.matches(current.route)
+            } == true
+            NavigationBarItem(
+                label = { Text(destination.label, maxLines = 1) },
+                icon = { NavigationIcon(destination) },
+                selected = selected,
+                onClick = {
+                    if (destination.route != currentDestination?.route) guard.navigate {
                         val popped = navController.popBackStack(destination.route, false)
                         if (!popped) {
                             navController.navigate(destination.route) {
                                 launchSingleTop = true
                             }
                         }
-                        }
-                    },
-                )
-            }
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -342,12 +344,18 @@ private fun NavigationIcon(destination: AppDestination) {
                 lineTo(21 * u, 21 * u); lineTo(15 * u, 21 * u); lineTo(15 * u, 14 * u)
                 lineTo(9 * u, 14 * u); lineTo(9 * u, 21 * u); lineTo(3 * u, 21 * u); close()
             }, color, style = stroke)
-            AppDestination.ENTRY -> {
+            AppDestination.STOCK -> {
                 drawRect(color, Offset(4 * u, 3 * u), androidx.compose.ui.geometry.Size(16 * u, 18 * u), style = stroke)
-                drawPath(Path().apply { moveTo(7 * u, 12 * u); lineTo(11 * u, 16 * u); lineTo(17 * u, 8 * u) }, color, style = stroke)
+                drawPath(Path().apply { moveTo(7 * u, 16 * u); lineTo(11 * u, 11 * u); lineTo(14 * u, 13 * u); lineTo(18 * u, 7 * u) }, color, style = stroke)
             }
-            AppDestination.STATS -> listOf(12f, 5f, 9f).forEachIndexed { index, top ->
-                drawLine(color, Offset((5 + index * 7) * u, 21 * u), Offset((5 + index * 7) * u, top * u), 3 * u)
+            AppDestination.CARD -> {
+                drawRoundRect(color, Offset(2 * u, 5 * u), androidx.compose.ui.geometry.Size(20 * u, 14 * u), androidx.compose.ui.geometry.CornerRadius(3 * u), style = stroke)
+                drawLine(color, Offset(3 * u, 10 * u), Offset(21 * u, 10 * u), 1.8f * u)
+            }
+            AppDestination.LOTTO -> {
+                drawCircle(color, 9 * u, Offset(12 * u, 12 * u), style = stroke)
+                drawCircle(color, 2 * u, Offset(9 * u, 10 * u))
+                drawCircle(color, 2 * u, Offset(15 * u, 14 * u))
             }
             else -> listOf(6f, 18f).forEach { x -> listOf(6f, 18f).forEach { y -> drawCircle(color, 2.5f * u, Offset(x * u, y * u)) } }
         }
