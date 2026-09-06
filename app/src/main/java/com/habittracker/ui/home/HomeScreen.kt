@@ -102,7 +102,7 @@ fun HomeScreen(
             AppHeroCard(
                 title = "오늘의 생활",
                 description = "자주 쓰는 기능과 오늘 필요한 정보를 빠르게 확인하세요.",
-                iconRes = R.drawable.ic_launcher_art_v4,
+                iconRes = R.drawable.ic_launcher_art_v5,
                 eyebrow = "MY DAILY DASHBOARD",
                 status = "${today.year}년 ${today.monthValue}월 ${today.dayOfMonth}일",
                 action = {
