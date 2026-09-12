@@ -896,6 +896,30 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_33_34 = object : Migration(33, 34) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `saved_at` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `target_round_no` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `analysis_through_round` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `generation_version` TEXT NOT NULL DEFAULT 'legacy'")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `generation_config_hash` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `input_data_hash` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `generation_seed` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `is_control` INTEGER NOT NULL DEFAULT 0")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `is_evaluation_target` INTEGER NOT NULL DEFAULT 0")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `is_hidden` INTEGER NOT NULL DEFAULT 0")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `evaluated_at` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `matched_suffix_length` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `position_match_count` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `is_bonus_match` INTEGER")
+            database.execSQL("ALTER TABLE `lotto_purchase` ADD COLUMN `source_generation_number_id` INTEGER")
+            database.execSQL("ALTER TABLE `pension_lottery_draw` ADD COLUMN `draw_date` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_draw` ADD COLUMN `source_reference` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_draw` ADD COLUMN `source_content_hash` TEXT")
+            database.execSQL("ALTER TABLE `pension_lottery_draw` ADD COLUMN `collected_at` TEXT")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -925,6 +949,7 @@ object HabitTrackerMigrations {
         MIGRATION_30_31,
         MIGRATION_31_32,
         MIGRATION_32_33,
+        MIGRATION_33_34,
     )
 }
 

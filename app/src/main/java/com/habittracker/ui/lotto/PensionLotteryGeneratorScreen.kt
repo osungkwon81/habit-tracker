@@ -108,7 +108,7 @@ fun PensionLotteryGeneratorScreen(
                 AppPrimaryButton(
                     text = when {
                         uiState.isGenerating -> "번호 생성 중"
-                        uiState.hasGenerationConditionChanged -> "변경 조건으로 네 번호 재생성"
+                        uiState.hasGenerationConditionChanged -> "적용 조건 변경 · 번호 새로 생성"
                         uiState.generatedNumbers.isEmpty() -> "이번 주 고정 번호 4개 생성"
                         else -> "새 주 고정 번호 4개 생성"
                     },

@@ -3,6 +3,8 @@ package com.habittracker.data.local.entity
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import java.time.LocalDate
+import java.time.LocalDateTime
 
 @Entity(tableName = "pension_lottery_draw")
 data class PensionLotteryDrawEntity(
@@ -15,6 +17,14 @@ data class PensionLotteryDrawEntity(
     val winningNumber: String,
     @ColumnInfo(name = "bonus_number")
     val bonusNumber: String? = null,
+    @ColumnInfo(name = "draw_date")
+    val drawDate: LocalDate? = null,
+    @ColumnInfo(name = "source_reference")
+    val sourceReference: String? = null,
+    @ColumnInfo(name = "source_content_hash")
+    val sourceContentHash: String? = null,
+    @ColumnInfo(name = "collected_at")
+    val collectedAt: LocalDateTime? = null,
 ) {
     init {
         require(roundNo > 0) { "연금복권 회차는 1 이상이어야 합니다." }

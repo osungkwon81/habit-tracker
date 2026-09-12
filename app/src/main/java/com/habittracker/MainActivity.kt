@@ -82,6 +82,7 @@ import com.habittracker.ui.plant.PlantScreen
 import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsScreen
 import com.habittracker.ui.stats.MonthlyStatsViewModel
+import com.habittracker.ui.settings.AppManagementScreen
 import com.habittracker.ui.stock.StockScreen
 import com.habittracker.ui.stock.StockAutomationScreen
 import com.habittracker.ui.stock.StockJournalScreen
@@ -163,7 +164,7 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MORE.route) {
                 AppScreen {
                     item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.STATS, AppDestination.ADMIN)) { destination ->
+                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.STATS, AppDestination.SETTINGS)) { destination ->
                         ListItem(
                             headlineContent = { Text(destination.label) },
                             trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -213,6 +214,9 @@ private fun HabitTrackerApp() {
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = viewModelFactory)
                 MonthlyStatsScreen(viewModel = viewModel, onOpenEntry = { navController.navigate(AppDestination.ENTRY.route) })
+            }
+            composable(AppDestination.SETTINGS.route) {
+                AppManagementScreen()
             }
             composable(AppDestination.STOCK.route) {
                 val viewModel: StockViewModel = viewModel(factory = viewModelFactory)

@@ -61,6 +61,8 @@ data class OfficialPensionLotteryDraw(
     val groupNo: Int,
     val winningNumber: String,
     val bonusNumber: String,
+    val sourceReference: String,
+    val sourceContentHash: String,
 )
 
 data class OfficialLottoDrawBatch(
@@ -71,6 +73,7 @@ data class LottoPurchasedTicketResult(
     val roundNo: Int,
     val totalTicketCount: Int,
     val physicalQrTicketCount: Int,
+    val winningSetCount: Int,
     val winningRankCounts: Map<Int, Int>,
     val maximumMatchCount: Int,
     val estimatedPrizeAmount: Long?,

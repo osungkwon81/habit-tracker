@@ -1,5 +1,6 @@
 package com.habittracker.ui.home
 
+import android.content.Context
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -49,6 +51,7 @@ import com.habittracker.ui.components.AppSpacing
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
+import java.time.temporal.TemporalAdjusters
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.TextButton
@@ -157,18 +160,36 @@ private fun WorkspaceSection(
     onOpenPlant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
+    val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
         AppSectionHeader(
             title = "자주 쓰는 기능",
             subtitle = "사용 빈도가 높은 메뉴를 먼저 배치했어요.",
         )
-        val actions = listOf(
-            HomeQuickAction(R.drawable.ic_category_stock, "주식", "포트폴리오와 자동화", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenStock),
-            HomeQuickAction(R.drawable.ic_category_card, "카드", "사용 이력과 결제 예정", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenCard),
-            HomeQuickAction(R.drawable.ic_category_lotto, "동행복권", "로또·연금복권", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenLotto),
-            HomeQuickAction(R.drawable.ic_category_plant, "화분", "오늘의 물주기", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
-            HomeQuickAction(R.drawable.ic_category_memo, "메모", "빠른 메모와 잠금", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenMemo),
+        val defaultActions = listOf(
+            HomeQuickAction("stock", R.drawable.ic_category_stock, "주식", "포트폴리오와 자동화", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenStock),
+            HomeQuickAction("card", R.drawable.ic_category_card, "카드", "사용 이력과 결제 예정", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenCard),
+            HomeQuickAction("lottery", R.drawable.ic_category_lotto, "동행복권", "로또·연금복권", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenLotto),
+            HomeQuickAction("plant", R.drawable.ic_category_plant, "화분", "오늘의 물주기", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
+            HomeQuickAction("memo", R.drawable.ic_category_memo, "메모", "빠른 메모와 잠금", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenMemo),
         )
+        val currentWeekKey = LocalDate.now()
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            .toString()
+        val menuOrder = remember(context, currentWeekKey) {
+            WeeklyMenuUsageStore.currentOrder(context, defaultActions.map(HomeQuickAction::id))
+        }
+        val orderIndex = menuOrder.withIndex().associate { (index, id) -> id to index }
+        val actions = defaultActions
+            .sortedBy { action -> orderIndex[action.id] ?: Int.MAX_VALUE }
+            .map { action ->
+                action.copy(
+                    onClick = {
+                        WeeklyMenuUsageStore.recordClick(context, action.id)
+                        action.onClick()
+                    },
+                )
+            }
         FeatureSpotlightCard(action = actions.first())
         actions.drop(1).chunked(2).forEach { rowItems ->
             Row(
@@ -190,6 +211,7 @@ private fun WorkspaceSection(
 }
 
 private data class HomeQuickAction(
+    val id: String,
     @DrawableRes val iconRes: Int,
     val title: String,
     val subtitle: String,
@@ -197,6 +219,46 @@ private data class HomeQuickAction(
     val accentColor: Color,
     val onClick: () -> Unit,
 )
+
+private object WeeklyMenuUsageStore {
+    private const val preferencesName = "home-quick-menu-usage"
+    private const val weekKey = "counting-week"
+    private const val orderKey = "display-order"
+    private const val countPrefix = "count-"
+
+    fun currentOrder(context: Context, defaultOrder: List<String>): List<String> {
+        val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val currentWeek = LocalDate.now()
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            .toString()
+        val savedWeek = preferences.getString(weekKey, null)
+        if (savedWeek == null) {
+            preferences.edit().putString(weekKey, currentWeek).apply()
+        } else if (savedWeek != currentWeek) {
+            val defaultIndex = defaultOrder.withIndex().associate { (index, id) -> id to index }
+            val nextOrder = defaultOrder.sortedWith(
+                compareByDescending<String> { id -> preferences.getInt("$countPrefix$id", 0) }
+                    .thenBy { id -> defaultIndex.getValue(id) },
+            )
+            val editor = preferences.edit()
+                .putString(weekKey, currentWeek)
+                .putString(orderKey, nextOrder.joinToString(","))
+            defaultOrder.forEach { id -> editor.remove("$countPrefix$id") }
+            editor.apply()
+        }
+        val savedOrder = preferences.getString(orderKey, null)
+            ?.split(',')
+            ?.filter(defaultOrder::contains)
+            .orEmpty()
+        return savedOrder + defaultOrder.filterNot(savedOrder::contains)
+    }
+
+    fun recordClick(context: Context, menuId: String) {
+        val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val key = "$countPrefix$menuId"
+        preferences.edit().putInt(key, preferences.getInt(key, 0) + 1).apply()
+    }
+}
 
 @Composable
 private fun FeatureSpotlightCard(action: HomeQuickAction) {

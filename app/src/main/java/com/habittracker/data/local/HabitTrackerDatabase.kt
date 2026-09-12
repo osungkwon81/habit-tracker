@@ -66,7 +66,7 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         PensionLotteryDrawEntity::class,
         PensionLotteryGeneratedNumberEntity::class,
     ],
-    version = 33,
+    version = 34,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -75,7 +75,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 33
+        const val DB_VERSION = 34
 
         // builder와 create를 나누면 암호화/복구 계층이 필요에 따라 빌더 설정을 재사용할 수 있다.
         fun builder(context: Context) =

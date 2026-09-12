@@ -82,8 +82,49 @@ interface HabitDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>)
 
-    @Query("DELETE FROM pension_lottery_generated_number WHERE generation_id = :generationId")
+    @Query("UPDATE pension_lottery_generated_number SET is_hidden = 1 WHERE generation_id = :generationId")
     suspend fun deletePensionLotteryGeneration(generationId: String)
+
+    @Query(
+        """
+        SELECT * FROM pension_lottery_generated_number
+        WHERE target_round_no = :roundNo
+          AND is_evaluation_target = 1
+          AND evaluated_at IS NULL
+        ORDER BY id ASC
+        """,
+    )
+    suspend fun getUnevaluatedPensionLotteryNumbers(roundNo: Int): List<PensionLotteryGeneratedNumberEntity>
+
+    @Query(
+        """
+        UPDATE pension_lottery_generated_number
+        SET evaluated_at = :evaluatedAt,
+            matched_suffix_length = :matchedSuffixLength,
+            position_match_count = :positionMatchCount,
+            is_bonus_match = :isBonusMatch
+        WHERE id = :id
+        """,
+    )
+    suspend fun updatePensionLotteryEvaluation(
+        id: Long,
+        evaluatedAt: LocalDateTime,
+        matchedSuffixLength: Int,
+        positionMatchCount: Int,
+        isBonusMatch: Boolean,
+    )
+
+    @Query(
+        """
+        SELECT id FROM pension_lottery_generated_number
+        WHERE target_round_no = :roundNo
+          AND winning_number = :winningNumber
+          AND is_control = 0
+        ORDER BY saved_at DESC, id DESC
+        LIMIT 1
+        """,
+    )
+    suspend fun findPensionLotteryGeneratedNumberId(roundNo: Int, winningNumber: String): Long?
 
     @Query(
         """

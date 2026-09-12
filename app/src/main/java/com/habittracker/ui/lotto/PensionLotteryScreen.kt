@@ -227,13 +227,17 @@ fun PensionLotteryScreen(
                 if (uiState.purchaseResults.isEmpty()) {
                     item { AppEmptyCard("연금복권 구입 이력이 없습니다.") }
                 } else {
-                    itemsIndexed(uiState.purchaseResults, key = { _, result -> result.purchase.id }) { index, result ->
-                        if (index == uiState.purchaseResults.lastIndex && uiState.canLoadMorePurchases) {
-                            LaunchedEffect(result.purchase.id, uiState.purchaseResults.size) {
+                    val purchaseGroups = uiState.purchaseResults
+                        .groupBy { result -> result.purchase.roundNo }
+                        .entries
+                        .sortedByDescending { entry -> entry.key }
+                    itemsIndexed(purchaseGroups, key = { _, entry -> entry.key ?: 0 }) { index, entry ->
+                        if (index == purchaseGroups.lastIndex && uiState.canLoadMorePurchases) {
+                            LaunchedEffect(entry.key, uiState.purchaseResults.size) {
                                 viewModel.loadMorePurchases()
                             }
                         }
-                        PensionLotteryPurchaseCard(result = result, onDelete = viewModel::deletePurchase)
+                        PensionLotteryPurchaseRoundCard(results = entry.value, onDelete = viewModel::deletePurchase)
                     }
                 }
             }
@@ -410,35 +414,20 @@ private fun PensionLotteryPurchaseSection(
 }
 
 @Composable
-private fun PensionLotteryPurchaseCard(
-    result: PensionLotteryPurchaseResult,
+private fun PensionLotteryPurchaseRoundCard(
+    results: List<PensionLotteryPurchaseResult>,
     onDelete: (Long) -> Unit,
 ) {
-    val purchase = result.purchase
-    val purchaseNumber = purchase.pensionNumber
-    if (purchaseNumber == null) {
-        LotteryPurchaseCard(purchase = purchase, onDelete = onDelete)
-        return
-    }
-
-    val mainMatchedPositions = when {
-        result.draw == null || result.mainMatchingSuffixLength == 0 -> emptySet()
-        else -> (purchaseNumber.length - result.mainMatchingSuffixLength until purchaseNumber.length).toSet()
-    }
-    val purchaseMatchedPositions = if (result.isBonusMatch) purchaseNumber.indices.toSet() else mainMatchedPositions
-    val prizeLabel = result.prizeHits.joinToString(" + ") { hit ->
-        "${hit.rank.label} ${hit.ticketCount}매"
-    }
+    val first = results.firstOrNull() ?: return
+    val draw = first.draw
+    val hasWinningPurchase = results.any { result -> result.prizeHits.isNotEmpty() }
     val resultLabel = when {
-        result.draw == null -> "추첨 대기"
-        result.prizeHits.isNotEmpty() &&
-            result.draw.bonusNumber == null &&
-            result.mainMatchingSuffixLength < 6 -> "$prizeLabel · 보너스 미확인"
-        result.prizeHits.isNotEmpty() -> prizeLabel
-        result.draw.bonusNumber == null -> "보너스 확인 필요"
+        draw == null -> "추첨 전"
+        hasWinningPurchase -> "당첨 있음"
+        draw.bonusNumber == null -> "보너스 확인 필요"
         else -> "미당첨"
     }
-    val resultColor = if (result.prizeHits.isNotEmpty()) {
+    val resultColor = if (hasWinningPurchase) {
         PensionStatHighText
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
@@ -450,7 +439,7 @@ private fun PensionLotteryPurchaseCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("${purchase.roundNo}회차", fontWeight = FontWeight.Bold)
+            Text("${first.purchase.roundNo}회차", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
                 text = resultLabel,
                 modifier = Modifier.weight(1f),
@@ -460,24 +449,54 @@ private fun PensionLotteryPurchaseCard(
             )
         }
         Text(
-            text = "${purchase.purchaseDate} 구입 · 1~5조 전체 · ${formatWon(purchase.amount.toLong())}",
+            text = "${results.size}건 · ${formatWon(results.sumOf { result -> result.purchase.amount.toLong() })}",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
         )
-        Text("구입 번호", fontWeight = FontWeight.SemiBold)
-        PensionLotteryNumberRow(purchaseNumber, highlightedPositions = purchaseMatchedPositions)
-        result.draw?.let { draw ->
-            Text("1등 당첨 번호 · ${draw.groupNo}조", fontWeight = FontWeight.SemiBold)
-            PensionLotteryNumberRow(draw.winningNumber, highlightedPositions = mainMatchedPositions)
-            draw.bonusNumber?.let { bonusNumber ->
-                Text("보너스 당첨 번호 · 각조", fontWeight = FontWeight.SemiBold)
-                PensionLotteryNumberRow(
-                    winningNumber = bonusNumber,
-                    highlightedPositions = if (result.isBonusMatch) bonusNumber.indices.toSet() else emptySet(),
-                )
-            }
+        draw?.let { winningDraw ->
+            Text("1등 당첨 번호 · ${winningDraw.groupNo}조", fontWeight = FontWeight.SemiBold)
+            PensionLotteryNumberRow(winningDraw.winningNumber)
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            AppSecondaryButton(text = "삭제", onClick = { onDelete(purchase.id) })
+        results.forEach { result ->
+            val purchase = result.purchase
+            val purchaseNumber = purchase.pensionNumber
+            if (purchaseNumber == null) {
+                LotteryPurchaseCard(
+                    purchase = purchase,
+                    onDelete = onDelete,
+                    showDelete = draw == null,
+                )
+            } else {
+                val mainMatchedPositions = when {
+                    result.draw == null || result.mainMatchingSuffixLength == 0 -> emptySet()
+                    else -> (purchaseNumber.length - result.mainMatchingSuffixLength until purchaseNumber.length).toSet()
+                }
+                val highlightedPositions = if (result.isBonusMatch) purchaseNumber.indices.toSet() else mainMatchedPositions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = purchase.purchaseDate.toString(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (draw == null) {
+                        AppSecondaryButton(text = "삭제", onClick = { onDelete(purchase.id) })
+                    }
+                }
+                PensionLotteryNumberRow(purchaseNumber, highlightedPositions = highlightedPositions)
+                if (result.prizeHits.isNotEmpty()) {
+                    Text(
+                        text = result.prizeHits.joinToString(" · ") { hit -> "${hit.rank.label} ${hit.ticketCount}매" },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = PensionStatHighText,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.End,
+                    )
+                }
+            }
         }
     }
 }

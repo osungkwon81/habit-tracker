@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.habittracker.MainActivity
+import com.habittracker.data.AppSettingsStore
 
 object LottoTicketResultNotifier {
     private const val channelId = "lotto-ticket-results"
@@ -18,6 +19,7 @@ object LottoTicketResultNotifier {
     private const val lastNotifiedRoundKey = "last-notified-round"
 
     fun showIfNeeded(context: Context, result: LottoPurchasedTicketResult) {
+        if (!AppSettingsStore.areLotteryResultNotificationsEnabled(context)) return
         val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
         if (preferences.getInt(lastNotifiedRoundKey, -1) >= result.roundNo) return
         if (
@@ -29,33 +31,13 @@ object LottoTicketResultNotifier {
         }
 
         val manager = context.getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(
-                channelId,
-                "로또 구매번호 당첨 결과",
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = "QR 등록표와 구매완료 저장번호의 당첨 결과를 알립니다."
-                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
-            },
-        )
+        createChannel(manager)
 
         val winningCount = result.winningRankCounts.values.sum()
-        val sourceSummary = buildList {
-            if (result.physicalQrTicketCount > 0) add("QR ${result.physicalQrTicketCount}게임")
-            val savedTicketCount = result.totalTicketCount - result.physicalQrTicketCount
-            if (savedTicketCount > 0) add("저장번호 ${savedTicketCount}게임")
-        }.joinToString(" · ")
         val detail = if (winningCount > 0) {
-            val rankSummary = result.winningRankCounts.entries
-                .sortedBy { entry -> entry.key }
-                .joinToString(" · ") { (rank, count) -> "${rank}등 ${count}게임" }
-            val prizeSummary = result.estimatedPrizeAmount?.let { amount ->
-                " · 공식 예상 당첨금 ${"%,d".format(amount)}원"
-            }.orEmpty()
-            "$sourceSummary 중 $rankSummary 당첨입니다.$prizeSummary"
+            "${result.roundNo}회차 ${result.winningSetCount}세트 ${winningCount}게임 당첨입니다."
         } else {
-            "$sourceSummary 번호를 확인했습니다. 최고 ${result.maximumMatchCount}개 일치로 미당첨입니다."
+            "${result.roundNo}회차는 미당첨 회차입니다."
         }
         val openAppIntent = PendingIntent.getActivity(
             context,
@@ -78,6 +60,40 @@ object LottoTicketResultNotifier {
         )
         preferences.edit().putInt(lastNotifiedRoundKey, result.roundNo).apply()
     }
+
+    fun showTest(context: Context) {
+        if (!AppSettingsStore.areLotteryResultNotificationsEnabled(context)) return
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        val manager = context.getSystemService(NotificationManager::class.java)
+        createChannel(manager)
+        manager.notify(
+            6302,
+            Notification.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("복권 결과 알림 테스트")
+                .setContentText("복권 결과 알림이 정상적으로 설정되었습니다.")
+                .setAutoCancel(true)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .build(),
+        )
+    }
+
+    private fun createChannel(manager: NotificationManager) {
+        manager.createNotificationChannel(
+            NotificationChannel(
+                channelId,
+                "로또 구매번호 당첨 결과",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "QR 등록표와 구매완료 저장번호의 당첨 결과를 알립니다."
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
+        )
+    }
 }
 
 object PensionLotteryTicketResultNotifier {
@@ -86,6 +102,7 @@ object PensionLotteryTicketResultNotifier {
     private const val lastNotifiedRoundKey = "last-notified-round"
 
     fun showIfNeeded(context: Context, result: PensionLotteryPurchasedNumberResult) {
+        if (!AppSettingsStore.areLotteryResultNotificationsEnabled(context)) return
         val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
         if (preferences.getInt(lastNotifiedRoundKey, -1) >= result.roundNo) return
         if (

@@ -63,6 +63,7 @@ class DhlotteryDrawClient {
     suspend fun getPensionLotteryDraws(): List<OfficialPensionLotteryDraw> = withContext(Dispatchers.IO) {
         val url = "$officialBaseUrl/pt720/selectPstPt720WnList.do"
         val raw = getOfficialJson(url, "/pt720/result")
+        val hash = raw.sha256()
         val items = JSONObject(raw).requiredData().getJSONArray("result")
         val draws = buildList {
             for (index in 0 until items.length()) {
@@ -85,6 +86,8 @@ class DhlotteryDrawClient {
                         groupNo = groupNo,
                         winningNumber = winningNumber,
                         bonusNumber = bonusNumber,
+                        sourceReference = url,
+                        sourceContentHash = hash,
                     ),
                 )
             }

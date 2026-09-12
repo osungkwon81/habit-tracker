@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -32,7 +34,9 @@ fun AppVoiceInputButton(
     val context = LocalContext.current
     val currentOnRecognizedText by rememberUpdatedState(onRecognizedText)
     val currentOnStatusMessage by rememberUpdatedState(onStatusMessage)
-    var isListening by remember { mutableStateOf(false) }
+    var isContinuousListening by remember { mutableStateOf(false) }
+    var isRecognitionActive by remember { mutableStateOf(false) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val speechRecognizer = remember(context) {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             SpeechRecognizer.createSpeechRecognizer(context.applicationContext)
@@ -40,14 +44,35 @@ fun AppVoiceInputButton(
             null
         }
     }
-    val startVoiceInput = {
+    val startRecognitionSession = {
         if (speechRecognizer == null) {
+            isContinuousListening = false
             currentOnStatusMessage("이 기기에서는 음성 인식을 사용할 수 없습니다.")
-        } else {
-            currentOnStatusMessage("말씀해 주세요.")
-            isListening = true
-            speechRecognizer.startListening(koreanSpeechRecognitionIntent())
+        } else if (!isRecognitionActive) {
+            isRecognitionActive = true
+            runCatching {
+                speechRecognizer.startListening(koreanSpeechRecognitionIntent())
+            }.onFailure {
+                isRecognitionActive = false
+                isContinuousListening = false
+                currentOnStatusMessage("음성 인식을 시작하지 못했습니다. 다시 시도해 주세요.")
+            }
         }
+    }
+    val startVoiceInput = {
+        isContinuousListening = true
+        currentOnStatusMessage("음성 입력을 켰습니다. 마이크를 다시 누르면 끝납니다.")
+        startRecognitionSession()
+    }
+    val restartRecognition = {
+        mainHandler.postDelayed(
+            {
+                if (isContinuousListening && !isRecognitionActive) {
+                    startRecognitionSession()
+                }
+            },
+            VOICE_RESTART_DELAY_MILLIS,
+        )
     }
     val microphonePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -63,8 +88,8 @@ fun AppVoiceInputButton(
         speechRecognizer?.setRecognitionListener(
             object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    isListening = true
-                    currentOnStatusMessage("음성을 듣고 있습니다.")
+                    isRecognitionActive = true
+                    currentOnStatusMessage("음성을 계속 듣고 있습니다. 마이크를 누르면 끝납니다.")
                 }
 
                 override fun onBeginningOfSpeech() = Unit
@@ -76,20 +101,39 @@ fun AppVoiceInputButton(
                 }
 
                 override fun onError(error: Int) {
-                    isListening = false
-                    currentOnStatusMessage(speechRecognitionErrorMessage(error))
+                    isRecognitionActive = false
+                    if (isContinuousListening && error.isRecoverableVoiceInputError()) {
+                        currentOnStatusMessage("음성을 계속 듣고 있습니다. 마이크를 누르면 끝납니다.")
+                        restartRecognition()
+                    } else if (isContinuousListening) {
+                        isContinuousListening = false
+                        currentOnStatusMessage(speechRecognitionErrorMessage(error))
+                    } else {
+                        currentOnStatusMessage("음성 입력을 끝냈습니다.")
+                    }
                 }
 
                 override fun onResults(results: Bundle?) {
-                    isListening = false
+                    isRecognitionActive = false
                     val recognizedText = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
                     if (recognizedText.isNullOrBlank()) {
-                        currentOnStatusMessage("인식된 내용이 없습니다. 다시 말씀해 주세요.")
+                        currentOnStatusMessage(
+                            if (isContinuousListening) "음성을 계속 듣고 있습니다." else "음성 입력을 끝냈습니다.",
+                        )
                     } else {
                         currentOnRecognizedText(recognizedText)
-                        currentOnStatusMessage("음성 내용을 추가했습니다.")
+                        currentOnStatusMessage(
+                            if (isContinuousListening) {
+                                "음성 내용을 추가했습니다. 계속 듣고 있습니다."
+                            } else {
+                                "음성 내용을 추가하고 입력을 끝냈습니다."
+                            },
+                        )
+                    }
+                    if (isContinuousListening) {
+                        restartRecognition()
                     }
                 }
 
@@ -98,6 +142,9 @@ fun AppVoiceInputButton(
             },
         )
         onDispose {
+            isContinuousListening = false
+            isRecognitionActive = false
+            mainHandler.removeCallbacksAndMessages(null)
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
         }
@@ -105,9 +152,15 @@ fun AppVoiceInputButton(
 
     IconButton(
         onClick = {
-            if (isListening) {
-                speechRecognizer?.stopListening()
-                currentOnStatusMessage("음성을 텍스트로 변환하고 있습니다.")
+            if (isContinuousListening) {
+                isContinuousListening = false
+                mainHandler.removeCallbacksAndMessages(null)
+                if (isRecognitionActive) {
+                    speechRecognizer?.stopListening()
+                    currentOnStatusMessage("마지막 음성을 텍스트로 변환하고 있습니다.")
+                } else {
+                    currentOnStatusMessage("음성 입력을 끝냈습니다.")
+                }
             } else if (
                 ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -120,8 +173,8 @@ fun AppVoiceInputButton(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_microphone),
-            contentDescription = if (isListening) "음성 입력 중지" else "음성으로 입력",
-            tint = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            contentDescription = if (isContinuousListening) "음성 입력 끄기" else "음성 입력 켜기",
+            tint = if (isContinuousListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
         )
     }
 }
@@ -131,6 +184,11 @@ private fun koreanSpeechRecognitionIntent(): Intent = Intent(RecognizerIntent.AC
     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR")
     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
 }
+
+private fun Int.isRecoverableVoiceInputError(): Boolean =
+    this == SpeechRecognizer.ERROR_NO_MATCH ||
+        this == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+        this == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
 
 private fun speechRecognitionErrorMessage(error: Int): String = when (error) {
     SpeechRecognizer.ERROR_AUDIO -> "마이크 입력을 처리하지 못했습니다. 다시 시도해 주세요."
@@ -144,3 +202,5 @@ private fun speechRecognitionErrorMessage(error: Int): String = when (error) {
     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "들리는 음성이 없습니다. 마이크 가까이에서 말씀해 주세요."
     else -> "음성 인식에 실패했습니다. 다시 시도해 주세요."
 }
+
+private const val VOICE_RESTART_DELAY_MILLIS = 350L

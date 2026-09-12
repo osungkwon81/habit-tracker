@@ -59,6 +59,7 @@ import com.habittracker.data.lotto.OfficialLottoDraw
 import com.habittracker.data.lotto.OfficialPensionLotteryDraw
 import com.habittracker.data.lotto.PensionLotteryPurchasedNumberResult
 import com.habittracker.data.lotto.calculatePensionLotteryPrizeHits
+import com.habittracker.data.lotto.pensionLotteryMatchingSuffixLength
 import com.habittracker.data.security.AndroidKeystoreStringCipher
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
@@ -134,6 +135,7 @@ class HabitRepository(
         const val lottoDrawSourceManual = "MANUAL"
         const val lottoDrawSourceOfficial = "OFFICIAL"
         const val lottoQrSource = "QR 등록"
+        const val lottoQrStatsSource = "QR 코드"
         const val maxSavedLottoSetCount = 3
         const val taskColorPrefsName = "task-color-prefs"
         const val cardPrefsName = "card-prefs"
@@ -150,7 +152,7 @@ class HabitRepository(
         const val cardSeedVersionKey = "card-seed-version"
         const val currentCardSeedVersion = 2
         const val lottoStatVersionKey = "lotto-winning-stat-version"
-        const val currentLottoStatVersion = 6
+        const val currentLottoStatVersion = 7
         const val pensionLotteryAllGroupsPrice = 5_000
         const val stockSafetyConfigId = 1
         const val stockLimitOrderCode = "00"
@@ -254,6 +256,7 @@ class HabitRepository(
                 "${roundNo}회 연금복권 번호가 이미 저장되어 있어 덮어쓸 수 없습니다."
             }
             if (existing == null) habitDao.upsertPensionLotteryDraw(newDraw)
+            evaluatePensionLotteryNumbers(newDraw)
         }
     }
 
@@ -344,8 +347,12 @@ class HabitRepository(
                 officialDraws
                     .asSequence()
                     .filter { draw ->
+                        val existing = existingByRound[draw.roundNo]
                         draw.roundNo >= latestExistingRound ||
-                            existingByRound[draw.roundNo]?.bonusNumber == null
+                            existing?.bonusNumber == null ||
+                            existing?.drawDate == null ||
+                            existing?.sourceContentHash == null ||
+                            existing?.collectedAt == null
                     }
                     .sortedBy(OfficialPensionLotteryDraw::roundNo)
                     .forEach { official ->
@@ -354,6 +361,10 @@ class HabitRepository(
                             groupNo = official.groupNo,
                             winningNumber = official.winningNumber,
                             bonusNumber = official.bonusNumber,
+                            drawDate = official.drawDate,
+                            sourceReference = official.sourceReference,
+                            sourceContentHash = official.sourceContentHash,
+                            collectedAt = LocalDateTime.now(),
                         )
                         val existing = existingByRound[official.roundNo]
                         require(
@@ -364,11 +375,23 @@ class HabitRepository(
                         ) {
                             "${official.roundNo}회 연금복권 수동 입력값과 공식 당첨번호가 다릅니다. 자동으로 덮어쓰지 않았습니다."
                         }
-                        val drawToSave = existing?.copy(bonusNumber = official.bonusNumber) ?: newDraw
+                        val officialDataChanged = existing == null ||
+                            existing.bonusNumber != official.bonusNumber ||
+                            existing.drawDate != official.drawDate ||
+                            existing.sourceReference != official.sourceReference ||
+                            existing.sourceContentHash != official.sourceContentHash
+                        val drawToSave = existing?.copy(
+                            bonusNumber = official.bonusNumber,
+                            drawDate = official.drawDate,
+                            sourceReference = official.sourceReference,
+                            sourceContentHash = official.sourceContentHash,
+                            collectedAt = if (officialDataChanged) LocalDateTime.now() else existing.collectedAt,
+                        ) ?: newDraw
                         if (existing != drawToSave) {
                             habitDao.upsertPensionLotteryDraw(drawToSave)
                             savedCount += 1
                         }
+                        evaluatePensionLotteryNumbers(drawToSave)
                     }
             }
         }
@@ -387,10 +410,17 @@ class HabitRepository(
             .filter { ticket -> ticket.isPurchased && !ticket.isEvaluationTarget }
         if (tickets.isEmpty()) return null
 
-        val rankCounts = tickets
-            .mapNotNull { ticket -> calculateWinningRank(ticket, draw) }
+        val winningTicketRanks = tickets.mapNotNull { ticket ->
+            calculateWinningRank(ticket, draw)?.let { rank -> ticket to rank }
+        }
+        val rankCounts = winningTicketRanks
+            .map { (_, rank) -> rank }
             .groupingBy { rank -> rank }
             .eachCount()
+        val winningSetCount = winningTicketRanks
+            .map { (ticket, _) -> ticket.sourceLabel to (ticket.note ?: "ticket:${ticket.id}") }
+            .distinct()
+            .size
         val winningNumbers = draw.numbers()
         val maximumMatchCount = tickets.maxOf { ticket ->
             ticket.numbers().count(winningNumbers::contains)
@@ -405,6 +435,7 @@ class HabitRepository(
             roundNo = roundNo,
             totalTicketCount = tickets.size,
             physicalQrTicketCount = tickets.count { ticket -> ticket.sourceLabel == lottoQrSource },
+            winningSetCount = winningSetCount,
             winningRankCounts = rankCounts,
             maximumMatchCount = maximumMatchCount,
             estimatedPrizeAmount = estimatedPrizeAmount,
@@ -2648,17 +2679,41 @@ class HabitRepository(
         val roundNo = ChronoUnit.WEEKS.between(pensionLotteryFirstDrawDate, drawDate).toInt() + 1
 
         persistChange {
+            val sourceGenerationNumberId = habitDao.findPensionLotteryGeneratedNumberId(
+                roundNo = roundNo,
+                winningNumber = safePurchaseNumber,
+            )
             habitDao.insertLottoPurchase(
                 LottoPurchaseEntity(
                     purchaseDate = purchaseDate,
                     lottoType = "연금",
                     roundNo = roundNo,
                     pensionNumber = safePurchaseNumber,
+                    sourceGenerationNumberId = sourceGenerationNumberId,
                     amount = pensionLotteryAllGroupsPrice,
                 ),
             )
         }
         return roundNo
+    }
+
+    private suspend fun evaluatePensionLotteryNumbers(draw: PensionLotteryDrawEntity) {
+        val bonusNumber = draw.bonusNumber ?: return
+        val evaluatedAt = LocalDateTime.now()
+        habitDao.getUnevaluatedPensionLotteryNumbers(draw.roundNo).forEach { generated ->
+            habitDao.updatePensionLotteryEvaluation(
+                id = generated.id,
+                evaluatedAt = evaluatedAt,
+                matchedSuffixLength = pensionLotteryMatchingSuffixLength(
+                    purchaseNumber = generated.winningNumber,
+                    winningNumber = draw.winningNumber,
+                ),
+                positionMatchCount = generated.winningNumber
+                    .zip(draw.winningNumber)
+                    .count { (generatedDigit, winningDigit) -> generatedDigit == winningDigit },
+                isBonusMatch = generated.winningNumber == bonusNumber,
+            )
+        }
     }
 
     /** QR의 구매 이력과 실제 게임 번호를 함께 저장해 둘 중 하나만 남는 상태를 막는다. */
@@ -2706,6 +2761,7 @@ class HabitRepository(
                     )
                     habitDao.insertLottoTicket(ticket)
                 }
+                refreshLottoWinningStats(qrPurchase.roundNo, note = null)
             }
             qrPurchase.tickets.size
         }
@@ -3607,6 +3663,7 @@ class HabitRepository(
     }
 
     private fun normalizeWinningSource(sourceLabel: String): String = when {
+        sourceLabel == lottoQrSource -> lottoQrStatsSource
         sourceLabel.contains("분산형") ||
             sourceLabel.contains("gemini", ignoreCase = true) ||
             sourceLabel.contains("제미나이") -> "분산형"

@@ -40,6 +40,7 @@ private const val dispersedSource = "분산형"
 private const val sourceChatGpt = "균형형"
 private const val sourceGemini = "분산형"
 private const val physicalQrSource = "QR 등록"
+private const val physicalQrStatsSource = "QR 코드"
 private const val savedDrawHistoryLimit = 120
 private const val lottoHistoryPageSize = 20
 private const val lottoTypeLotto = "로또"
@@ -209,7 +210,8 @@ class LottoViewModel(
         if (tab == LottoTab.STATS) {
             repository.observeLottoWinningStats().map { stats ->
                 stats.filter { stat ->
-                    stat.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION
+                    stat.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION ||
+                        stat.sourceLabel == physicalQrStatsSource
                 }
             }
         } else {
