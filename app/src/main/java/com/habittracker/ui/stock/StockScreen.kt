@@ -21,6 +21,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -138,24 +139,24 @@ fun StockScreen(
         }
         item { StockSectionTitle("거래·보유") }
         item {
-            StockMenuCard("↕", "매수·매도", "KIS 실전 계좌로 주문하고 체결 상태를 확인합니다.", Color(0xFF0F6B73), onOpenOrder)
+            StockMenuCard("↕", "매수·매도", "KIS 실전 계좌로 주문하고 체결 상태를 확인합니다.", onOpenOrder)
         }
         item {
-            StockMenuCard("▦", "보유·매수 내역", "매수 주문별 수량·단가·잔여수량·수익률을 표시합니다.", Color(0xFF315C9A), onOpenPortfolio)
+            StockMenuCard("▦", "보유·매수 내역", "매수 주문별 수량·단가·잔여수량·수익률을 표시합니다.", onOpenPortfolio)
         }
         item { StockSectionTitle("자동화·전략") }
         item {
-            StockMenuCard("🛡", "자동 매매·알림", "손절·익절·당일 상승 조건으로 알림 또는 분할 매매를 실행합니다.", Color(0xFF9A5B1A), onOpenAutomation)
+            StockMenuCard("🛡", "자동 매매·알림", "손절·익절·당일 상승 조건으로 알림 또는 분할 매매를 실행합니다.", onOpenAutomation)
         }
         item {
-            StockMenuCard("⚖", "목표 비중 리밸런싱", "현재 비중과 목표 비중을 비교해 종목별 주문 수량을 계산합니다.", Color(0xFF6D4C8E), onOpenRebalance)
+            StockMenuCard("⚖", "목표 비중 리밸런싱", "현재 비중과 목표 비중을 비교해 종목별 주문 수량을 계산합니다.", onOpenRebalance)
         }
         item { StockSectionTitle("기록·설정") }
         item {
-            StockMenuCard("✎", "매매일지", "주문·체결·실현손익과 자동화 이력을 한곳에서 분석합니다.", Color(0xFF3C7158), onOpenJournal)
+            StockMenuCard("✎", "매매일지", "주문·체결·실현손익과 자동화 이력을 한곳에서 분석합니다.", onOpenJournal)
         }
         item {
-            StockMenuCard("⚙", "KIS·안전 설정", "실전 계좌와 주문 한도·급락 차단·감시 주기를 설정합니다.", Color(0xFF665F55), onOpenSettings)
+            StockMenuCard("⚙", "KIS·안전 설정", "실전 계좌와 주문 한도·급락 차단·감시 주기를 설정합니다.", onOpenSettings)
         }
     }
 }
@@ -880,14 +881,42 @@ private fun StockMenuCard(
     icon: String,
     title: String,
     description: String,
-    accent: Color,
     onClick: () -> Unit,
 ) {
     androidx.compose.material3.ListItem(
-        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
-        supportingContent = { Text(description, style = MaterialTheme.typography.bodyMedium) },
-        trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        headlineContent = {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        },
+        supportingContent = {
+            Text(
+                description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        },
+        leadingContent = {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(icon, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+            }
+        },
+        trailingContent = {
+            Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
+        },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
     )
 }
 

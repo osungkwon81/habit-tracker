@@ -163,9 +163,9 @@ class PlantViewModel(
             }.onSuccess {
                 resetEditor()
                 screenMode.value = PlantScreenMode.LIST
-                statusMessage.value = "화분이 저장되었습니다."
+                statusMessage.value = "반복 할 일이 저장되었습니다."
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "화분 저장에 실패했습니다."
+                statusMessage.value = error.message ?: "반복 할 일 저장에 실패했습니다."
             }
         }
     }
@@ -175,9 +175,9 @@ class PlantViewModel(
             runCatching {
                 repository.completePlantWatering(plantId)
             }.onSuccess {
-                statusMessage.value = "물주기 완료로 처리했습니다."
+                statusMessage.value = "할 일을 완료했습니다."
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "물주기 완료 처리에 실패했습니다."
+                statusMessage.value = error.message ?: "할 일 완료 처리에 실패했습니다."
             }
         }
     }
@@ -187,9 +187,9 @@ class PlantViewModel(
             runCatching {
                 repository.increasePlantWateringIntervalOneDay(plantId)
             }.onSuccess {
-                statusMessage.value = "물주기 주기와 예정일을 하루 늘렸습니다."
+                statusMessage.value = "반복 주기와 예정일을 하루 늘렸습니다."
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "물주기 주기 변경에 실패했습니다."
+                statusMessage.value = error.message ?: "반복 주기 변경에 실패했습니다."
             }
         }
     }
@@ -203,9 +203,9 @@ class PlantViewModel(
                     resetEditor()
                     screenMode.value = PlantScreenMode.LIST
                 }
-                statusMessage.value = "화분을 삭제했습니다."
+                statusMessage.value = "반복 할 일을 삭제했습니다."
             }.onFailure { error ->
-                statusMessage.value = error.message ?: "화분 삭제에 실패했습니다."
+                statusMessage.value = error.message ?: "반복 할 일 삭제에 실패했습니다."
             }
         }
     }

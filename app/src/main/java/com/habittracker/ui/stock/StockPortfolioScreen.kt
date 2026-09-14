@@ -11,6 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,6 +38,8 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var pendingSell by remember { mutableStateOf<PendingBuyLotSell?>(null) }
     var sellQuantity by remember { mutableStateOf("") }
+    var pendingRuleRow by remember { mutableStateOf<StockBuyLotRow?>(null) }
+    var targetReturnInput by rememberSaveable { mutableStateOf("") }
     var showSellAllConfirmation by remember { mutableStateOf(false) }
     val isEmergencySellBlocked = uiState.safetyConfig.globalOrderBlocked &&
         !uiState.safetyConfig.isCrashGuardOrderBlock()
@@ -87,6 +90,8 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         val quantity = sellQuantity.toLongOrNull()
         val buyPrice = order.filledAveragePrice ?: order.referencePrice
         val currentPrice = pending.quote.currentPrice.toLongOrNull()
+        val currentReturnPercent = currentPrice?.takeIf { buyPrice > 0L }
+            ?.let { (it - buyPrice).toDouble() / buyPrice.toDouble() * 100.0 }
         val expectedProfit = if (quantity != null && currentPrice != null) {
             (currentPrice - buyPrice) * quantity
         } else {
@@ -105,6 +110,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                 Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                     Text("${order.productName} (${order.productCode})")
                     Text("현재가 ${currentPrice.toWon()} 지정가로 주문합니다.")
+                    Text("잔여 수익률 ${currentReturnPercent?.toPercent() ?: "-"} · 매수 체결가 ${buyPrice.toWon()}")
                     AppTextField(
                         value = sellQuantity,
                         onValueChange = { sellQuantity = it.digitsOnly() },
@@ -160,6 +166,40 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                     },
                 )
             },
+        )
+    }
+
+    pendingRuleRow?.let { row ->
+        val target = targetReturnInput.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        AlertDialog(
+            onDismissRequest = { pendingRuleRow = null },
+            title = { Text("잔여 수익률 자동 매도") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                    Text("${row.order.productName} · 매수 주문 ${row.order.orderNumber}")
+                    Text("매수 체결가 ${(row.order.filledAveragePrice ?: row.order.referencePrice).toWon()} · 잔여 ${row.order.remainingQuantity}주")
+                    AppTextField(
+                        value = targetReturnInput,
+                        onValueChange = { targetReturnInput = it.filter { char -> char.isDigit() || char == '.' } },
+                        label = "목표 잔여 수익률 (%)",
+                        singleLine = true,
+                        supportingText = if (targetReturnInput.isNotBlank() && target == null) "0보다 큰 숫자를 입력해 주세요." else null,
+                    )
+                    AppSupportText("현재가 기준 잔여 수익률이 목표 이상이면 해당 매수 주문의 남은 수량을 현재가 지정가로 자동 주문합니다. 주문 접수 후 규칙은 중지되며, 부분 체결 시 남은 수량은 별도로 확인해야 합니다.")
+                    AppSupportText("실행하려면 주식 자동화 화면의 모니터링과 자동 주문 실행이 모두 켜져 있어야 합니다. 기존 주문 차단·한도가 적용됩니다.")
+                }
+            },
+            confirmButton = {
+                AppPrimaryButton(
+                    text = "자동 매도 규칙 저장",
+                    onClick = {
+                        target?.let { viewModel.saveBuyLotTakeProfitRule(row.order.id, it) }
+                        pendingRuleRow = null
+                    },
+                    enabled = target != null && row.order.remainingQuantity > 0L,
+                )
+            },
+            dismissButton = { AppSecondaryButton("취소", { pendingRuleRow = null }) },
         )
     }
 
@@ -234,6 +274,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         ) { index ->
             val row = uiState.buyLotRows[index]
             val order = row.order
+            val lotRule = uiState.exitRules.firstOrNull { it.buyOrderId == order.id }
             AppSectionCard {
                 Text(
                     "${order.productName} (${order.productCode})",
@@ -266,6 +307,16 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                             else -> MaterialTheme.colorScheme.onSurface
                         },
                     )
+                    if (lotRule != null) {
+                        AppSupportText(
+                            "자동 매도 목표 +${lotRule.triggerValue}% · ${when {
+                                !lotRule.enabled -> "규칙 중지됨"
+                                !uiState.safetyConfig.monitoringEnabled -> "모니터링 시작 필요"
+                                !uiState.safetyConfig.automaticOrderEnabled -> "자동 주문 실행 켜기 필요"
+                                else -> "감시 중"
+                            }}",
+                        )
+                    }
                 }
                 if (row.soldQuantity > 0L) {
                     Text(
@@ -286,7 +337,7 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                     text = when {
                         order.remainingQuantity <= 0L -> "매도할 잔여 수량 없음"
                         row.currentPrice == null -> "현재가 확인 필요"
-                        else -> "이 수량 매도"
+                        else -> "잔여 수익률 확인 후 매도"
                     },
                     onClick = {
                         viewModel.prepareBuyLotSell(row) { quote ->
@@ -300,6 +351,24 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
                         !uiState.isSubmittingOrder &&
                         !uiState.safetyConfig.globalOrderBlocked,
                 )
+                if (order.remainingQuantity > 0L) {
+                    AppSecondaryButton(
+                        text = if (lotRule == null) "잔여 수익률 자동 매도 설정" else "자동 매도 목표 수정",
+                        onClick = {
+                            targetReturnInput = lotRule?.triggerValue?.toString().orEmpty()
+                            pendingRuleRow = row
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !uiState.isSubmittingOrder,
+                    )
+                    if (lotRule != null) {
+                        AppSecondaryButton(
+                            text = "자동 매도 규칙 삭제",
+                            onClick = { viewModel.deleteExitRule(lotRule.id) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
         }
         item {

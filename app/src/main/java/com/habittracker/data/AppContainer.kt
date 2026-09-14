@@ -4,6 +4,7 @@ import android.content.Context
 import com.habittracker.data.local.HabitTrackerDatabase
 import com.habittracker.data.local.HabitTrackerDatabaseProtector
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.data.notification.NotificationAssistantRepository
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,8 @@ class AppContainer(context: Context) {
     val readiness = _readiness.asStateFlow()
     lateinit var habitRepository: HabitRepository
         private set
+    lateinit var notificationAssistantRepository: NotificationAssistantRepository
+        private set
 
     init {
         scope.launch {
@@ -35,6 +38,7 @@ class AppContainer(context: Context) {
                 habitRepository = withContext(Dispatchers.IO) {
                     HabitRepository(applicationContext, database, databaseProtector, database.habitDao())
                 }
+                notificationAssistantRepository = NotificationAssistantRepository(database, databaseProtector, database.habitDao())
                 _readiness.value = Result.success(Unit)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -48,5 +52,10 @@ class AppContainer(context: Context) {
     suspend fun awaitRepository(): HabitRepository {
         readiness.filterNotNull().first().getOrThrow()
         return habitRepository
+    }
+
+    suspend fun awaitNotificationAssistantRepository(): NotificationAssistantRepository {
+        readiness.filterNotNull().first().getOrThrow()
+        return notificationAssistantRepository
     }
 }

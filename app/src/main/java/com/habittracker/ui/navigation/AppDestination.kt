@@ -24,7 +24,11 @@ enum class AppDestination(
     LOTTO_645("lotto/645", "로또 6/45"),
     PENSION_LOTTO("lotto/pension", "연금720+"),
     PENSION_LOTTO_GENERATOR("lotto/pension/generator", "연금번호 생성"),
-    PLANT("plant", "화분");
+    PLANT("plant", "반복 할 일"),
+    NOTIFICATION_ASSISTANT("notification-assistant", "알림 생활비서"),
+    NOTIFICATION_ASSISTANT_APPS("notification-assistant/apps", "알림 체크 앱"),
+    NOTIFICATION_ASSISTANT_ACTIVE("notification-assistant/active", "실제 알림 목록"),
+    NOTIFICATION_ASSISTANT_TASKS("notification-assistant/tasks", "알림에서 찾은 할 일");
 
     /** 상세 경로도 해당 상위 메뉴로 선택 표시하기 위한 경로 비교 함수다. */
     fun matches(candidateRoute: String?): Boolean =

@@ -14,6 +14,7 @@ import com.habittracker.ui.lotto.LottoViewModel
 import com.habittracker.ui.lotto.PensionLotteryViewModel
 import com.habittracker.ui.lotto.PensionLotteryGeneratorViewModel
 import com.habittracker.ui.memo.MemoViewModel
+import com.habittracker.ui.notification.NotificationAssistantViewModel
 import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsViewModel
 import com.habittracker.ui.stock.StockViewModel
@@ -42,6 +43,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(CardHistoryViewModel::class.java) -> CardHistoryViewModel(repository) as T
             modelClass.isAssignableFrom(MemoViewModel::class.java) -> MemoViewModel(repository) as T
             modelClass.isAssignableFrom(PlantViewModel::class.java) -> PlantViewModel(repository) as T
+            modelClass.isAssignableFrom(NotificationAssistantViewModel::class.java) -> NotificationAssistantViewModel(application.appContainer.notificationAssistantRepository) as T
             modelClass.isAssignableFrom(StockViewModel::class.java) -> StockViewModel(repository) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.ui.digitsOnly
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -179,6 +180,24 @@ class MemoViewModel(
                 statusMessage.value = "잠금 메모를 열었습니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "잠금 해제에 실패했습니다."
+            }
+        }
+    }
+
+    fun unlockMemoWithBiometric(memoId: Long) {
+        viewModelScope.launch {
+            try {
+                val memoNote = repository.getMemoNote(memoId)
+                if (memoNote == null || !memoNote.isLocked) {
+                    statusMessage.value = "잠금 메모 $memoId 를 찾을 수 없습니다."
+                } else {
+                    openMemo(memoNote)
+                    statusMessage.value = "지문으로 잠금 메모를 열었습니다."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                statusMessage.value = error.message ?: "잠금 메모 $memoId 를 열지 못했습니다."
             }
         }
     }

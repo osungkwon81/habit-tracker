@@ -78,6 +78,9 @@ import com.habittracker.ui.lotto.PensionLotteryGeneratorViewModel
 import com.habittracker.ui.memo.MemoScreen
 import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.navigation.AppDestination
+import com.habittracker.ui.notification.NotificationAssistantScreen
+import com.habittracker.ui.notification.NotificationAssistantPage
+import com.habittracker.ui.notification.NotificationAssistantViewModel
 import com.habittracker.ui.plant.PlantScreen
 import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.stats.MonthlyStatsScreen
@@ -164,7 +167,7 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MORE.route) {
                 AppScreen {
                     item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.STATS, AppDestination.SETTINGS)) { destination ->
+                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
                         ListItem(
                             headlineContent = { Text(destination.label) },
                             trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -182,6 +185,7 @@ private fun HabitTrackerApp() {
                     onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
+                    onOpenNotificationAssistant = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT.route) },
                     onOpenCard = { navController.navigate(AppDestination.CARD.route) },
                 )
             }
@@ -296,6 +300,27 @@ private fun HabitTrackerApp() {
             composable(AppDestination.PLANT.route) {
                 val viewModel: PlantViewModel = viewModel(factory = viewModelFactory)
                 PlantScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.NOTIFICATION_ASSISTANT.route) {
+                val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
+                NotificationAssistantScreen(
+                    viewModel = viewModel,
+                    onOpenApps = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_APPS.route) },
+                    onOpenActive = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_ACTIVE.route) },
+                    onOpenTasks = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_TASKS.route) },
+                )
+            }
+            composable(AppDestination.NOTIFICATION_ASSISTANT_APPS.route) {
+                val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
+                NotificationAssistantScreen(viewModel = viewModel, page = NotificationAssistantPage.APPS)
+            }
+            composable(AppDestination.NOTIFICATION_ASSISTANT_ACTIVE.route) {
+                val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
+                NotificationAssistantScreen(viewModel = viewModel, page = NotificationAssistantPage.ACTIVE)
+            }
+            composable(AppDestination.NOTIFICATION_ASSISTANT_TASKS.route) {
+                val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
+                NotificationAssistantScreen(viewModel = viewModel, page = NotificationAssistantPage.TASKS)
             }
         }
     }

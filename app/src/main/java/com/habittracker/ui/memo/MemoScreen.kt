@@ -1,5 +1,9 @@
 ﻿package com.habittracker.ui.memo
 
+import android.content.Context
+import android.content.pm.PackageManager
+import android.hardware.biometrics.BiometricPrompt
+import android.os.CancellationSignal
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,10 +60,12 @@ import java.time.format.DateTimeFormatter
 
 @Composable
 fun MemoScreen(viewModel: MemoViewModel) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var passwordDialogTarget by remember { mutableStateOf<MemoNoteEntity?>(null) }
     var unlockPassword by remember { mutableStateOf("") }
     var showUnlockPassword by remember { mutableStateOf(false) }
+    var biometricMessage by remember { mutableStateOf<String?>(null) }
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     // nullable 값을 let으로 좁히면 다이얼로그 내부에서 강제 언래핑(!!) 없이 안전하게 사용할 수 있다.
@@ -68,6 +75,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
                 passwordDialogTarget = null
                 unlockPassword = ""
                 showUnlockPassword = false
+                biometricMessage = null
             },
             confirmButton = {
                 AppPrimaryButton(text = "열기", onClick = {
@@ -103,6 +111,26 @@ fun MemoScreen(viewModel: MemoViewModel) {
                             }
                         },
                     )
+                    if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)) {
+                        AppPrimaryButton(
+                            text = "지문으로 열기",
+                            onClick = {
+                                val memoId = targetMemo.id
+                                authenticateMemoFingerprint(
+                                    context = context,
+                                    onSuccess = {
+                                        passwordDialogTarget = null
+                                        unlockPassword = ""
+                                        biometricMessage = null
+                                        viewModel.unlockMemoWithBiometric(memoId)
+                                    },
+                                    onError = { biometricMessage = it },
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    biometricMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
         )
@@ -125,6 +153,34 @@ fun MemoScreen(viewModel: MemoViewModel) {
             onTogglePinned = viewModel::toggleMemoPinned,
             onLoadMore = viewModel::loadMoreMemoNotes,
         )
+    }
+}
+
+private fun authenticateMemoFingerprint(
+    context: Context,
+    onSuccess: () -> Unit,
+    onError: (String) -> Unit,
+) {
+    try {
+        val executor = context.mainExecutor
+        val prompt = BiometricPrompt.Builder(context)
+            .setTitle("잠금 메모 열기")
+            .setSubtitle("등록된 지문으로 본인 확인")
+            .setNegativeButton("취소", executor) { _, _ -> }
+            .build()
+        prompt.authenticate(CancellationSignal(), executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                onSuccess()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
+                    errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED
+                ) onError("지문 인증에 실패했습니다: $errString")
+            }
+        })
+    } catch (error: Exception) {
+        onError("지문 인증을 시작할 수 없습니다: ${error.message ?: "기기 설정을 확인해 주세요."}")
     }
 }
 

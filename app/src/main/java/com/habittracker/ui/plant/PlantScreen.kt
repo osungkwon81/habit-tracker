@@ -82,8 +82,8 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
 
     deleteTarget?.let { plant ->
         AppConfirmDialog(
-            title = "화분 삭제",
-            message = "${plant.name} 정보를 삭제합니다.",
+            title = "반복 할 일 삭제",
+            message = "${plant.name} 할 일을 삭제합니다.",
             confirmText = "삭제",
             onConfirm = {
                 viewModel.deletePlant(plant.id)
@@ -96,13 +96,13 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
     AppScreen {
         item {
             AppHeroCard(
-                title = "화분 관리",
-                description = "물주기 예정일과 완료 상태를 관리합니다.",
-                iconRes = R.drawable.ic_category_plant,
-                eyebrow = "LIFE · PLANT",
+                title = "반복 할 일",
+                description = "주기적으로 해야 할 일을 관리합니다.",
+                iconRes = R.drawable.ic_category_repeat,
+                eyebrow = "LIFE · ROUTINE",
                 action = {
                     AppPrimaryButton(
-                        text = "화분 등록",
+                        text = "할 일 등록",
                         onClick = viewModel::startNewPlant,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -112,13 +112,13 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
         item {
             AppSectionCard {
                 Text(
-                    text = "오늘 물주기",
+                    text = "오늘까지 해야 할 일",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (uiState.duePlants.isEmpty()) {
-                    AppEmptyCard("오늘 물줘야 할 화분이 없습니다.")
+                    AppEmptyCard("오늘까지 해야 할 일이 없습니다.")
                 } else {
                     uiState.duePlants.forEach { plant ->
                         key(plant.id) {
@@ -135,13 +135,13 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
         item {
             AppSectionCard {
                 Text(
-                    text = "등록된 화분",
+                    text = "등록된 반복 할 일",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 if (uiState.plants.isEmpty()) {
-                    AppEmptyCard("등록된 화분이 없습니다.")
+                    AppEmptyCard("등록된 반복 할 일이 없습니다.")
                 } else {
                     uiState.plants.forEach { plant ->
                         key(plant.id) {
@@ -216,10 +216,10 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
     AppScreen {
         item {
             AppHeroCard(
-                title = if (uiState.selectedPlantId == null) "화분 등록" else "화분 수정",
-                description = "1개월은 30일 기준으로 다음 물주기 날짜를 계산합니다.",
-                iconRes = R.drawable.ic_category_plant,
-                eyebrow = "LIFE · PLANT",
+                title = if (uiState.selectedPlantId == null) "반복 할 일 등록" else "반복 할 일 수정",
+                description = "1개월은 30일 기준으로 다음 예정일을 계산합니다.",
+                iconRes = R.drawable.ic_category_repeat,
+                eyebrow = "LIFE · ROUTINE",
                 action = {
                     AppSecondaryButton(
                         text = "목록으로",
@@ -234,13 +234,13 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                 AppTextField(
                     value = uiState.name,
                     onValueChange = viewModel::updateName,
-                    label = "화분 이름",
+                    label = "할 일 이름",
                     singleLine = true,
                 )
                 AppTextField(
                     value = uiState.memo,
                     onValueChange = viewModel::updateMemo,
-                    label = "특이 사항 메모",
+                    label = "메모",
                     minLines = 4,
                 )
                 Row(
@@ -262,11 +262,11 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                         singleLine = true,
                     )
                 }
-                AppSupportText("예: 1개월 20일은 50일 주기로 계산됩니다.")
+                AppSupportText("매주는 7일로 입력하세요. 1개월은 30일이며, 1개월 20일은 50일 주기입니다.")
                 AppTextField(
                     value = uiState.lastWateredDate.toString(),
                     onValueChange = {},
-                    label = "마지막 물준 날짜",
+                    label = "마지막 완료 날짜",
                     readOnly = true,
                     trailingOverlay = {
                         Box(
@@ -290,11 +290,11 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                 AppTextField(
                     value = uiState.nextWateringDate.toString(),
                     onValueChange = {},
-                    label = "다음 물주기 날짜",
+                    label = "다음 예정일",
                     readOnly = true,
                 )
                 AppPrimaryButton(
-                    text = "화분 이미지 선택",
+                    text = "할 일 이미지 선택",
                     onClick = { imagePicker.launch(arrayOf("image/*")) },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -313,7 +313,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                     )
                 }
                 AppSaveButton(
-                    text = "화분 저장",
+                    text = "할 일 저장",
                     onClick = viewModel::savePlant,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -400,12 +400,12 @@ private fun PlantCard(
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = "마지막 물준 날짜 ${plant.lastWateredDate}",
+            text = "마지막 완료 ${plant.lastWateredDate}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            text = "다음 물주기 ${plant.nextWateringDate} · 주기 ${plant.wateringIntervalDays}일",
+            text = "다음 예정일 ${plant.nextWateringDate} · 주기 ${plant.wateringIntervalDays}일",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

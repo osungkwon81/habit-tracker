@@ -8,7 +8,10 @@ import java.time.LocalDateTime
 
 @Entity(
     tableName = "stock_exit_rule",
-    indices = [Index(value = ["product_code", "enabled"])],
+    indices = [
+        Index(value = ["product_code", "enabled"]),
+        Index(value = ["buy_order_id"], unique = true),
+    ],
 )
 data class StockExitRuleEntity(
     @PrimaryKey(autoGenerate = true)
@@ -17,6 +20,8 @@ data class StockExitRuleEntity(
     val productCode: String,
     @ColumnInfo(name = "product_name")
     val productName: String,
+    @ColumnInfo(name = "buy_order_id")
+    val buyOrderId: Long? = null,
     @ColumnInfo(name = "rule_type")
     val ruleType: String,
     @ColumnInfo(name = "trigger_value")

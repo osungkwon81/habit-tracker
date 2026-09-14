@@ -20,6 +20,7 @@ import com.habittracker.data.local.entity.LottoWinningStatEntity
 import com.habittracker.data.local.entity.LottoWinningStatRoundEntity
 import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
+import com.habittracker.data.local.entity.NotificationAssistantItemEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
@@ -136,6 +137,15 @@ interface HabitDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCardHistory(history: CardHistoryEntity): Long
+
+    @Query("SELECT id FROM card_history WHERE use_date = :useDate AND (:excludeId IS NULL OR id != :excludeId) LIMIT 1")
+    suspend fun findCardHistoryIdByDate(useDate: LocalDate, excludeId: Long? = null): Long?
+
+    @Query("SELECT * FROM card_history WHERE id = :historyId LIMIT 1")
+    suspend fun getCardHistoryById(historyId: Long): CardHistoryEntity?
+
+    @Update
+    suspend fun updateCardHistory(history: CardHistoryEntity): Int
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCardHistories(histories: List<CardHistoryEntity>): List<Long>
@@ -627,6 +637,27 @@ interface HabitDao {
     @Delete
     suspend fun deletePlant(plant: PlantEntity)
 
+    @Query("SELECT * FROM notification_assistant_item ORDER BY received_at DESC, id DESC")
+    fun observeNotificationAssistantItems(): Flow<List<NotificationAssistantItemEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertNotificationAssistantItem(item: NotificationAssistantItemEntity): Long
+
+    @Query("SELECT * FROM notification_assistant_item WHERE source_key = :sourceKey LIMIT 1")
+    suspend fun getNotificationAssistantItemBySourceKey(sourceKey: String): NotificationAssistantItemEntity?
+
+    @Update
+    suspend fun updateNotificationAssistantItem(item: NotificationAssistantItemEntity)
+
+    @Query("UPDATE notification_assistant_item SET status = :nextStatus WHERE id = :id AND status = :expectedStatus")
+    suspend fun transitionNotificationAssistantItem(id: Long, expectedStatus: String, nextStatus: String): Int
+
+    @Query("DELETE FROM notification_assistant_item WHERE id = :id")
+    suspend fun deleteNotificationAssistantItem(id: Long): Int
+
+    @Query("UPDATE notification_assistant_item SET event_at = :eventAt WHERE id = :id AND status IN ('PENDING', 'ACCEPTED')")
+    suspend fun updateNotificationAssistantDate(id: Long, eventAt: LocalDateTime): Int
+
     @Query("SELECT * FROM kis_api_config WHERE environment = :environment LIMIT 1")
     suspend fun getKisApiConfig(environment: String): KisApiConfigEntity?
 
@@ -754,6 +785,9 @@ interface HabitDao {
 
     @Query("SELECT * FROM stock_exit_rule WHERE enabled = 1 ORDER BY product_code ASC, created_at ASC")
     suspend fun getEnabledStockExitRules(): List<StockExitRuleEntity>
+
+    @Query("SELECT * FROM stock_exit_rule WHERE buy_order_id = :buyOrderId LIMIT 1")
+    suspend fun getStockExitRuleByBuyOrderId(buyOrderId: Long): StockExitRuleEntity?
 
     @Query(
         """

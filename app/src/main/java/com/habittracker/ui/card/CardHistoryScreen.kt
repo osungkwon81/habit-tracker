@@ -28,10 +28,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -59,6 +62,7 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.LocalAppNavigationGuard
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -71,17 +75,22 @@ private val CardSeriesColors = listOf(Color(0xFF285A4B), Color(0xFFDA8B45), Colo
 fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
-    var pendingDeletion by remember { mutableStateOf<com.habittracker.data.local.entity.CardHistoryEntity?>(null) }
-    pendingDeletion?.let { history ->
-        com.habittracker.ui.components.AppConfirmDialog(
-            title = "카드 이력을 삭제할까요?",
-            message = "${history.useDate} · ${formatWon(history.amount)}\n삭제한 이력은 복원할 수 없습니다.",
-            confirmText = "삭제",
-            onConfirm = { viewModel.deleteHistory(history.id); pendingDeletion = null },
-            onDismiss = { pendingDeletion = null },
-        )
+    var editingHistoryId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var inputUseDate by rememberSaveable { mutableStateOf(LocalDate.now().minusDays(1).toString()) }
+    var inputAmount by rememberSaveable { mutableStateOf("") }
+    var inputMemo by rememberSaveable { mutableStateOf("") }
+    val navigationGuard = LocalAppNavigationGuard.current
+    val editingHistory = uiState.histories.firstOrNull { it.id == editingHistoryId }
+    val hasUnsavedChanges = if (editingHistoryId == null) {
+        inputAmount.isNotBlank() || inputMemo.isNotBlank() || inputUseDate != LocalDate.now().minusDays(1).toString()
+    } else {
+        editingHistory == null || inputUseDate != editingHistory.useDate.toString() ||
+            inputAmount != editingHistory.amount.toString() || inputMemo != editingHistory.memo.orEmpty()
     }
-    var inputUseDate by remember { mutableStateOf(LocalDate.now().minusDays(1).toString()) }
+    SideEffect { navigationGuard.hasUnsavedChanges = hasUnsavedChanges }
+    DisposableEffect(navigationGuard) {
+        onDispose { navigationGuard.hasUnsavedChanges = false }
+    }
     val summaryDate = inputUseDate.toLocalDateOrNull() ?: LocalDate.now().minusDays(1)
     val topSummary = remember(uiState.histories, summaryDate) {
         buildRegistrationDateSummary(uiState.histories, summaryDate)
@@ -109,7 +118,24 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             CardHistoryInputCard(
                 useDate = inputUseDate,
                 onUseDateChange = { inputUseDate = it },
-                onSave = viewModel::saveHistory,
+                amount = inputAmount,
+                onAmountChange = { inputAmount = it },
+                memo = inputMemo,
+                onMemoChange = { inputMemo = it },
+                isEditing = editingHistoryId != null,
+                isSaving = uiState.isSaving,
+                duplicateDate = uiState.histories.any {
+                    it.useDate == inputUseDate.toLocalDateOrNull() && it.id != editingHistoryId
+                },
+                onCancelEdit = {
+                    editingHistoryId = null
+                    inputUseDate = LocalDate.now().minusDays(1).toString()
+                    inputAmount = ""
+                    inputMemo = ""
+                },
+                onSave = { useDate, amount, memo, onSuccess ->
+                    viewModel.saveHistory(editingHistoryId, useDate, amount, memo, onSuccess)
+                },
             )
         }
         item {
@@ -147,7 +173,12 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             CardHistoryListCard(
                 histories = uiState.recentHistories,
                 selectedMonthLabel = "${uiState.selectedMonth.year}년 ${uiState.selectedMonth.monthValue}월",
-                onDelete = { id -> pendingDeletion = uiState.recentHistories.firstOrNull { it.id == id } },
+                onEdit = { history ->
+                    editingHistoryId = history.id
+                    inputUseDate = history.useDate.toString()
+                    inputAmount = history.amount.toString()
+                    inputMemo = history.memo.orEmpty()
+                },
             )
         }
         item {
@@ -298,16 +329,22 @@ private fun CardPaymentSettingsCard(paymentDay: Int, onSave: (String) -> Unit) {
 private fun CardHistoryInputCard(
     useDate: String,
     onUseDateChange: (String) -> Unit,
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    memo: String,
+    onMemoChange: (String) -> Unit,
+    isEditing: Boolean,
+    isSaving: Boolean,
+    duplicateDate: Boolean,
+    onCancelEdit: () -> Unit,
     onSave: (String, String, String, () -> Unit) -> Unit,
 ) {
-    var amount by remember { mutableStateOf("") }
-    var memo by remember { mutableStateOf("") }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = androidx.compose.material3.rememberDatePickerState(
-        initialSelectedDateMillis = useDate.toLocalDateOrNull()?.toEpochMillis(),
-    )
 
     if (showDatePicker) {
+        val datePickerState = androidx.compose.material3.rememberDatePickerState(
+            initialSelectedDateMillis = useDate.toLocalDateOrNull()?.toEpochMillis(),
+        )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
@@ -329,7 +366,7 @@ private fun CardHistoryInputCard(
     }
 
     AppSectionCard {
-        AppSectionHeader(title = "카드 사용 등록", subtitle = "결제 예정 금액과 메모")
+        AppSectionHeader(title = if (isEditing) "카드 사용 수정" else "카드 사용 등록", subtitle = "결제 예정 금액과 메모")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
                 value = useDate,
@@ -340,9 +377,16 @@ private fun CardHistoryInputCard(
             )
             AppSecondaryButton(text = "달력", onClick = { showDatePicker = true })
         }
+        if (duplicateDate) {
+            Text(
+                text = "해당 날짜 이력 있음",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         OutlinedTextField(
             value = amount,
-            onValueChange = { amount = it.digitsOnly() },
+            onValueChange = { onAmountChange(it.digitsOnly()) },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("결제 예정 금액") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -353,20 +397,16 @@ private fun CardHistoryInputCard(
         }
         OutlinedTextField(
             value = memo,
-            onValueChange = { memo = it },
+            onValueChange = onMemoChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("메모") },
             singleLine = true,
         )
         AppSaveButton(
-            text = "카드 이력 저장",
-            onClick = {
-                onSave(useDate, amount, memo) {
-                    amount = ""
-                    memo = ""
-                }
-            },
+            text = if (isEditing) "카드 이력 수정" else "카드 이력 저장",
+            onClick = { onSave(useDate, amount, memo, onCancelEdit) },
             modifier = Modifier.fillMaxWidth(),
+            enabled = !isSaving && !duplicateDate,
         )
     }
 }
@@ -590,7 +630,7 @@ private fun CardLineChartCard(title: String, subtitle: String, series: List<Card
 }
 
 @Composable
-private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMonthLabel: String, onDelete: (Long) -> Unit) {
+private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMonthLabel: String, onEdit: (CardHistoryEntity) -> Unit) {
     AppSectionCard {
         AppSectionHeader(title = "$selectedMonthLabel 사용 내역")
         if (histories.isEmpty()) {
@@ -660,10 +700,10 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
                                 }
                             }
                             TextButton(
-                                onClick = { onDelete(history.id) },
+                                onClick = { onEdit(history) },
                                 modifier = Modifier.width(52.dp),
                             ) {
-                                Text(text = "삭제")
+                                Text(text = "수정")
                             }
                         }
                         history.memo?.takeIf(String::isNotBlank)?.let { memo ->

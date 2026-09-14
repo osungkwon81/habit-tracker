@@ -60,6 +60,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppSecondaryButton
 
 private val CalendarRecordDiaryTone = Color(0xFFF8F4EA)
 private val CalendarRecordTone = Color(0xFFEAF6EE)
@@ -77,6 +78,7 @@ fun HomeScreen(
     onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
+    onOpenNotificationAssistant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
     // 화면이 STARTED 이상일 때만 Flow를 수집해 백그라운드의 불필요한 작업을 막는다.
@@ -120,6 +122,14 @@ fun HomeScreen(
                 onOpenLotto = onOpenLotto,
                 onOpenPlant = onOpenPlant,
                 onOpenCard = onOpenCard,
+            )
+        }
+        item {
+            AppSectionHeader(title = "알림 생활비서", subtitle = "놓치기 쉬운 예약·마감·배송 알림을 확인하세요.")
+            AppSecondaryButton(
+                text = "알림에서 할 일 찾기",
+                onClick = onOpenNotificationAssistant,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
         item {
@@ -170,7 +180,7 @@ private fun WorkspaceSection(
             HomeQuickAction("stock", R.drawable.ic_category_stock, "주식", "포트폴리오와 자동화", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenStock),
             HomeQuickAction("card", R.drawable.ic_category_card, "카드", "사용 이력과 결제 예정", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenCard),
             HomeQuickAction("lottery", R.drawable.ic_category_lotto, "동행복권", "로또·연금복권", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenLotto),
-            HomeQuickAction("plant", R.drawable.ic_category_plant, "화분", "오늘의 물주기", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
+            HomeQuickAction("plant", R.drawable.ic_category_repeat, "반복 할 일", "오늘 해야 할 일", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
             HomeQuickAction("memo", R.drawable.ic_category_memo, "메모", "빠른 메모와 잠금", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenMemo),
         )
         val currentWeekKey = LocalDate.now()

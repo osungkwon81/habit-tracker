@@ -1099,6 +1099,12 @@ class StockViewModel(
     fun deleteExitRule(ruleId: Long) =
         launchAction("규칙 삭제에 실패했습니다.") { repository.deleteStockExitRule(ruleId) }
 
+    fun saveBuyLotTakeProfitRule(buyOrderId: Long, targetReturnPercent: Double) =
+        launchAction("매수 주문 $buyOrderId 자동 매도 규칙 저장에 실패했습니다.") {
+            repository.saveBuyLotTakeProfitRule(buyOrderId, targetReturnPercent)
+            _uiState.update { it.copy(statusMessage = "매수 주문 $buyOrderId 의 잔여 수익률 자동 매도 규칙을 저장했습니다.") }
+        }
+
     fun selectTargetProduct(code: String, name: String) =
         _uiState.update { it.copy(targetProductCode = code, targetProductName = name) }
     fun updateTargetPercent(value: String) =

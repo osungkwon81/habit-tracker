@@ -967,6 +967,42 @@ class HabitRepository(
         }
     }
 
+    suspend fun saveBuyLotTakeProfitRule(buyOrderId: Long, targetReturnPercent: Double) = withContext(Dispatchers.IO) {
+        require(targetReturnPercent.isFinite() && targetReturnPercent > 0.0) {
+            "목표 잔여 수익률은 0보다 큰 숫자로 입력해 주세요."
+        }
+        stockAutomationMutex.withLock {
+            val order = habitDao.getStockOrderById(buyOrderId)
+                ?: throw IllegalArgumentException("매수 주문 $buyOrderId 를 찾을 수 없습니다.")
+            require(order.side == KisOrderSide.BUY.name && order.remainingQuantity > 0L) {
+                "매수 주문 $buyOrderId 에 매도할 잔여 수량이 없습니다."
+            }
+            require((order.filledAveragePrice ?: order.referencePrice) > 0L) {
+                "매수 주문 $buyOrderId 의 체결가를 확인할 수 없습니다."
+            }
+            val existing = habitDao.getStockExitRuleByBuyOrderId(buyOrderId)
+            val now = LocalDateTime.now()
+            persistChange {
+                habitDao.upsertStockExitRule(
+                    StockExitRuleEntity(
+                        id = existing?.id ?: 0L,
+                        productCode = order.productCode,
+                        productName = order.productName,
+                        buyOrderId = buyOrderId,
+                        ruleType = StockExitRuleType.TAKE_PROFIT.name,
+                        triggerValue = targetReturnPercent,
+                        sellQuantityPercent = 100.0,
+                        actionMode = StockRuleAction.AUTO_SELL.name,
+                        orderDivisionCode = stockLimitOrderCode,
+                        enabled = true,
+                        createdAt = existing?.createdAt ?: now,
+                        updatedAt = now,
+                    ),
+                )
+            }
+        }
+    }
+
     suspend fun deleteStockExitRule(ruleId: Long) {
         persistChange { habitDao.deleteStockExitRule(ruleId) }
     }
@@ -1736,7 +1772,8 @@ class HabitRepository(
                 val hasIntradayRule = productRules.any { it.ruleType == StockExitRuleType.INTRADAY_RISE.name }
                 val holdingQuantity = balance?.quantity?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
                 val averagePrice = balance?.averagePrice?.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                if (!hasIntradayRule && (holdingQuantity <= 0L || averagePrice <= 0.0)) return@mapNotNull null
+                if (!hasIntradayRule && (holdingQuantity <= 0L ||
+                        (averagePrice <= 0.0 && productRules.none { it.buyOrderId != null }))) return@mapNotNull null
                 StockRealtimePosition(
                     productCode = productCode,
                     productName = balance?.productName ?: productRules.first().productName,
@@ -1886,7 +1923,8 @@ class HabitRepository(
                 val hasIntradayRule = rules.any { it.ruleType == StockExitRuleType.INTRADAY_RISE.name }
                 val holdingQuantity = storedBalance?.quantity?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
                 val averagePrice = storedBalance?.averagePrice?.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                if (!hasIntradayRule && (holdingQuantity <= 0L || averagePrice <= 0.0)) continue
+                if (!hasIntradayRule && (holdingQuantity <= 0L ||
+                        (averagePrice <= 0.0 && rules.none { it.buyOrderId != null }))) continue
                 val quote = if (hasIntradayRule || storedBalance?.currentPrice?.toLongOrNull()?.let { it > 0L } != true) {
                     try {
                         withKisAccessTokenRetry(config, accessToken) { retryConfig, retryToken ->
@@ -1952,14 +1990,28 @@ class HabitRepository(
         val notices = mutableListOf<StockAutomationNotice>()
         val triggeredRuleIds = mutableSetOf<Long>()
         val updatedReferenceHighPrices = mutableMapOf<Long, Long>()
-        val returnPercent = averagePrice.takeIf { it > 0.0 }
-            ?.let { price -> (currentPrice.toDouble() - price) / price * 100.0 }
         var autoOrderSubmitted = false
 
         for (storedRule in rules.sortedBy(StockExitRuleEntity::createdAt)) {
             var rule = storedRule
             val ruleType = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType } ?: continue
-            if (ruleType != StockExitRuleType.INTRADAY_RISE && (holdingQuantity <= 0L || averagePrice <= 0.0)) {
+            val buyLot = rule.buyOrderId?.let { habitDao.getStockOrderById(it) }
+            if (rule.buyOrderId != null && (
+                    buyLot == null || buyLot.side != KisOrderSide.BUY.name ||
+                        buyLot.productCode != balance.productCode || buyLot.remainingQuantity <= 0L
+                )) {
+                persistChange { habitDao.updateStockExitRule(rule.copy(enabled = false, updatedAt = LocalDateTime.now())) }
+                saveStockAutomationEvent(
+                    level = "WARN",
+                    eventType = "BUY_LOT_RULE_STOPPED",
+                    productCode = balance.productCode,
+                    message = "매수 주문 ${rule.buyOrderId} 의 잔여 수량을 확인할 수 없어 자동 매도 규칙 ${rule.id} 을 중지했습니다.",
+                )
+                continue
+            }
+            val referencePrice = buyLot?.let { (it.filledAveragePrice ?: it.referencePrice).toDouble() }
+                ?: averagePrice
+            if (ruleType != StockExitRuleType.INTRADAY_RISE && (holdingQuantity <= 0L || referencePrice <= 0.0)) {
                 continue
             }
             if (ruleType == StockExitRuleType.TRAILING_STOP && rule.triggerPrice == null) {
@@ -1978,11 +2030,13 @@ class HabitRepository(
             }
             if (rule.id in ignoredRuleIds) continue
 
+            val ruleReturnPercent = referencePrice.takeIf { it > 0.0 }
+                ?.let { price -> (currentPrice.toDouble() - price) / price * 100.0 }
             val triggered = when (ruleType) {
                 StockExitRuleType.STOP_LOSS -> rule.triggerPrice?.let { currentPrice <= it }
-                    ?: (returnPercent?.let { it <= -rule.triggerValue } == true)
+                    ?: (ruleReturnPercent?.let { it <= -rule.triggerValue } == true)
                 StockExitRuleType.TAKE_PROFIT -> rule.triggerPrice?.let { currentPrice >= it }
-                    ?: (returnPercent?.let { it >= rule.triggerValue } == true)
+                    ?: (ruleReturnPercent?.let { it >= rule.triggerValue } == true)
                 StockExitRuleType.TRAILING_STOP -> {
                     rule.triggerPrice?.let { currentPrice <= it } ?: run {
                         val high = rule.referenceHighPrice ?: currentPrice
@@ -2018,11 +2072,11 @@ class HabitRepository(
                 buildString {
                     append("현재가 ${formatStockPrice(currentPrice)}")
                     changeRatePercent?.let { append(" · 당일 등락률 ${formatStockReturn(it)}") }
-                    returnPercent?.let {
-                        append(" · 평균가 ${formatStockPrice(averagePrice.toLong())} · 수익률 ${formatStockReturn(it)}")
+                    ruleReturnPercent?.let {
+                        append(" · ${if (buyLot == null) "평균가" else "매수 체결가"} ${formatStockPrice(referencePrice.toLong())} · 수익률 ${formatStockReturn(it)}")
                     }
                 },
-                "보유 ${holdingQuantity}주",
+                if (buyLot == null) "보유 ${holdingQuantity}주" else "매수 주문 ${buyLot.orderNumber} · 잔여 ${buyLot.remainingQuantity}주",
                 triggerMessage,
             )
             if (action == StockRuleAction.NOTIFY_ONLY) {
@@ -2054,11 +2108,13 @@ class HabitRepository(
                             verifiedCurrentPrice = currentPrice,
                             knownHoldingQuantity = holdingQuantity,
                         )
-                        val orderQuantity = if (availability.availableQuantity > 0L) {
-                            floor(availability.availableQuantity * rule.sellQuantityPercent / 100.0)
+                        val availableForRule = if (buyLot == null) availability.availableQuantity
+                            else minOf(availability.availableQuantity, buyLot.remainingQuantity)
+                        val orderQuantity = if (availableForRule > 0L) {
+                            floor(availableForRule * rule.sellQuantityPercent / 100.0)
                                 .toLong()
                                 .coerceAtLeast(1L)
-                                .coerceAtMost(availability.availableQuantity)
+                                .coerceAtMost(availableForRule)
                         } else {
                             0L
                         }
@@ -2086,6 +2142,7 @@ class HabitRepository(
                             verifiedCurrentPrice = availability.currentPrice,
                             verifiedQuoteUnit = availability.quoteUnit,
                             skipCrashGuardRefresh = true,
+                            intendedBuyOrderId = buyLot?.id,
                         )
                     }.onSuccess { (orderQuantity, order) ->
                         noticeLines += "처리: ${orderTypeLabel} ${orderQuantity}주 ${side.label} 접수 · 주문번호 ${order.orderNumber}"
@@ -2798,13 +2855,38 @@ class HabitRepository(
     suspend fun saveCardHistory(useDate: LocalDate, amount: Long, memo: String?) {
         require(amount != 0L) { "결제 예정 금액을 입력해 주세요." }
         persistChange {
-            habitDao.insertCardHistory(
-                CardHistoryEntity(
-                    useDate = useDate,
-                    amount = amount,
-                    memo = memo?.trim()?.takeIf(String::isNotEmpty),
-                ),
-            )
+            database.withTransaction {
+                require(habitDao.findCardHistoryIdByDate(useDate) == null) {
+                    "${useDate}에 저장된 카드 이력이 있습니다. 사용 내역에서 수정해 주세요."
+                }
+                habitDao.insertCardHistory(
+                    CardHistoryEntity(
+                        useDate = useDate,
+                        amount = amount,
+                        memo = memo?.trim()?.takeIf(String::isNotEmpty),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun updateCardHistory(historyId: Long, useDate: LocalDate, amount: Long, memo: String?) {
+        require(amount != 0L) { "결제 예정 금액을 입력해 주세요." }
+        persistChange {
+            database.withTransaction {
+                val existing = habitDao.getCardHistoryById(historyId)
+                    ?: throw IllegalArgumentException("카드 이력 $historyId: 수정할 이력을 찾을 수 없습니다.")
+                require(habitDao.findCardHistoryIdByDate(useDate, historyId) == null) {
+                    "${useDate}에 저장된 다른 카드 이력이 있습니다."
+                }
+                habitDao.updateCardHistory(
+                    existing.copy(
+                        useDate = useDate,
+                        amount = amount,
+                        memo = memo?.trim()?.takeIf(String::isNotEmpty),
+                    ),
+                )
+            }
         }
     }
 
@@ -3073,11 +3155,11 @@ class HabitRepository(
         val sanitizedName = name.trim()
         val sanitizedMemo = memo?.trim()?.takeIf(String::isNotEmpty)
         val sanitizedImageUri = imageUri?.trim()?.takeIf(String::isNotEmpty)
-        require(sanitizedName.isNotEmpty()) { "화분 이름을 입력해 주세요." }
-        require(wateringMonths >= 0 && wateringDays >= 0) { "물주기 주기는 0 이상이어야 합니다." }
+        require(sanitizedName.isNotEmpty()) { "할 일 이름을 입력해 주세요." }
+        require(wateringMonths >= 0 && wateringDays >= 0) { "반복 주기는 0 이상이어야 합니다." }
 
         val intervalDays = (wateringMonths * 30) + wateringDays
-        require(intervalDays > 0) { "물주기 주기를 입력해 주세요." }
+        require(intervalDays > 0) { "반복 주기를 입력해 주세요." }
 
         val now = LocalDateTime.now()
         val nextWateringDate = lastWateredDate.plusDays(intervalDays.toLong())
@@ -3114,7 +3196,7 @@ class HabitRepository(
     }
 
     suspend fun completePlantWatering(plantId: Long, wateredDate: LocalDate = LocalDate.now()) {
-        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("화분 정보를 찾을 수 없습니다.")
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("반복 할 일 $plantId 정보를 찾을 수 없습니다.")
         persistChange {
             habitDao.updatePlant(
                 existingPlant.copy(
@@ -3127,7 +3209,7 @@ class HabitRepository(
     }
 
     suspend fun increasePlantWateringIntervalOneDay(plantId: Long) {
-        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("화분 정보를 찾을 수 없습니다.")
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("반복 할 일 $plantId 정보를 찾을 수 없습니다.")
         persistChange {
             habitDao.updatePlant(
                 existingPlant.copy(
@@ -3140,7 +3222,7 @@ class HabitRepository(
     }
 
     suspend fun deletePlant(plantId: Long) {
-        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("삭제할 화분을 찾을 수 없습니다.")
+        val existingPlant = habitDao.getPlantById(plantId) ?: throw IllegalArgumentException("삭제할 반복 할 일 $plantId 정보를 찾을 수 없습니다.")
         persistChange {
             habitDao.deletePlant(existingPlant)
         }

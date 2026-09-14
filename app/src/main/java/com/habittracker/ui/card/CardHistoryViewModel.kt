@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ class CardHistoryViewModel(
     private val paymentDay = MutableStateFlow(repository.getCardPaymentDay())
     private val selectedMonth = MutableStateFlow(billingCycleMonth(LocalDate.now(), paymentDay.value))
     private val statusMessage = MutableStateFlow<String?>(null)
+    private val isSaving = MutableStateFlow(false)
 
     private val contentState = combine(
         repository.observeCardHistories(),
@@ -41,8 +43,8 @@ class CardHistoryViewModel(
             yearComparisonSeries = listOf(month, month.minusYears(1)).map { series.getValue(it) }.filter { it.points.isNotEmpty() },
         )
     }.flowOn(Dispatchers.Default)
-    val uiState: StateFlow<CardHistoryUiState> = combine(contentState, statusMessage) { state, message ->
-        state.copy(statusMessage = message)
+    val uiState: StateFlow<CardHistoryUiState> = combine(contentState, statusMessage, isSaving) { state, message, saving ->
+        state.copy(statusMessage = message, isSaving = saving)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -75,30 +77,28 @@ class CardHistoryViewModel(
         statusMessage.value = "결제일 기준이 저장되었습니다."
     }
 
-    fun saveHistory(useDate: String, amount: String, memo: String, onSuccess: (() -> Unit)? = null) {
+    fun saveHistory(historyId: Long?, useDate: String, amount: String, memo: String, onSuccess: (() -> Unit)? = null) {
+        if (isSaving.value) return
+        isSaving.value = true
         viewModelScope.launch {
-            runCatching {
+            try {
                 val parsedUseDate = LocalDate.parse(useDate)
-                repository.saveCardHistory(
-                    useDate = parsedUseDate,
-                    amount = amount.digitsOnly().toLongOrNull() ?: 0L,
-                    memo = memo,
-                )
-            }.onSuccess {
-                selectedMonth.value = billingCycleMonth(LocalDate.parse(useDate), paymentDay.value)
-                statusMessage.value = "카드 이력이 저장되었습니다."
+                val parsedAmount = amount.digitsOnly().toLongOrNull() ?: 0L
+                if (historyId == null) {
+                    repository.saveCardHistory(parsedUseDate, parsedAmount, memo)
+                } else {
+                    repository.updateCardHistory(historyId, parsedUseDate, parsedAmount, memo)
+                }
+                selectedMonth.value = billingCycleMonth(parsedUseDate, paymentDay.value)
+                statusMessage.value = if (historyId == null) "카드 이력이 저장되었습니다." else "카드 이력이 수정되었습니다."
                 onSuccess?.invoke()
-            }.onFailure { error ->
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 statusMessage.value = error.message ?: "카드 이력 저장에 실패했습니다."
+            } finally {
+                isSaving.value = false
             }
-        }
-    }
-
-    fun deleteHistory(historyId: Long) {
-        viewModelScope.launch {
-            runCatching { repository.deleteCardHistory(historyId) }
-                .onSuccess { statusMessage.value = "카드 이력을 삭제했습니다." }
-                .onFailure { error -> statusMessage.value = error.message ?: "카드 이력 삭제에 실패했습니다." }
         }
     }
 
@@ -115,6 +115,7 @@ data class CardHistoryUiState(
     val threeMonthSeries: List<CardMonthSeries> = emptyList(),
     val yearComparisonSeries: List<CardMonthSeries> = emptyList(),
     val statusMessage: String? = null,
+    val isSaving: Boolean = false,
 )
 
 data class CardTopSummary(

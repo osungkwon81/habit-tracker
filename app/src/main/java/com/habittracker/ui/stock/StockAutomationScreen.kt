@@ -312,11 +312,13 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
             key = { index -> uiState.exitRules[index].id },
         ) { index ->
             val rule = uiState.exitRules[index]
+            val buyLot = rule.buyOrderId?.let { buyOrderId -> uiState.orders.firstOrNull { it.id == buyOrderId } }
             val type = StockExitRuleType.values().firstOrNull { it.name == rule.ruleType }
             val action = StockRuleAction.values().firstOrNull { it.name == rule.actionMode }
             val balance = uiState.ownedStocks.firstOrNull { it.productCode == rule.productCode }
             val currentPrice = balance?.currentPrice?.toDoubleOrNull()?.roundToLong()
-            val averagePrice = balance?.averagePrice?.toDoubleOrNull()
+            val averagePrice = buyLot?.let { (it.filledAveragePrice ?: it.referencePrice).toDouble() }
+                ?: balance?.averagePrice?.toDoubleOrNull()
             val triggerPrice = rule.triggerPrice ?: when (type) {
                 StockExitRuleType.STOP_LOSS ->
                     averagePrice
@@ -334,7 +336,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 StockExitRuleType.INTRADAY_RISE,
                 null -> null
             }
-            val holdingQuantity = balance?.quantity?.toLongOrNull()
+            val holdingQuantity = balance?.quantity?.toLongOrNull()?.let { accountQuantity ->
+                if (buyLot == null) accountQuantity else minOf(accountQuantity, buyLot.remainingQuantity)
+            }
             val currentValuationAmount = if (holdingQuantity != null && currentPrice != null) {
                 runCatching { Math.multiplyExact(holdingQuantity, currentPrice) }.getOrNull()
             } else {
@@ -358,6 +362,9 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
             }
             AppSectionCard {
                 Text("${rule.productName} (${rule.productCode})", style = MaterialTheme.typography.titleMedium)
+                if (rule.buyOrderId != null) {
+                    AppSupportText("매수 주문 ${buyLot?.orderNumber ?: rule.buyOrderId} · 잔여 ${buyLot?.remainingQuantity ?: "-"}주 기준")
+                }
                 Text(
                     buildString {
                         append(type?.label ?: rule.ruleType)
@@ -378,7 +385,7 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                 when (type) {
                     StockExitRuleType.STOP_LOSS,
                     StockExitRuleType.TAKE_PROFIT -> Text(
-                        "발동가 ${triggerPrice.toWon()} · 평균단가 ${balance?.averagePrice?.toWon() ?: "-"}",
+                        "발동가 ${triggerPrice.toWon()} · ${if (buyLot == null) "평균단가" else "매수 체결가"} ${averagePrice?.roundToLong().toWon()}",
                     )
                     StockExitRuleType.TRAILING_STOP -> Text(
                         if (rule.triggerPrice != null) {
@@ -415,6 +422,8 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
                     when {
                         !rule.enabled -> "규칙 중지됨"
                         !uiState.safetyConfig.monitoringEnabled -> "활성화됨 · 모니터링 시작 필요"
+                        action == StockRuleAction.AUTO_SELL && !uiState.safetyConfig.automaticOrderEnabled ->
+                            "감시 중 · 자동 주문 실행 꺼짐"
                         else -> "감시 중"
                     },
                 )

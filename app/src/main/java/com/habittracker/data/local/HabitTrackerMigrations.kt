@@ -920,6 +920,48 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_34_35 = object : Migration(34, 35) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `notification_assistant_item` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `source_key` TEXT NOT NULL,
+                    `source_package` TEXT NOT NULL,
+                    `category` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `source_text` TEXT NOT NULL,
+                    `event_at` TEXT,
+                    `received_at` TEXT NOT NULL,
+                    `status` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_notification_assistant_item_source_key` ON `notification_assistant_item` (`source_key`)",
+            )
+        }
+    }
+
+    private val MIGRATION_35_36 = object : Migration(35, 36) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `stock_exit_rule` ADD COLUMN `buy_order_id` INTEGER")
+            database.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_stock_exit_rule_buy_order_id` ON `stock_exit_rule` (`buy_order_id`)",
+            )
+        }
+    }
+
+    private val MIGRATION_36_37 = object : Migration(36, 37) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `notification_assistant_item` ADD COLUMN `amount` INTEGER")
+            database.execSQL("ALTER TABLE `notification_assistant_item` ADD COLUMN `merchant` TEXT")
+            database.execSQL("ALTER TABLE `notification_assistant_item` ADD COLUMN `product_name` TEXT")
+            database.execSQL("ALTER TABLE `notification_assistant_item` ADD COLUMN `reference_id` TEXT")
+            database.execSQL("ALTER TABLE `notification_assistant_item` ADD COLUMN `delivery_state` TEXT")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -950,6 +992,9 @@ object HabitTrackerMigrations {
         MIGRATION_31_32,
         MIGRATION_32_33,
         MIGRATION_33_34,
+        MIGRATION_34_35,
+        MIGRATION_35_36,
+        MIGRATION_36_37,
     )
 }
 
