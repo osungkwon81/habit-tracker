@@ -24,6 +24,7 @@ import com.habittracker.data.local.entity.NotificationAssistantItemEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
+import com.habittracker.data.local.entity.ReminderEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockAssetSnapshotEntity
 import com.habittracker.data.local.entity.StockExitRuleEntity
@@ -636,6 +637,24 @@ interface HabitDao {
 
     @Delete
     suspend fun deletePlant(plant: PlantEntity)
+
+    @Query("SELECT * FROM reminder ORDER BY completed_at IS NOT NULL, remind_at ASC, id ASC")
+    fun observeReminders(): Flow<List<ReminderEntity>>
+
+    @Query("SELECT * FROM reminder WHERE id = :reminderId LIMIT 1")
+    suspend fun getReminderById(reminderId: Long): ReminderEntity?
+
+    @Query("SELECT * FROM reminder WHERE completed_at IS NULL ORDER BY remind_at ASC, id ASC")
+    suspend fun getActiveReminders(): List<ReminderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertReminder(reminder: ReminderEntity): Long
+
+    @Query("UPDATE reminder SET completed_at = :completedAt WHERE id = :reminderId AND completed_at IS NULL")
+    suspend fun completeReminder(reminderId: Long, completedAt: LocalDateTime): Int
+
+    @Query("DELETE FROM reminder WHERE id = :reminderId")
+    suspend fun deleteReminder(reminderId: Long): Int
 
     @Query("SELECT * FROM notification_assistant_item ORDER BY received_at DESC, id DESC")
     fun observeNotificationAssistantItems(): Flow<List<NotificationAssistantItemEntity>>

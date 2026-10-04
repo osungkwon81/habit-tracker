@@ -1076,4 +1076,4 @@ private const val BACKUP_GENERATION_PREFIX = "backup:"
 private const val PENSION_CONTROL_COUNT = 4
 private const val PENSION_GENERATION_VERSION = "pension-collection-v1"
 private const val PENSION_GENERATION_CONFIG =
-    "recent=16;long=156;recentWeight=0.25;longWeight=0.75;types=appeared,coldMix;lastDigitPriority=true"
+    "recent=16;long=156;recentWeight=0.25;longWeight=0.75;types=appeared,coldMix;lastDigitPriority=true;duplicateTypes=tripleOrMore,twoPairsOrMore,onePair,none"

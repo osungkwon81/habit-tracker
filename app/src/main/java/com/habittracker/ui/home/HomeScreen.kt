@@ -78,6 +78,7 @@ fun HomeScreen(
     onOpenStock: () -> Unit,
     onOpenLotto: () -> Unit,
     onOpenPlant: () -> Unit,
+    onOpenReminder: () -> Unit,
     onOpenNotificationAssistant: () -> Unit,
     onOpenCard: () -> Unit,
 ) {
@@ -122,6 +123,14 @@ fun HomeScreen(
                 onOpenLotto = onOpenLotto,
                 onOpenPlant = onOpenPlant,
                 onOpenCard = onOpenCard,
+            )
+        }
+        item {
+            AppSectionHeader(title = "리마인더", subtitle = "완료할 때까지 설정한 간격으로 다시 알려드려요.")
+            AppSecondaryButton(
+                text = "리마인더 만들기",
+                onClick = onOpenReminder,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
         item {

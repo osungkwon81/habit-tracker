@@ -59,6 +59,14 @@
                 android:value="User-enabled live stock price monitoring, risk alerts, and guarded KIS order automation" />
         </service>
         <receiver
+            android:name=".data.reminder.ReminderCompleteReceiver"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
+            android:name=".data.reminder.ReminderDismissReceiver"
+            android:enabled="true"
+            android:exported="false" />
+        <receiver
             android:name=".data.stock.StockAutomationBootReceiver"
             android:enabled="true"
             android:exported="false">

@@ -5,6 +5,7 @@ import com.habittracker.data.local.HabitTrackerDatabase
 import com.habittracker.data.local.HabitTrackerDatabaseProtector
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.notification.NotificationAssistantRepository
+import com.habittracker.data.reminder.ReminderRepository
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +30,8 @@ class AppContainer(context: Context) {
         private set
     lateinit var notificationAssistantRepository: NotificationAssistantRepository
         private set
+    lateinit var reminderRepository: ReminderRepository
+        private set
 
     init {
         scope.launch {
@@ -39,7 +42,10 @@ class AppContainer(context: Context) {
                     HabitRepository(applicationContext, database, databaseProtector, database.habitDao())
                 }
                 notificationAssistantRepository = NotificationAssistantRepository(database, databaseProtector, database.habitDao())
+                reminderRepository = ReminderRepository(applicationContext, database, databaseProtector, database.habitDao())
                 _readiness.value = Result.success(Unit)
+                runCatching { reminderRepository.restoreSchedules() }
+                    .onFailure { error -> Log.e("AppContainer", "Reminder schedule restoration failed", error) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -57,5 +63,10 @@ class AppContainer(context: Context) {
     suspend fun awaitNotificationAssistantRepository(): NotificationAssistantRepository {
         readiness.filterNotNull().first().getOrThrow()
         return notificationAssistantRepository
+    }
+
+    suspend fun awaitReminderRepository(): ReminderRepository {
+        readiness.filterNotNull().first().getOrThrow()
+        return reminderRepository
     }
 }

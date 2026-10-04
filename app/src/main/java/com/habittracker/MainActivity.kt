@@ -83,6 +83,8 @@ import com.habittracker.ui.notification.NotificationAssistantPage
 import com.habittracker.ui.notification.NotificationAssistantViewModel
 import com.habittracker.ui.plant.PlantScreen
 import com.habittracker.ui.plant.PlantViewModel
+import com.habittracker.ui.reminder.ReminderScreen
+import com.habittracker.ui.reminder.ReminderViewModel
 import com.habittracker.ui.stats.MonthlyStatsScreen
 import com.habittracker.ui.stats.MonthlyStatsViewModel
 import com.habittracker.ui.settings.AppManagementScreen
@@ -167,7 +169,7 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MORE.route) {
                 AppScreen {
                     item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
+                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.REMINDER, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
                         ListItem(
                             headlineContent = { Text(destination.label) },
                             trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -185,6 +187,7 @@ private fun HabitTrackerApp() {
                     onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
                     onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
                     onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
+                    onOpenReminder = { navController.navigate(AppDestination.REMINDER.route) },
                     onOpenNotificationAssistant = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT.route) },
                     onOpenCard = { navController.navigate(AppDestination.CARD.route) },
                 )
@@ -300,6 +303,10 @@ private fun HabitTrackerApp() {
             composable(AppDestination.PLANT.route) {
                 val viewModel: PlantViewModel = viewModel(factory = viewModelFactory)
                 PlantScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.REMINDER.route) {
+                val viewModel: ReminderViewModel = viewModel(factory = viewModelFactory)
+                ReminderScreen(viewModel = viewModel)
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT.route) {
                 val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)

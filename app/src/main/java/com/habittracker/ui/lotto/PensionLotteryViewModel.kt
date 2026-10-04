@@ -612,15 +612,18 @@ private fun buildDuplicateStats(
 }
 
 internal fun pensionDuplicateLabel(winningNumber: String): String {
-    val maxDuplicateCount = winningNumber.groupingBy { digit -> digit }.eachCount().values.maxOrNull() ?: 0
+    val duplicateCounts = winningNumber.groupingBy { digit -> digit }.eachCount().values
+    val maxDuplicateCount = duplicateCounts.maxOrNull() ?: 0
+    val pairCount = duplicateCounts.count { count -> count == 2 }
     return when {
         maxDuplicateCount >= 3 -> "3자리 이상"
-        maxDuplicateCount == 2 -> "2자리"
+        pairCount >= 2 -> "2자리 2쌍 이상"
+        pairCount == 1 -> "2자리 1쌍"
         else -> "중복 없음"
     }
 }
 
-internal val PENSION_DUPLICATE_LABELS = listOf("3자리 이상", "2자리", "중복 없음")
+internal val PENSION_DUPLICATE_LABELS = listOf("3자리 이상", "2자리 2쌍 이상", "2자리 1쌍", "중복 없음")
 
 private fun buildPositionScores(draws: List<PensionLotteryDrawEntity>): List<PensionLotteryPositionScore> =
     (0 until 6).map { position ->
