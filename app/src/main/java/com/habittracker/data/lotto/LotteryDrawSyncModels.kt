@@ -7,6 +7,9 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.ZoneId
+import java.security.MessageDigest
+import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import java.time.format.DateTimeParseException
 
 enum class LotteryProduct(
@@ -16,6 +19,29 @@ enum class LotteryProduct(
 ) {
     LOTTO_645("로또 6/45", DayOfWeek.SATURDAY, LocalTime.of(21, 5)),
     PENSION_720("연금복권 720+", DayOfWeek.THURSDAY, LocalTime.of(19, 35)),
+}
+
+fun lotteryEvaluationDeadline(product: LotteryProduct, roundNo: Int): LocalDateTime {
+    require(roundNo > 0) { "평가 대상 회차는 1 이상이어야 합니다." }
+    val firstDrawDate = when (product) {
+        LotteryProduct.LOTTO_645 -> LocalDate.of(2002, 12, 7)
+        LotteryProduct.PENSION_720 -> LocalDate.of(2020, 5, 7)
+    }
+    val drawTime = when (product) {
+        LotteryProduct.LOTTO_645 -> LocalTime.of(20, 35)
+        LotteryProduct.PENSION_720 -> LocalTime.of(19, 5)
+    }
+    return firstDrawDate.plusWeeks((roundNo - 1).toLong()).atTime(drawTime)
+}
+
+fun lotteryEvaluationNow(): LocalDateTime = LocalDateTime.now(ZoneId.of("Asia/Seoul"))
+
+fun pensionGenerationInputHash(draws: List<PensionLotteryDrawEntity>): String {
+    val input = draws.sortedBy(PensionLotteryDrawEntity::roundNo).joinToString("|") { draw ->
+        "${draw.roundNo}:${draw.groupNo}:${draw.winningNumber}:${draw.bonusNumber.orEmpty()}"
+    }
+    return MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
 }
 
 enum class LotterySyncState {

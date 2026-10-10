@@ -91,4 +91,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.core.ktx)
+    androidTestImplementation("androidx.test:runner:1.6.1")
 }

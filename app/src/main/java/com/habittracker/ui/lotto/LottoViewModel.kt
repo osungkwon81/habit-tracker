@@ -54,6 +54,7 @@ enum class LottoTab {
     WINNING,
     SAVED,
     STATS,
+    EXPERIMENT,
 }
 
 enum class LotteryAccountingStatsRange(val label: String) {
@@ -130,6 +131,77 @@ private data class LottoFeedbackState(
 class LottoViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
+    private val experimentState = MutableStateFlow(LottoExperimentUiState())
+    val experimentUiState: StateFlow<LottoExperimentUiState> = experimentState
+    private var experimentJob: kotlinx.coroutines.Job? = null
+
+    fun selectExperimentTab() {
+        selectedTab.value = LottoTab.EXPERIMENT
+        refreshExperiments()
+    }
+
+    fun refreshExperiments() = experimentAction {
+        val draws = repository.getLottoExperimentDraws()
+        experimentState.value = experimentState.value.copy(
+            experiments = repository.lottoExperiments.list(draws),
+            operating = repository.lottoExperiments.approvedSetting(),
+        )
+    }
+
+    fun registerExperiment(document: ByteArray) = experimentAction {
+        val id = repository.lottoExperiments.register(document, repository.getLottoExperimentDraws())
+        statusMessage.value = "실험을 등록했습니다. 정책·구간·시드는 이 등록에서 변경할 수 없습니다: $id"
+        reloadExperiments()
+    }
+
+    fun captureExperimentInputs(id: String, target: Int) = experimentAction {
+        repository.lottoExperiments.captureInputs(id, target, repository.getLottoExperimentDraws())
+        statusMessage.value = "${target}회차의 추첨 전 입력을 보존했습니다. 번호 생성·비교 평가는 실행하지 않았습니다."
+        reloadExperiments()
+    }
+
+    fun executeExperiment(id: String) = experimentAction {
+        repository.lottoExperiments.execute(id, repository.getLottoExperimentDraws())
+        statusMessage.value = "비교 실행과 전체 기록 저장을 완료했습니다. 운영 설정은 승인 전까지 유지됩니다."
+        reloadExperiments()
+    }
+
+    fun approveExperiment(id: String, reason: String) = experimentAction {
+        repository.lottoExperiments.approve(id, repository.getLottoExperimentDraws(), reason)
+        statusMessage.value = "확인한 실험 근거로 균형형 BASIC 5게임에 priorDraws 64를 승인 적용했습니다."
+        reloadExperiments()
+    }
+
+    fun rollbackExperimentSetting(reason: String) = experimentAction {
+        repository.lottoExperiments.rollback(reason)
+        statusMessage.value = "이전 승인 설정을 복구했습니다. 기존 생성·평가 기록은 보존됩니다."
+        reloadExperiments()
+    }
+
+    fun cancelExperiment() { experimentJob?.cancel() }
+    fun reportExperimentImportError(message: String) { statusMessage.value = message }
+
+    private suspend fun reloadExperiments() {
+        experimentState.value = experimentState.value.copy(
+            experiments = repository.lottoExperiments.list(repository.getLottoExperimentDraws()),
+            operating = repository.lottoExperiments.approvedSetting(),
+        )
+    }
+
+    private fun experimentAction(block: suspend () -> Unit) {
+        if (experimentState.value.busy) return
+        experimentState.value = experimentState.value.copy(busy = true)
+        experimentJob = viewModelScope.launch {
+            try { block() }
+            catch (cancelled: CancellationException) {
+                statusMessage.value = "실험 작업을 취소했습니다. 시작된 실행의 기록은 보존됩니다. 새로고침으로 상태를 확인해 주세요."
+                throw cancelled
+            } catch (error: Exception) {
+                android.util.Log.e("LottoExperiment", "Experiment action failed", error)
+                statusMessage.value = error.message ?: "실험 작업에 실패했습니다."
+            } finally { experimentState.value = experimentState.value.copy(busy = false) }
+        }
+    }
     private val selectedTab = MutableStateFlow(LottoTab.GENERATOR)
     private val roundInput = MutableStateFlow("")
     private val queryRoundInput = MutableStateFlow("")
@@ -507,7 +579,7 @@ class LottoViewModel(
                 return@launch
             }
             if (repository.getSavedLottoBatchCount(roundNo = targetRoundNo, sourceLabel = sourceLabel) >= 3) {
-                statusMessage.value = "${targetRoundNo}회차 ${sourceLabel} 번호는 이미 3세트 저장되어 있습니다. 1세트를 삭제한 뒤 다시 저장해 주세요."
+                statusMessage.value = "${targetRoundNo}회차 ${sourceLabel} 번호는 이미 3세트 저장되어 있습니다. 1세트를 숨긴 뒤 다른 번호를 저장해 주세요."
                 return@launch
             }
             saveGeneratedBatchInternal(roundNo = targetRoundNo, sourceLabel = sourceLabel, tickets = tickets)
@@ -536,8 +608,8 @@ class LottoViewModel(
                 }
             }.onSuccess {
                 statusMessage.value = when {
-                    target.ticketId != null -> "선택한 번호를 삭제했습니다."
-                    target.roundNo != null -> "${target.roundNo}회차 저장 번호를 삭제했습니다."
+                    target.ticketId != null -> "선택한 번호를 화면에서 숨겼습니다. 구매·평가 기록은 보존됩니다."
+                    target.roundNo != null -> "${target.roundNo}회차 번호를 화면에서 숨겼습니다. 구매·평가 기록은 보존됩니다."
                     else -> null
                 }
                 pendingDelete.value = null
@@ -556,9 +628,12 @@ class LottoViewModel(
             try {
                 delay(16)
                 runCatching {
-                    val history = repository.getAllLottoHistory()
+                    val snapshot = repository.getLottoGenerationSnapshot(forBalancedGeneration = true, mode = mode)
                     withContext(Dispatchers.Default) {
-                        LottoNumberGenerator.generateBalanced(history, mode = mode)
+                        LottoNumberGenerator.generateBalanced(
+                            snapshot.history, mode = mode, historyThroughRound = snapshot.historyThroughRound,
+                            recentPriorDraws = snapshot.balancedRecentPriorDraws,
+                        ).map { it.copy(generationSnapshot = snapshot) }
                     }
                 }.onSuccess { tickets ->
                     generatedChatGpt.value = tickets
@@ -581,9 +656,11 @@ class LottoViewModel(
             try {
                 delay(16)
                 runCatching {
-                    val history = repository.getAllLottoHistory()
+                    val snapshot = repository.getLottoGenerationSnapshot()
                     withContext(Dispatchers.Default) {
-                        LottoNumberGenerator.generateDiversified(history, mode = mode)
+                        LottoNumberGenerator.generateDiversified(
+                            snapshot.history, mode = mode, historyThroughRound = snapshot.historyThroughRound,
+                        ).map { it.copy(generationSnapshot = snapshot) }
                     }
                 }.onSuccess { tickets ->
                     generatedGemini.value = tickets
@@ -663,7 +740,7 @@ class LottoViewModel(
             runCatching {
                 repository.deleteLottoSet(sourceLabel, note)
             }.onSuccess {
-                statusMessage.value = "저장된 세트를 삭제했습니다."
+                statusMessage.value = "저장된 세트를 화면에서 숨겼습니다. 구매·평가 기록은 보존됩니다."
             }.onFailure { error ->
                 statusMessage.value = error.message ?: "세트 삭제에 실패했습니다."
             }
@@ -732,8 +809,12 @@ class LottoViewModel(
         viewModelScope.launch {
             runCatching {
                 repository.importLottoQrPurchase(LottoQrParser.parse(rawValue))
-            }.onSuccess { gameCount ->
-                statusMessage.value = "QR 실물복권 ${gameCount}개 등록했습니다."
+            }.onSuccess { result ->
+                statusMessage.value = if (result.restoredGameCount > 0) {
+                    "숨긴 QR 번호 ${result.restoredGameCount}게임을 복원했습니다. 구매 금액과 통계는 중복 추가하지 않았습니다."
+                } else {
+                    "QR 실물복권 ${result.gameCount}개 등록했습니다."
+                }
             }.onFailure { error ->
                 val reason = error.message?.takeIf(String::isNotBlank) ?: "알 수 없는 오류"
                 statusMessage.value = "로또 QR 등록에 실패했습니다. $reason"
@@ -785,6 +866,12 @@ class LottoViewModel(
         }
     }
 }
+
+data class LottoExperimentUiState(
+    val experiments: List<com.habittracker.data.lotto.LottoExperimentSummary> = emptyList(),
+    val operating: com.habittracker.data.lotto.LottoApprovedSetting? = null,
+    val busy: Boolean = false,
+)
 
 private fun toWinningTypeStat(entity: LottoWinningStatEntity): LottoWinningTypeStat =
     LottoWinningTypeStat(

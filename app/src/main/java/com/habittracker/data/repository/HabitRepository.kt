@@ -1,6 +1,7 @@
 ﻿package com.habittracker.data.repository
 
 import android.content.Context
+import android.util.Log
 import androidx.room.withTransaction
 import com.habittracker.data.TaskColorPalette
 import com.habittracker.data.card.CardHistorySeedData
@@ -23,6 +24,7 @@ import com.habittracker.data.local.entity.KisApiConfigEntity
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.local.entity.PlantEntity
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
+import kotlinx.coroutines.flow.first
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.local.entity.StockAutomationEventEntity
 import com.habittracker.data.local.entity.StockAssetSnapshotEntity
@@ -41,7 +43,9 @@ import com.habittracker.data.local.model.MonthlyStatRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.lotto.LottoSeedData
+import com.habittracker.data.lotto.LottoQrImportResult
 import com.habittracker.data.lotto.LottoGeneratedTicket
+import com.habittracker.data.lotto.LottoGenerationSnapshot
 import com.habittracker.data.lotto.LottoControlComparison
 import com.habittracker.data.lotto.LottoNumberGenerator
 import com.habittracker.data.lotto.LottoPerformanceAnalyzer
@@ -60,6 +64,9 @@ import com.habittracker.data.lotto.OfficialPensionLotteryDraw
 import com.habittracker.data.lotto.PensionLotteryPurchasedNumberResult
 import com.habittracker.data.lotto.calculatePensionLotteryPrizeHits
 import com.habittracker.data.lotto.pensionLotteryMatchingSuffixLength
+import com.habittracker.data.lotto.lotteryEvaluationDeadline
+import com.habittracker.data.lotto.lotteryEvaluationNow
+import com.habittracker.data.lotto.pensionGenerationInputHash
 import com.habittracker.data.security.AndroidKeystoreStringCipher
 import com.habittracker.data.stock.KisApiConfig
 import com.habittracker.data.stock.KisBalanceStock
@@ -126,6 +133,16 @@ class HabitRepository(
     private val databaseProtector: HabitTrackerDatabaseProtector,
     private val habitDao: HabitDao,
 ) {
+    val lottoExperiments = com.habittracker.data.lotto.LottoExperimentStore(context)
+    internal val pensionExperiments = com.habittracker.data.lotto.PensionExperimentStore(context)
+
+    internal suspend fun getPensionExperimentInput() = com.habittracker.data.lotto.PensionExperimentInput(
+        habitDao.getAllPensionLotteryDraws(),
+        habitDao.observePensionLotteryGeneratedNumbers().first(),
+    )
+
+    suspend fun getLottoExperimentDraws(): List<com.habittracker.data.lotto.LottoPriorDesignDraw> =
+        habitDao.getAllLottoDrawsDesc().map { com.habittracker.data.lotto.LottoPriorDesignDraw(it.roundNo, it.numbers(), it.bonusNumber) }
     private companion object {
         const val lottoRoundNotePrefix = "ROUND:"
         const val lottoSetNoteSeparator = "|SET:"
@@ -407,7 +424,7 @@ class HabitRepository(
         require(roundNo > 0) { "당첨 확인 회차가 올바르지 않습니다." }
         val draw = habitDao.getLottoDrawByRoundNo(roundNo) ?: return null
         val tickets = habitDao.getPurchasedLottoTicketsByRound(roundNo)
-            .filter { ticket -> ticket.isPurchased && !ticket.isEvaluationTarget }
+            .filter(LottoTicketEntity::isPurchased)
         if (tickets.isEmpty()) return null
 
         val winningTicketRanks = tickets.mapNotNull { ticket ->
@@ -465,10 +482,53 @@ class HabitRepository(
     fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>> =
         habitDao.observePensionLotteryGeneratedNumbers()
 
-    suspend fun savePensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>) {
+    suspend fun savePensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>): Boolean {
         require(numbers.isNotEmpty()) { "저장할 연금 생성번호가 없습니다." }
-        persistChange {
-            habitDao.insertPensionLotteryGeneratedNumbers(numbers)
+        return persistChange {
+            database.withTransaction {
+                val first = numbers.first()
+                val analysisThroughRound = requireNotNull(first.analysisThroughRound) { "생성 당시 분석 기준 회차가 없습니다." }
+                val targetRound = requireNotNull(first.targetRoundNo) { "생성 당시 대상 회차가 없습니다." }
+                val configJson = requireNotNull(first.generationConfigJson) { "생성 당시 설정 원문이 없습니다." }
+                val configHash = MessageDigest.getInstance("SHA-256").digest(configJson.toByteArray(Charsets.UTF_8))
+                    .joinToString("") { byte -> "%02x".format(byte) }
+                require(targetRound == analysisThroughRound + 1 && numbers.all {
+                    it.generationId == first.generationId && it.targetRoundNo == targetRound &&
+                        it.analysisThroughRound == analysisThroughRound && it.inputDataHash == first.inputDataHash &&
+                        it.generationVersion == first.generationVersion && it.generationConfigJson == configJson &&
+                        it.generationConfigHash == configHash
+                }) { "${first.generationId} 배치의 생성 회차·입력·설정이 서로 다릅니다." }
+                require(numbers.map { it.winningNumber }.distinct().size == numbers.size &&
+                    numbers.map { it.generationType }.distinct().size == numbers.size) {
+                    "${first.generationId} 배치에 중복 번호 또는 생성 유형이 있습니다."
+                }
+                if (!first.generationId.startsWith("backup:")) {
+                    val recommendedTypes = setOf("APPEARED", "APPEARED_SECOND", "COLD_MIX", "COLD_MIX_SECOND")
+                    require(numbers.filterNot { it.isControl }.map { it.generationType }.toSet() == recommendedTypes &&
+                        numbers.count { it.isControl } == 4 && numbers.size == 8) {
+                        "${first.generationId} 배치는 추천 4개와 대조군 4개가 필요합니다."
+                    }
+                } else {
+                    require(numbers.size == 1 && !first.isControl && !first.isEvaluationTarget) {
+                        "${first.generationId} 예비 번호는 사전 평가 표본으로 등록할 수 없습니다."
+                    }
+                }
+                val draws = habitDao.getAllPensionLotteryDraws()
+                require(draws.firstOrNull()?.roundNo == analysisThroughRound &&
+                    pensionGenerationInputHash(draws) == first.inputDataHash) {
+                    "${targetRound}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
+                }
+                val savedAt = lotteryEvaluationNow()
+                val eligible = savedAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.PENSION_720, targetRound)) &&
+                    habitDao.getPensionLotteryDraw(targetRound) == null
+                if (!eligible && numbers.any { it.isEvaluationTarget }) {
+                    Log.i("LotteryEvaluation", "Pension batch=${first.generationId} round=$targetRound phase=save reason=after_draw_deadline")
+                }
+                habitDao.insertPensionLotteryGeneratedNumbers(numbers.map {
+                    it.copy(savedAt = savedAt, isEvaluationTarget = it.isEvaluationTarget && eligible)
+                })
+                eligible && numbers.any { it.isEvaluationTarget }
+            }
         }
     }
 
@@ -499,11 +559,14 @@ class HabitRepository(
         val samples = tickets.mapNotNull { ticket ->
             val roundNo = ticket.roundNo ?: ticket.note?.let(::extractLottoRoundNo) ?: return@mapNotNull null
             val draw = drawMap[roundNo] ?: return@mapNotNull null
+            if (!ticket.createdAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo))) return@mapNotNull null
             val totalScore = ticket.analysisScore ?: return@mapNotNull null
             LottoPerformanceSample(
                 roundNo = roundNo,
                 sourceLabel = normalizeWinningSource(ticket.sourceLabel),
                 generationVersion = ticket.generationVersion,
+                generationConfigHash = ticket.generationConfigHash,
+                generationMode = ticket.generationMode,
                 totalScore = totalScore,
                 dataScore = ticket.dataScore,
                 patternScore = ticket.patternScore,
@@ -534,8 +597,10 @@ class HabitRepository(
     fun observeLottoWinningStats(): Flow<List<LottoWinningStatEntity>> =
         habitDao.observeLottoWinningStats()
 
-    fun observeLottoControlComparisons(): Flow<List<LottoControlComparison>> =
-        habitDao.observeAllLottoWinningStatRounds().map(::buildLottoControlComparisons)
+    fun observeLottoControlComparisons(): Flow<List<LottoControlComparison>> = combine(
+        habitDao.observeLottoEvaluationTickets(),
+        habitDao.observeAllLottoDraws(),
+    ) { tickets, draws -> buildLottoControlComparisons(tickets, draws) }
 
     fun observeLottoWeeklyStats(lottoType: String, limit: Int): Flow<List<LottoPeriodStatRow>> =
         habitDao.observeLottoWeeklyStats(lottoType, limit)
@@ -2516,19 +2581,40 @@ class HabitRepository(
         habitDao.getLatestLottoRoundNo()
 
     suspend fun getAllLottoHistory(): List<List<Int>> {
+        return getLottoGenerationSnapshot().history
+    }
+
+    suspend fun getLottoGenerationSnapshot(forBalancedGeneration: Boolean = false, mode: com.habittracker.data.lotto.LottoGenerationMode = com.habittracker.data.lotto.LottoGenerationMode.BASIC): LottoGenerationSnapshot {
         val draws = habitDao.getAllLottoDrawsDesc()
+        require(draws.isNotEmpty()) { "번호 생성을 위한 로또 당첨 이력이 없습니다." }
         val gapIndex = draws.zipWithNext().indexOfFirst { (newer, older) ->
             newer.roundNo - older.roundNo != 1
         }
-        if (gapIndex < 0) return draws.map(LottoDrawEntity::numbers)
-
-        val newer = draws[gapIndex]
-        val older = draws[gapIndex + 1]
-        val oldestBundledRoundNo = LottoSeedData.draws.minOfOrNull { draw -> draw.roundNo }
-        require(oldestBundledRoundNo != null && newer.roundNo <= oldestBundledRoundNo) {
-            "${older.roundNo + 1}회차부터 ${newer.roundNo - 1}회차까지 추첨 데이터가 누락되었습니다. 누락 회차를 먼저 저장해 주세요."
+        if (gapIndex >= 0) {
+            val newer = draws[gapIndex]
+            val older = draws[gapIndex + 1]
+            val oldestBundledRoundNo = LottoSeedData.draws.minOfOrNull { draw -> draw.roundNo }
+            require(oldestBundledRoundNo != null && newer.roundNo <= oldestBundledRoundNo) {
+                "${older.roundNo + 1}회차부터 ${newer.roundNo - 1}회차까지 추첨 데이터가 누락되었습니다. 누락 회차를 먼저 저장해 주세요."
+            }
         }
-        return draws.take(gapIndex + 1).map(LottoDrawEntity::numbers)
+        val analysisDraws = if (gapIndex < 0) draws else draws.take(gapIndex + 1)
+        val input = analysisDraws.joinToString("|") { draw ->
+            "${draw.roundNo}:${draw.numbers().joinToString(",")}:${draw.bonusNumber}"
+        }
+        val approved = if (forBalancedGeneration && mode == com.habittracker.data.lotto.LottoGenerationMode.BASIC) lottoExperiments.approvedSetting() else null
+        val config = approved?.let { setting ->
+            if (setting.approval == null) setting.configJson else JSONObject(setting.configJson)
+                .put("operatingApproval", JSONObject(com.habittracker.data.lotto.LottoDesignRecordJson.encode(setting.approval))).toString()
+        } ?: LottoNumberGenerator.configurationSnapshot()
+        return LottoGenerationSnapshot(
+            history = analysisDraws.map(LottoDrawEntity::numbers),
+            historyThroughRound = analysisDraws.first().roundNo,
+            inputDataHash = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+                .joinToString("") { byte -> "%02x".format(byte) },
+            configJson = config,
+            balancedRecentPriorDraws = approved?.priorDraws ?: 32.0,
+        )
     }
 
     suspend fun syncBundledLottoDraws(): Boolean {
@@ -2758,6 +2844,8 @@ class HabitRepository(
         val bonusNumber = draw.bonusNumber ?: return
         val evaluatedAt = LocalDateTime.now()
         habitDao.getUnevaluatedPensionLotteryNumbers(draw.roundNo).forEach { generated ->
+            val savedAt = generated.savedAt ?: return@forEach
+            if (!savedAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.PENSION_720, draw.roundNo))) return@forEach
             habitDao.updatePensionLotteryEvaluation(
                 id = generated.id,
                 evaluatedAt = evaluatedAt,
@@ -2774,7 +2862,7 @@ class HabitRepository(
     }
 
     /** QR의 구매 이력과 실제 게임 번호를 함께 저장해 둘 중 하나만 남는 상태를 막는다. */
-    suspend fun importLottoQrPurchase(qrPurchase: LottoQrPurchase): Int {
+    suspend fun importLottoQrPurchase(qrPurchase: LottoQrPurchase): LottoQrImportResult {
         require(qrPurchase.roundNo > 0) { "QR 구입 회차를 확인해 주세요." }
         require(qrPurchase.tickets.size in 1..5) { "QR에는 로또 번호가 1~5게임 포함되어야 합니다." }
         val sourceLabel = lottoQrSource
@@ -2784,13 +2872,19 @@ class HabitRepository(
         return persistChange {
             database.withTransaction {
                 val existingTickets = habitDao.getLottoTicketsBySourceAndRound(sourceLabel, qrPurchase.roundNo)
-                val duplicated = existingTickets
+                val savedSet = existingTickets
                     .groupBy(LottoTicketEntity::setNo)
                     .values
-                    .any { savedSet ->
-                        savedSet.map { ticket -> ticket.numbers().joinToString(",") }.sorted() == canonicalTickets
+                    .firstOrNull { saved ->
+                        saved.map { ticket -> ticket.numbers().sorted().joinToString(",") }.sorted() == canonicalTickets
                     }
-                require(!duplicated) { "이미 등록한 로또 QR입니다." }
+                if (savedSet != null) {
+                    val hiddenIds = savedSet.filter(LottoTicketEntity::isHidden).map(LottoTicketEntity::id)
+                    require(hiddenIds.isNotEmpty()) { "이미 등록한 로또 QR입니다. QR 구입번호 화면에서 확인해 주세요." }
+                    val restoredCount = habitDao.restoreHiddenLottoQrTickets(hiddenIds, sourceLabel, qrPurchase.roundNo)
+                    Log.i("LotteryEvaluation", "Lotto round=${qrPurchase.roundNo} phase=qr_restore restored=$restoredCount")
+                    return@withTransaction LottoQrImportResult(savedSet.size, restoredCount)
+                }
 
                 val setNo = (existingTickets.mapNotNull(LottoTicketEntity::setNo).maxOrNull() ?: 0) + 1
                 val setNote = buildLottoSetNote(qrPurchase.roundNo, setNo)
@@ -2819,8 +2913,8 @@ class HabitRepository(
                     habitDao.insertLottoTicket(ticket)
                 }
                 refreshLottoWinningStats(qrPurchase.roundNo, note = null)
+                LottoQrImportResult(qrPurchase.tickets.size)
             }
-            qrPurchase.tickets.size
         }
     }
 
@@ -2938,7 +3032,7 @@ class HabitRepository(
         return habitDao.getLottoTicketsBySourceAndRound(
             sourceLabel = sourceLabel,
             roundNo = roundNo,
-        ).mapNotNull(LottoTicketEntity::note).distinct().size
+        ).filterNot(LottoTicketEntity::isHidden).mapNotNull(LottoTicketEntity::note).distinct().size
     }
 
     suspend fun deleteLottoTicket(ticketId: Long) {
@@ -2961,7 +3055,7 @@ class HabitRepository(
         require(note.isNotBlank()) { "삭제할 세트를 찾을 수 없습니다." }
         persistChange {
             database.withTransaction {
-                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note)
+                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note).filterNot(LottoTicketEntity::isHidden)
                 habitDao.deleteLottoTicketsBySourceAndNoteExact(sourceLabel, note)
                 if (tickets.any { ticket -> ticket.isPurchased || ticket.isEvaluationTarget }) {
                     refreshLottoWinningStats(
@@ -2978,7 +3072,7 @@ class HabitRepository(
         require(note.isNotBlank()) { "구매 처리할 세트를 찾을 수 없습니다." }
         persistChange {
             database.withTransaction {
-                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note)
+                val tickets = habitDao.getLottoTicketsBySourceAndNote(sourceLabel, note).filterNot(LottoTicketEntity::isHidden)
                 require(tickets.isNotEmpty()) { "구매 처리할 세트를 찾을 수 없습니다." }
                 require(tickets.none(LottoTicketEntity::isPurchased)) { "이미 구매 처리된 세트입니다." }
                 val roundNo = tickets.firstNotNullOfOrNull(LottoTicketEntity::roundNo)
@@ -2994,7 +3088,10 @@ class HabitRepository(
                 require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
                     "이미 추첨 결과가 저장된 회차는 성과 평가용 구매로 처리할 수 없습니다."
                 }
-                val confirmedAt = LocalDateTime.now()
+                val confirmedAt = lotteryEvaluationNow()
+                require(confirmedAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo))) {
+                    "${roundNo}회차 추첨 시각 이후에는 사전 구매 평가를 확정할 수 없습니다. 실제 구매는 구매 내역에서 등록해 주세요."
+                }
                 val updatedCount = habitDao.markLottoTicketsPurchasedBySourceAndNote(
                     sourceLabel = sourceLabel,
                     note = note,
@@ -3010,7 +3107,6 @@ class HabitRepository(
                         memo = "저장 번호 구매 완료 · ${updatedCount}게임",
                     ),
                 )
-                ensureRandomControlSet(roundNo)
             }
         }
     }
@@ -3020,8 +3116,6 @@ class HabitRepository(
         persistChange {
             database.withTransaction {
                 habitDao.deleteLottoTicketsByRound(roundNo)
-                habitDao.deleteLottoWinningStatRoundsByRound(roundNo)
-                replaceLottoWinningStatTotals(habitDao.getAllLottoWinningStatRounds())
             }
         }
     }
@@ -3032,6 +3126,15 @@ class HabitRepository(
         require(tickets.size >= 5) { "저장할 생성 번호 5게임이 필요합니다." }
 
         val limitedTickets = tickets.take(5)
+        require(limitedTickets.map { it.numbers.sorted() }.distinct().size == limitedTickets.size) {
+            "${roundNo}회차 저장 배치에 같은 로또 번호가 중복되어 있습니다."
+        }
+        val snapshot = requireNotNull(limitedTickets.first().generationSnapshot) {
+            "생성 당시 입력 정보가 없습니다. 번호를 다시 생성해 주세요."
+        }
+        require(limitedTickets.all { it.generationSnapshot == snapshot } && roundNo == snapshot.targetRoundNo) {
+            "생성 당시 대상 회차(${snapshot.targetRoundNo}회차)와 저장할 회차가 다릅니다. 번호를 다시 생성해 주세요."
+        }
 
         return persistChange {
             database.withTransaction {
@@ -3042,16 +3145,37 @@ class HabitRepository(
                 require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
                     "이미 추첨 결과가 저장된 회차에는 생성 번호를 저장할 수 없습니다."
                 }
-                val generationConfigHash = saveCurrentLottoGenerationConfig()
-                val existingTickets = habitDao.getLottoTicketsBySourceAndRound(
-                    sourceLabel = sourceLabel,
-                    roundNo = roundNo,
-                )
-                val groupedNotes = existingTickets.mapNotNull(LottoTicketEntity::note).distinct()
-                require(groupedNotes.size < maxSavedLottoSetCount) {
-                    "${roundNo}회차 ${sourceLabel} 번호는 이미 ${maxSavedLottoSetCount}세트 저장되어 있습니다. 1세트를 삭제한 뒤 다시 저장해 주세요."
+                val currentSnapshot = getLottoGenerationSnapshot()
+                require(currentSnapshot.inputDataHash == snapshot.inputDataHash) {
+                    "${roundNo}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
                 }
-                val nextSetIndex = nextLottoSetIndex(groupedNotes)
+                val savedAt = lotteryEvaluationNow()
+                val isEvaluationTarget = savedAt.isBefore(
+                    lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo),
+                )
+                if (!isEvaluationTarget) {
+                    Log.i("LotteryEvaluation", "Lotto round=$roundNo source=$sourceLabel phase=save reason=after_draw_deadline")
+                }
+                val roundTickets = habitDao.getLottoTicketsByRoundIncludingHidden(roundNo)
+                val savedCombinations = roundTickets
+                    .filter { normalizeWinningSource(it.sourceLabel) in generatedLottoSources }
+                    .map { it.numbers().sorted() }.toSet()
+                val duplicateRanks = limitedTickets.mapIndexedNotNull { index, ticket ->
+                    (index + 1).takeIf { ticket.numbers.sorted() in savedCombinations }
+                }
+                if (duplicateRanks.isNotEmpty()) {
+                    Log.i("LotteryEvaluation", "Lotto round=$roundNo source=$sourceLabel phase=save reason=duplicate_recommendation ranks=$duplicateRanks")
+                }
+                require(duplicateRanks.isEmpty()) {
+                    "${roundNo}회차 ${duplicateRanks.joinToString(", ")}번 게임이 숨긴 기록을 포함한 추천 이력과 같습니다. 기존 기록은 보존됩니다. 번호를 다시 생성해 주세요."
+                }
+                val generationConfigHash = saveCurrentLottoGenerationConfig(snapshot.configJson, snapshot.generationVersion)
+                val existingTickets = roundTickets.filter { it.sourceLabel == sourceLabel }
+                val groupedNotes = existingTickets.filterNot(LottoTicketEntity::isHidden).mapNotNull(LottoTicketEntity::note).distinct()
+                require(groupedNotes.size < maxSavedLottoSetCount) {
+                    "${roundNo}회차 ${sourceLabel} 번호는 이미 ${maxSavedLottoSetCount}세트 저장되어 있습니다. 1세트를 숨긴 뒤 다른 번호를 저장해 주세요."
+                }
+                val nextSetIndex = nextLottoSetIndex(existingTickets.mapNotNull(LottoTicketEntity::note).distinct())
                 val setNote = buildLottoSetNote(roundNo, nextSetIndex)
                 limitedTickets.forEachIndexed { index, ticket ->
                     habitDao.insertLottoTicket(
@@ -3061,9 +3185,11 @@ class HabitRepository(
                             note = setNote,
                             roundNo = roundNo,
                             setNo = nextSetIndex,
-                            generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+                            isEvaluationTarget = isEvaluationTarget,
+                            generationVersion = snapshot.generationVersion,
                             generationConfigHash = generationConfigHash,
-                            historyThroughRound = latestRoundNo,
+                            historyThroughRound = snapshot.historyThroughRound,
+                            inputDataHash = snapshot.inputDataHash,
                             generationSeed = ticket.generationSeed,
                             analysisScore = ticket.score?.totalScore,
                             dataScore = ticket.score?.dataScore,
@@ -3077,9 +3203,11 @@ class HabitRepository(
                             featureSnapshotJson = ticket.featureSnapshotJson,
                             generationMode = ticket.generationMode,
                             recommendationRank = index + 1,
+                            createdAt = savedAt,
                         ),
                     )
                 }
+                if (isEvaluationTarget) ensureRandomControlSet(roundNo, snapshot, generationConfigHash)
             }
             limitedTickets.size
         }
@@ -3538,9 +3666,10 @@ class HabitRepository(
             ?.substringBefore(lottoSetNoteSeparator)
             ?.toIntOrNull()
 
-    private suspend fun saveCurrentLottoGenerationConfig(): String {
-        val generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION
-        val configJson = LottoNumberGenerator.configurationSnapshot()
+    private suspend fun saveCurrentLottoGenerationConfig(
+        configJson: String = LottoNumberGenerator.configurationSnapshot(),
+        generationVersion: String = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+    ): String {
         val configHash = MessageDigest.getInstance("SHA-256")
             .digest(configJson.toByteArray())
             .joinToString(separator = "") { byte -> "%02x".format(byte) }
@@ -3559,15 +3688,21 @@ class HabitRepository(
         return configHash
     }
 
-    private suspend fun ensureRandomControlSet(roundNo: Int) {
+    private suspend fun ensureRandomControlSet(
+        roundNo: Int,
+        snapshot: LottoGenerationSnapshot,
+        generationConfigHash: String,
+    ) {
         val existingControls = habitDao.getLottoTicketsBySourceAndRound(
             sourceLabel = randomControlSource,
             roundNo = roundNo,
         )
-        if (existingControls.any { ticket -> ticket.generationVersion == LottoNumberGenerator.CURRENT_GENERATION_VERSION }) return
+        if (existingControls.any { ticket ->
+                ticket.generationVersion == snapshot.generationVersion && ticket.generationConfigHash == generationConfigHash
+            }) return
 
-        val generationConfigHash = saveCurrentLottoGenerationConfig()
-        val setNote = buildRandomControlNote(roundNo)
+        val setNote = "${buildRandomControlNote(roundNo)}:$generationConfigHash"
+        val createdAt = lotteryEvaluationNow()
         LottoNumberGenerator.generateRandomControl().forEachIndexed { index, ticket ->
             habitDao.insertLottoTicket(
                 LottoTicketEntity.from(
@@ -3575,13 +3710,15 @@ class HabitRepository(
                     numbers = ticket.numbers,
                     note = setNote,
                     roundNo = roundNo,
-                    isEvaluationTarget = true,
-                    generationVersion = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+                    isEvaluationTarget = createdAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo)),
+                    generationVersion = snapshot.generationVersion,
                     generationConfigHash = generationConfigHash,
-                    historyThroughRound = roundNo - 1,
+                    historyThroughRound = snapshot.historyThroughRound,
+                    inputDataHash = snapshot.inputDataHash,
                     generationSeed = ticket.generationSeed,
                     generationMode = ticket.generationMode,
                     recommendationRank = index + 1,
+                    createdAt = createdAt,
                 ),
             )
         }
@@ -3688,23 +3825,31 @@ class HabitRepository(
     }
 
     private fun buildLottoControlComparisons(
-        roundStats: List<LottoWinningStatRoundEntity>,
+        tickets: List<LottoTicketEntity>,
+        draws: List<LottoDrawEntity>,
     ): List<LottoControlComparison> {
-        val controls = roundStats
-            .filter { stat -> stat.sourceLabel == randomControlSource && stat.evaluatedTicketCount > 0 }
-            .associateBy { stat -> stat.roundNo to stat.generationVersion }
+        val drawMap = draws.associateBy(LottoDrawEntity::roundNo)
+        val evaluationTickets = tickets.filter { ticket ->
+            val round = ticket.roundNo
+            round != null && drawMap.containsKey(round) &&
+                ticket.createdAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, round))
+        }
+        val controls = evaluationTickets
+            .filter { it.sourceLabel == randomControlSource }
+            .groupBy { listOf(it.roundNo, it.generationVersion, it.generationConfigHash) }
 
-        return roundStats
-            .filter { stat ->
-                stat.sourceLabel in listOf("균형형", "분산형") &&
-                    stat.evaluatedTicketCount > 0
+        return evaluationTickets
+            .filter { ticket ->
+                normalizeWinningSource(ticket.sourceLabel) in generatedLottoSources
             }
-            .groupBy { stat -> stat.sourceLabel to stat.generationVersion }
-            .mapNotNull comparison@ { (sourceAndVersion, sourceStats) ->
-                val pairedMatches = sourceStats.mapNotNull sample@ { stat ->
-                    val control = controls[stat.roundNo to stat.generationVersion] ?: return@sample null
-                    val strategyAverage = stat.matchCountTotal.toDouble() / stat.evaluatedTicketCount
-                    val controlAverage = control.matchCountTotal.toDouble() / control.evaluatedTicketCount
+            .groupBy { listOf(normalizeWinningSource(it.sourceLabel), it.generationVersion, it.generationConfigHash, it.generationMode) }
+            .mapNotNull comparison@ { (_, sourceTickets) ->
+                val first = sourceTickets.first()
+                val pairedMatches = sourceTickets.groupBy(LottoTicketEntity::roundNo).mapNotNull sample@ { (round, roundTickets) ->
+                    val control = controls[listOf(round, first.generationVersion, first.generationConfigHash)] ?: return@sample null
+                    val winningNumbers = drawMap.getValue(requireNotNull(round)).numbers()
+                    val strategyAverage = roundTickets.map { it.numbers().count(winningNumbers::contains) }.average()
+                    val controlAverage = control.map { it.numbers().count(winningNumbers::contains) }.average()
                     strategyAverage to controlAverage
                 }
                 if (pairedMatches.isEmpty()) return@comparison null
@@ -3721,8 +3866,10 @@ class HabitRepository(
                     null
                 }
                 LottoControlComparison(
-                    sourceLabel = sourceAndVersion.first,
-                    generationVersion = sourceAndVersion.second,
+                    sourceLabel = normalizeWinningSource(first.sourceLabel),
+                    generationVersion = first.generationVersion,
+                    generationConfigHash = first.generationConfigHash,
+                    generationMode = first.generationMode,
                     pairedRoundCount = pairedMatches.size,
                     strategyAverageMatchCount = pairedMatches.map { pair -> pair.first }.average(),
                     controlAverageMatchCount = pairedMatches.map { pair -> pair.second }.average(),

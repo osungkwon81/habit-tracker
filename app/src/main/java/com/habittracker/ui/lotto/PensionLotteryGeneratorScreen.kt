@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ fun PensionLotteryGeneratorScreen(
     com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     var deleteTarget by remember { mutableStateOf<PensionLotteryGenerationHistory?>(null) }
     var backupDeleteTarget by remember { mutableStateOf<PensionLotteryBackupNumber?>(null) }
+    var showExperiments by rememberSaveable { mutableStateOf(false) }
 
     deleteTarget?.let { history ->
         AppConfirmDialog(
@@ -90,14 +92,21 @@ fun PensionLotteryGeneratorScreen(
             )
         }
         item {
+            AppSecondaryButton(text = if (showExperiments) "연금 실험 접기" else "연금 비교 실험·승인·복구", onClick = {
+                showExperiments = !showExperiments
+                if (showExperiments) viewModel.refreshExperiments()
+            })
+        }
+        if (showExperiments) item { PensionExperimentSection(viewModel) }
+        item {
             PensionLotteryGeneratorRuleCard(uiState)
         }
         if (uiState.hasGenerationConditionChanged) {
             item {
                 AppSectionCard {
                     AppSectionHeader(
-                        title = "적용 조건 변경",
-                        subtitle = "최근 당첨번호를 반영한 현재 조건과 생성번호의 적용 조건이 다릅니다.",
+                        title = "생성 입력 확인 필요",
+                        subtitle = "현재 입력·조건이 생성 당시와 다르거나 과거 생성 입력을 확인할 수 없습니다.",
                     )
                     AppStatusText("현재 조건으로 네 번호를 다시 생성해 주세요.")
                 }
@@ -108,7 +117,7 @@ fun PensionLotteryGeneratorScreen(
                 AppPrimaryButton(
                     text = when {
                         uiState.isGenerating -> "번호 생성 중"
-                        uiState.hasGenerationConditionChanged -> "적용 조건 변경 · 번호 새로 생성"
+                        uiState.hasGenerationConditionChanged -> "입력 확인 필요 · 번호 새로 생성"
                         uiState.generatedNumbers.isEmpty() -> "이번 주 고정 번호 4개 생성"
                         else -> "새 주 고정 번호 4개 생성"
                     },
@@ -136,7 +145,7 @@ fun PensionLotteryGeneratorScreen(
                 AppSectionHeader(
                     title = "현재 추천 번호",
                     subtitle = when {
-                        uiState.hasGenerationConditionChanged -> "적용 조건 변경 · 재생성 필요"
+                        uiState.hasGenerationConditionChanged -> "입력 확인 필요 · 재생성 필요"
                         uiState.hasUnsavedGeneration -> "방금 생성됨 · 저장 전"
                         else -> uiState.generationHistory.firstOrNull()?.generatedAt?.let { generatedAt ->
                             "${generatedAt.format(PensionGenerationTimeFormatter)} · 고정 저장"

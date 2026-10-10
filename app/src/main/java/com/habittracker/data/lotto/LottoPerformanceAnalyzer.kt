@@ -13,6 +13,8 @@ data class LottoPerformanceSample(
     val avoidanceScore: Double?,
     val validationScore: Double?,
     val matchCount: Int,
+    val generationConfigHash: String? = null,
+    val generationMode: String? = null,
 )
 
 data class LottoScorePerformance(
@@ -22,6 +24,8 @@ data class LottoScorePerformance(
     val averageMatchCount: Double,
     val scoreBands: List<LottoScoreBandPerformance>,
     val correlations: List<LottoScoreCorrelation>,
+    val generationConfigHash: String? = null,
+    val generationMode: String? = null,
 )
 
 data class LottoScoreBandPerformance(
@@ -50,6 +54,8 @@ data class LottoControlComparison(
     val betterRoundCount: Int,
     val tiedRoundCount: Int,
     val worseRoundCount: Int,
+    val generationConfigHash: String? = null,
+    val generationMode: String? = null,
 )
 
 enum class LottoScoreComponent(val label: String) {
@@ -67,12 +73,14 @@ object LottoPerformanceAnalyzer {
         .filterNot { component -> component == LottoScoreComponent.VALIDATION }
 
     fun analyze(samples: List<LottoPerformanceSample>): List<LottoScorePerformance> = samples
-        .groupBy { sample -> sample.sourceLabel to sample.generationVersion }
-        .map { (sourceAndVersion, groupSamples) ->
-            val (sourceLabel, generationVersion) = sourceAndVersion
+        .groupBy { sample -> listOf(sample.sourceLabel, sample.generationVersion, sample.generationConfigHash, sample.generationMode) }
+        .map { (_, groupSamples) ->
+            val first = groupSamples.first()
             LottoScorePerformance(
-                sourceLabel = sourceLabel,
-                generationVersion = generationVersion,
+                sourceLabel = first.sourceLabel,
+                generationVersion = first.generationVersion,
+                generationConfigHash = first.generationConfigHash,
+                generationMode = first.generationMode,
                 sampleCount = groupSamples.size,
                 averageMatchCount = groupSamples.map(LottoPerformanceSample::matchCount).average(),
                 scoreBands = buildScoreBands(groupSamples),

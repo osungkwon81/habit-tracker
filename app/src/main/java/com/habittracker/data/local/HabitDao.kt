@@ -7,6 +7,9 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.habittracker.data.local.entity.ExchangeRateEntity
+import com.habittracker.data.local.entity.ExchangeRecordEntity
+import com.habittracker.data.local.entity.ExchangeExpenseEntity
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
 import com.habittracker.data.local.entity.DailyRecordItemEntity
@@ -52,6 +55,42 @@ import java.time.LocalDateTime
  */
 @Dao
 interface HabitDao {
+    @Query("SELECT * FROM exchange_rate WHERE currency = :currency ORDER BY quoted_at ASC, quote_round ASC")
+    fun observeExchangeRates(currency: String): Flow<List<ExchangeRateEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertExchangeRates(rates: List<ExchangeRateEntity>): List<Long>
+
+    @Query("SELECT * FROM exchange_rate WHERE currency = :currency AND quoted_at = :quotedAt AND quote_round = :quoteRound")
+    suspend fun getExchangeRate(currency: String, quotedAt: LocalDateTime, quoteRound: Int): ExchangeRateEntity?
+
+    @Query("SELECT * FROM exchange_record WHERE currency = :currency ORDER BY id DESC")
+    fun observeExchangeRecords(currency: String): Flow<List<ExchangeRecordEntity>>
+
+    @Insert
+    suspend fun insertExchangeRecord(record: ExchangeRecordEntity): Long
+
+    @Update
+    suspend fun updateExchangeRecord(record: ExchangeRecordEntity): Int
+
+    @Query("DELETE FROM exchange_record WHERE id = :id")
+    suspend fun deleteExchangeRecord(id: Long): Int
+
+    @Query("SELECT * FROM exchange_record ORDER BY id DESC")
+    fun observeAllExchangeRecords(): Flow<List<ExchangeRecordEntity>>
+
+    @Query("SELECT * FROM exchange_expense ORDER BY id DESC")
+    fun observeAllExchangeExpenses(): Flow<List<ExchangeExpenseEntity>>
+
+    @Insert
+    suspend fun insertExchangeExpense(expense: ExchangeExpenseEntity): Long
+
+    @Update
+    suspend fun updateExchangeExpense(expense: ExchangeExpenseEntity): Int
+
+    @Query("DELETE FROM exchange_expense WHERE id = :id")
+    suspend fun deleteExchangeExpense(id: Long): Int
+
     @Query(
         """
         SELECT * FROM pension_lottery_draw
@@ -173,6 +212,7 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
+        WHERE is_hidden = 0
         ORDER BY created_at DESC, id DESC
         LIMIT :limit
         """,
@@ -182,6 +222,7 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
+        WHERE is_hidden = 0
         ORDER BY created_at DESC, id DESC
         """,
     )
@@ -191,6 +232,7 @@ interface HabitDao {
         """
         SELECT * FROM lotto_ticket
         WHERE source_label = :sourceLabel
+          AND is_hidden = 0
         ORDER BY round_no DESC, set_no DESC, recommendation_rank ASC, id ASC
         """,
     )
@@ -199,12 +241,15 @@ interface HabitDao {
     @Query(
         """
         SELECT * FROM lotto_ticket
-        WHERE (is_purchased = 1 OR is_evaluation_target = 1)
+        WHERE is_evaluation_target = 1
           AND analysis_score IS NOT NULL
         ORDER BY created_at DESC, id DESC
         """,
     )
     fun observeScoredPurchasedLottoTickets(): Flow<List<LottoTicketEntity>>
+
+    @Query("SELECT * FROM lotto_ticket WHERE is_evaluation_target = 1 ORDER BY round_no DESC, id ASC")
+    fun observeLottoEvaluationTickets(): Flow<List<LottoTicketEntity>>
 
     @Query("SELECT * FROM lotto_draw ORDER BY round_no DESC")
     fun observeAllLottoDraws(): Flow<List<LottoDrawEntity>>
@@ -213,6 +258,7 @@ interface HabitDao {
         """
         SELECT * FROM lotto_ticket
         WHERE round_no = :roundNo
+          AND is_hidden = 0
         ORDER BY created_at DESC, id DESC
         """,
     )
@@ -489,6 +535,12 @@ interface HabitDao {
     )
     suspend fun getLottoTicketsBySourceAndRound(sourceLabel: String, roundNo: Int): List<LottoTicketEntity>
 
+    @Query("SELECT * FROM lotto_ticket WHERE round_no = :roundNo ORDER BY created_at DESC, id DESC")
+    suspend fun getLottoTicketsByRoundIncludingHidden(roundNo: Int): List<LottoTicketEntity>
+
+    @Query("UPDATE lotto_ticket SET is_hidden = 0 WHERE id IN (:ticketIds) AND source_label = :sourceLabel AND round_no = :roundNo AND is_hidden = 1")
+    suspend fun restoreHiddenLottoQrTickets(ticketIds: List<Long>, sourceLabel: String, roundNo: Int): Int
+
     @Query(
         """
         SELECT * FROM lotto_ticket
@@ -499,7 +551,7 @@ interface HabitDao {
     )
     suspend fun getPurchasedLottoTicketsByRound(roundNo: Int): List<LottoTicketEntity>
 
-    @Query("DELETE FROM lotto_ticket WHERE id = :ticketId")
+    @Query("UPDATE lotto_ticket SET is_hidden = 1 WHERE id = :ticketId")
     suspend fun deleteLottoTicketById(ticketId: Long)
 
     @Query("SELECT * FROM lotto_ticket WHERE id = :ticketId LIMIT 1")
@@ -528,7 +580,7 @@ interface HabitDao {
 
     @Query(
         """
-        DELETE FROM lotto_ticket
+        UPDATE lotto_ticket SET is_hidden = 1
         WHERE note = :note
           AND (
               source_label = :sourceLabel
@@ -554,6 +606,7 @@ interface HabitDao {
             source_label = :sourceLabel,
             purchase_confirmed_at = :confirmedAt
         WHERE note = :note
+          AND is_hidden = 0
           AND (
               source_label = :sourceLabel
               OR (:sourceLabel = '균형형' AND (
@@ -577,7 +630,7 @@ interface HabitDao {
 
     @Query(
         """
-        DELETE FROM lotto_ticket
+        UPDATE lotto_ticket SET is_hidden = 1
         WHERE round_no = :roundNo
         """,
     )

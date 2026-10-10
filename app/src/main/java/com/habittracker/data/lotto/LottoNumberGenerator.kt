@@ -13,7 +13,19 @@ data class LottoGeneratedTicket(
     val generationMode: String? = null,
     val generationSeed: Long? = null,
     val featureSnapshotJson: String? = null,
+    val generationSnapshot: LottoGenerationSnapshot? = null,
 )
+
+data class LottoGenerationSnapshot(
+    val history: List<List<Int>>,
+    val historyThroughRound: Int,
+    val inputDataHash: String,
+    val configJson: String,
+    val generationVersion: String = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
+    val balancedRecentPriorDraws: Double = 32.0,
+) {
+    val targetRoundNo: Int get() = historyThroughRound + 1
+}
 
 data class LottoAnalysisScore(
     val totalScore: Double,
@@ -21,7 +33,7 @@ data class LottoAnalysisScore(
     val patternScore: Double,
     val distributionScore: Double,
     val avoidanceScore: Double,
-    val validationScore: Double,
+    val validationScore: Double?,
 )
 
 enum class LottoGenerationMode(
@@ -37,7 +49,7 @@ enum class LottoGenerationMode(
 object LottoNumberGenerator {
     // 사용자에게 노출하는 생성기 버전이다. 세부 설정 차이는 저장된 config hash로 구분한다.
     const val CURRENT_GENERATION_VERSION = "2026-08-04-v3"
-    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 4
+    const val CURRENT_FEATURE_SNAPSHOT_SCHEMA_VERSION = 5
 
     private const val maxNumber = 45
     private const val pickCount = 6
@@ -73,13 +85,46 @@ object LottoNumberGenerator {
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
         seed: Long = random.nextLong(),
+        historyThroughRound: Int = history.size,
+        recentPriorDraws: Double = 32.0,
+    ): List<LottoGeneratedTicket> = generateBalancedWithPrior(
+        history, gameCount, mode, seed, historyThroughRound, recentPriorDraws = recentPriorDraws,
+    )
+
+    internal fun generateBalancedForPriorDesign(
+        history: List<List<Int>>,
+        seed: Long,
+        historyThroughRound: Int,
+        recentPriorDraws: Double,
     ): List<LottoGeneratedTicket> {
+        require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0) {
+            "설계용 priorDraws는 32.0 또는 64.0만 사용할 수 있습니다."
+        }
+        return generateBalancedWithPrior(
+            history, 5, LottoGenerationMode.BASIC, seed, historyThroughRound, recentPriorDraws,
+            requireFullCandidatePool = true,
+        )
+    }
+
+    private fun generateBalancedWithPrior(
+        history: List<List<Int>>,
+        gameCount: Int,
+        mode: LottoGenerationMode,
+        seed: Long,
+        historyThroughRound: Int,
+        recentPriorDraws: Double,
+        requireFullCandidatePool: Boolean = false,
+    ): List<LottoGeneratedTicket> {
+        require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0) { "지원하지 않는 로또 운영 priorDraws입니다." }
         if (history.isEmpty()) return emptyList()
         val randomSource = Random(seed)
         val normalizedHistory = history.map { it.sorted() }
         val trendProfile = buildTrendProfile(
             history = normalizedHistory,
             backtestStrategy = CoverageStrategy.BALANCED,
+            historyThroughRound = historyThroughRound,
+            includeBacktest = false,
+            recentPriorDraws = recentPriorDraws,
         )
         val lastDraw = normalizedHistory.first()
 
@@ -99,12 +144,13 @@ object LottoNumberGenerator {
                 val overlap = numbers.count(lastDraw::contains)
                 "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 균형 ${formatScore(score.distributionScore)} · " +
-                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 과거검증 ${validationLabel(trendProfile.backtestProfile)} · " +
+                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 승인 기본 가중치 · " +
                     "직전겹침 ${overlap}개"
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
             generationSeed = seed,
+            requireFullCandidatePool = requireFullCandidatePool,
         )
     }
 
@@ -113,6 +159,7 @@ object LottoNumberGenerator {
         gameCount: Int = defaultGameCount,
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
         seed: Long = random.nextLong(),
+        historyThroughRound: Int = history.size,
     ): List<LottoGeneratedTicket> {
         if (history.isEmpty()) return emptyList()
 
@@ -121,6 +168,8 @@ object LottoNumberGenerator {
         val trendProfile = buildTrendProfile(
             history = normalizedHistory,
             backtestStrategy = CoverageStrategy.DIVERSIFIED,
+            historyThroughRound = historyThroughRound,
+            includeBacktest = false,
         )
         val lastDraw = normalizedHistory.first()
 
@@ -140,7 +189,7 @@ object LottoNumberGenerator {
                 val carryCount = numbers.count(lastDraw::contains)
                 "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 분산 ${formatScore(score.distributionScore)} · " +
-                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 과거검증 ${validationLabel(trendProfile.backtestProfile)} · " +
+                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 승인 기본 가중치 · " +
                     "이월 ${carryCount}개"
             },
             mode = mode,
@@ -182,7 +231,19 @@ object LottoNumberGenerator {
         }
     }
 
-    fun configurationSnapshot(): String =
+    fun configurationSnapshot(recentPriorDraws: Double = 32.0): String {
+        require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0)
+        return configurationSnapshotWithPrior(recentPriorDraws)
+    }
+
+    internal fun configurationSnapshotForPriorDesign(recentPriorDraws: Double): String {
+        require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0) {
+            "설계용 priorDraws는 32.0 또는 64.0만 사용할 수 있습니다."
+        }
+        return configurationSnapshotWithPrior(recentPriorDraws)
+    }
+
+    private fun configurationSnapshotWithPrior(recentPriorDraws: Double): String =
         """
         {
           "snapshotSchema": 2,
@@ -203,7 +264,7 @@ object LottoNumberGenerator {
             "backtestSampleCount": $backtestSampleCount,
             "historyAnalysisMaximumScore": $historyAnalysisMaximumScore,
             "evidenceWindows": [
-              {"size": 16, "weight": 0.20, "priorDraws": 32.0},
+              {"size": 16, "weight": 0.20, "priorDraws": $recentPriorDraws},
               {"size": 52, "weight": 0.25, "priorDraws": 52.0},
               {"size": 156, "weight": 0.25, "priorDraws": 90.0},
               {"size": "ALL", "weight": 0.30, "priorDraws": 160.0}
@@ -258,9 +319,18 @@ object LottoNumberGenerator {
               "transitionCarry": 0.10
             },
             "backtest": {"data": 0.60, "pattern": 0.40},
-            "backtestStrategyMatched": true,
+            "backtestStrategyMatched": false,
+            "backtestScope": "reduced_diagnostic_48_candidates",
+            "backtestEvaluationUse": "weight_selection_diagnostic",
+            "backtestIndependentFinalEvaluation": false,
+            "implementationId": "lotto-fixed-base-weights-v1",
+            "operatingWeightPolicy": "user_approved_strategy_base_weights",
+            "operatingBacktestEnabled": false,
+            "backtestSeedRule": "fixed_experiment_seed_and_target_round_only",
             "backtestEligibleCandidateBaseline": true,
             "backtestWeightCalibration": {
+              "operatingApplicationEnabled": false,
+              "scope": "offline_diagnostic_only_not_adoption_evidence",
               "components": ["data", "pattern", "distribution"],
               "minimumSamples": $minimumBacktestSamples,
               "minimumWeightTrainingSamples": $minimumBacktestWeightTrainingSamples,
@@ -343,8 +413,10 @@ object LottoNumberGenerator {
 
     private fun buildTrendProfile(
         history: List<List<Int>>,
-        includeBacktest: Boolean = true,
+        includeBacktest: Boolean = false,
         backtestStrategy: CoverageStrategy,
+        historyThroughRound: Int = history.size,
+        recentPriorDraws: Double = 32.0,
     ): TrendProfile {
         val recentWindow = history.take(minOf(recentTrendWindow, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
@@ -354,7 +426,7 @@ object LottoNumberGenerator {
         val gapValidationProfile = buildGapValidationProfile(history)
         val sumValidationProfile = buildSumValidationProfile(history)
         val backtestProfile = if (includeBacktest) {
-            buildBacktestProfile(history, backtestStrategy)
+            buildBacktestProfile(history, backtestStrategy, historyThroughRound)
         } else {
             BacktestProfile()
         }
@@ -376,7 +448,7 @@ object LottoNumberGenerator {
                 recentWindow.map(::decadeBucketCount).average(),
                 historyAnalysis.bucketAverage,
             ),
-            numberEvidence = buildNumberEvidence(history),
+            numberEvidence = buildNumberEvidence(history, recentPriorDraws),
             pairEvidence = buildPairEvidence(history, longFrequency, longPairFrequency),
             currentGaps = lastSeenGap,
             gapEvidence = buildGapEvidence(lastSeenGap, gapValidationProfile),
@@ -385,7 +457,7 @@ object LottoNumberGenerator {
             transitionProfile = buildTransitionProfile(history),
             historyAnalysis = historyAnalysis,
             backtestProfile = backtestProfile,
-            scoreWeights = calibratedScoreWeights(backtestStrategy, backtestProfile),
+            scoreWeights = baseScoreWeights(backtestStrategy),
         )
     }
 
@@ -414,6 +486,7 @@ object LottoNumberGenerator {
         mode: LottoGenerationMode,
         strategy: CoverageStrategy,
         generationSeed: Long,
+        requireFullCandidatePool: Boolean = false,
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
         val maxAttempts = mode.candidatePoolSize * 20
@@ -427,6 +500,9 @@ object LottoNumberGenerator {
             attempt++
         }
 
+        require(!requireFullCandidatePool || candidates.size == mode.candidatePoolSize) {
+            "설계용 후보 생성 실패: 시드=$generationSeed, 후보 수=${candidates.size}, 필요=${mode.candidatePoolSize}"
+        }
         val scored = candidates
             .map { numbers -> ScoredCandidate(numbers = numbers, score = scorer(numbers)) }
             .sortedByDescending { candidate -> candidate.score.totalScore }
@@ -554,7 +630,9 @@ object LottoNumberGenerator {
             distributionScore = distributionScore,
             avoidanceScore = avoidanceScore,
             previousDrawOverlapPenalty = previousDrawOverlapPenalty,
-            validationScore = trendProfile.backtestProfile.averagePercentile,
+            validationScore = trendProfile.backtestProfile.averagePercentile.takeIf {
+                trendProfile.backtestProfile.sampleCount > 0
+            },
             featureSnapshotJson = featureSnapshotJson,
         )
     }
@@ -647,28 +725,28 @@ object LottoNumberGenerator {
             append("\"applied\":").append(sumValidation.applied)
             append("},")
             append("\"scoreCalibration\":{")
+            append("\"operatingWeightPolicy\":\"user_approved_strategy_base_weights\",")
+            append("\"diagnosticPerformed\":").append(trendProfile.backtestProfile.simulationSampleCount > 0).append(",")
             append("\"dataWeight\":").append(trendProfile.scoreWeights.data.toJsonNumber()).append(",")
             append("\"patternWeight\":").append(trendProfile.scoreWeights.pattern.toJsonNumber()).append(",")
             append("\"distributionWeight\":").append(trendProfile.scoreWeights.distribution.toJsonNumber()).append(",")
             append("\"walkForwardSamples\":").append(trendProfile.backtestProfile.simulationSampleCount).append(",")
             append("\"strategyAverageMatchCount\":")
-                .append(trendProfile.backtestProfile.strategyAverageMatchCount.toJsonNumber()).append(",")
+                .append(trendProfile.backtestProfile.strategyAverageMatchCount
+                    .takeIf { trendProfile.backtestProfile.simulationSampleCount > 0 }?.toJsonNumber() ?: "null").append(",")
             append("\"controlAverageMatchCount\":")
-                .append(trendProfile.backtestProfile.controlAverageMatchCount.toJsonNumber()).append(",")
+                .append(trendProfile.backtestProfile.controlAverageMatchCount
+                    .takeIf { trendProfile.backtestProfile.simulationSampleCount > 0 }?.toJsonNumber() ?: "null").append(",")
             append("\"averageMatchDifference\":")
-                .append(trendProfile.backtestProfile.averageMatchDifference.toJsonNumber()).append(",")
-            append("\"learnedWeightsApplied\":").append(trendProfile.backtestProfile.learnedScoreWeights != null)
+                .append(trendProfile.backtestProfile.averageMatchDifference
+                    .takeIf { trendProfile.backtestProfile.simulationSampleCount > 0 }?.toJsonNumber() ?: "null").append(",")
+            append("\"learnedWeightsApplied\":false")
             append("}")
             append("}")
         }
     }
 
     private fun Double.toJsonNumber(): String = if (isFinite()) toString() else "null"
-
-    private fun calibratedScoreWeights(
-        strategy: CoverageStrategy,
-        backtestProfile: BacktestProfile,
-    ): ScoreWeights = backtestProfile.learnedScoreWeights ?: baseScoreWeights(strategy)
 
     private fun baseScoreWeights(strategy: CoverageStrategy): ScoreWeights =
         ScoreWeights(
@@ -728,9 +806,12 @@ object LottoNumberGenerator {
         return frequency
     }
 
-    private fun buildNumberEvidence(history: List<List<Int>>): Map<Int, Double> {
+    private fun buildNumberEvidence(
+        history: List<List<Int>>,
+        recentPriorDraws: Double = 32.0,
+    ): Map<Int, Double> {
         val windows = listOf(
-            EvidenceWindow(size = 16, weight = 0.20, priorDraws = 32.0),
+            EvidenceWindow(size = 16, weight = 0.20, priorDraws = recentPriorDraws),
             EvidenceWindow(size = 52, weight = 0.25, priorDraws = 52.0),
             EvidenceWindow(size = 156, weight = 0.25, priorDraws = 90.0),
             EvidenceWindow(size = history.size, weight = 0.30, priorDraws = 160.0),
@@ -962,6 +1043,7 @@ object LottoNumberGenerator {
     private fun buildBacktestProfile(
         history: List<List<Int>>,
         strategy: CoverageStrategy,
+        historyThroughRound: Int,
     ): BacktestProfile {
         val roundEvidence = mutableListOf<BacktestRoundEvidence>()
         val maxSamples = minOf(backtestSampleCount, history.size - minimumBacktestTrainingDraws)
@@ -977,7 +1059,7 @@ object LottoNumberGenerator {
             )
             val lastTrainingDraw = trainingHistory.first()
             val actualNumbers = history[targetIndex]
-            val baselineSeed = targetIndex * 10_007 + actualNumbers.sum() * 97
+            val baselineSeed = 0x1F123BB5 xor ((historyThroughRound - targetIndex) * 10_007)
             val baselineRandom = Random(seed = baselineSeed)
             val randomScores = mutableListOf<CandidateScore>()
             var randomAttempt = 0
@@ -1233,7 +1315,7 @@ object LottoNumberGenerator {
             else -> "기준미달"
         }
         val calibration = if (profile.learnedScoreWeights != null) "보정적용" else "기본유지"
-        return "$level ${formatScore(profile.averagePercentile)} · " +
+        return "축소 선택 진단 · 독립 최종 평가 아님 · $level ${formatScore(profile.averagePercentile)} · " +
             "모의 ${formatScore(profile.strategyAverageMatchCount)}/무작위 ${formatScore(profile.controlAverageMatchCount)} · " +
             calibration
     }
@@ -1637,7 +1719,7 @@ object LottoNumberGenerator {
         val distributionScore: Double,
         val avoidanceScore: Double,
         val previousDrawOverlapPenalty: Double,
-        val validationScore: Double,
+        val validationScore: Double?,
         val featureSnapshotJson: String?,
     ) {
         fun toAnalysisScore(): LottoAnalysisScore = LottoAnalysisScore(

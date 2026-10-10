@@ -22,6 +22,7 @@ data class ActiveAssistantNotification(
 
 class NotificationAssistantListenerService : NotificationListenerService() {
     companion object {
+        const val isCollectionEnabled = false
         val activeItems = MutableStateFlow<List<ActiveAssistantNotification>>(emptyList())
         private var connectedService: NotificationAssistantListenerService? = null
         fun refreshActiveSnapshot() { connectedService?.refreshActiveItems() }
@@ -35,6 +36,7 @@ class NotificationAssistantListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (!isCollectionEnabled) return
         if (sbn.packageName == packageName || sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val preferences = NotificationAssistantPreferences(this)
         preferences.recordObservedPackage(sbn.packageName)
@@ -73,6 +75,10 @@ class NotificationAssistantListenerService : NotificationListenerService() {
     }
 
     private fun refreshActiveItems() {
+        if (!isCollectionEnabled) {
+            activeItems.value = emptyList()
+            return
+        }
         val enabled = NotificationAssistantPreferences(this).enabledPackages()
         activeItems.value = activeNotifications.orEmpty()
             .asSequence()

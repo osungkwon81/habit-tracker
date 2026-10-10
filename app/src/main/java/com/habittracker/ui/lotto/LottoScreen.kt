@@ -153,12 +153,14 @@ fun LottoScreen(
             }
         }
         item {
-            Row(modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 AppSelectableChip(label = "통계", selected = uiState.selectedTab == LottoTab.STATS, onClick = viewModel::selectStatsTab, modifier = Modifier.weight(1f))
+                AppSelectableChip(label = "실험", selected = uiState.selectedTab == LottoTab.EXPERIMENT, onClick = viewModel::selectExperimentTab, modifier = Modifier.weight(1f))
             }
         }
         item { StatusCard(latestRoundNo = uiState.latestSavedRoundNo, nextRoundNo = uiState.nextRoundNo, message = uiState.statusMessage) }
         when (uiState.selectedTab) {
+            LottoTab.EXPERIMENT -> item { LottoExperimentSection(viewModel) }
             LottoTab.GENERATOR -> {
                 item {
                     GeneratorSection(
@@ -727,7 +729,7 @@ private fun RoundSavedTicketDeck(
     val groupedBySource = tickets.groupBy(::normalizeSourceLabel)
     val winningTicketCount = draw?.let { winningDraw ->
         tickets.count { ticket ->
-            !ticket.isEvaluationTarget && calculateWinningRank(ticket, winningDraw) != null
+            ticket.sourceLabel != "무작위 대조군" && calculateWinningRank(ticket, winningDraw) != null
         }
     }
     val roundStatusText = when {
@@ -768,6 +770,7 @@ private fun RoundSavedTicketDeck(
                             val setTickets = entry.value.sortedBy(LottoTicketEntity::id)
                             val isPurchased = setTickets.all(LottoTicketEntity::isPurchased)
                             val isEvaluationTarget = setTickets.all(LottoTicketEntity::isEvaluationTarget)
+                            val isControl = setTickets.all { it.sourceLabel == "무작위 대조군" }
                             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -775,12 +778,12 @@ private fun RoundSavedTicketDeck(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = if (isEvaluationTarget) "자동 대조군" else "${extractSetNo(entry.key) ?: 1}세트",
+                                        text = if (isControl) "자동 대조군" else "${extractSetNo(entry.key) ?: 1}세트",
                                         modifier = Modifier.weight(1f),
                                         fontWeight = FontWeight.SemiBold,
                                         color = LottoTextStrongColor,
                                     )
-                                    if (isEvaluationTarget) {
+                                    if (isControl) {
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(50))
@@ -806,10 +809,17 @@ private fun RoundSavedTicketDeck(
                                         )
                                     }
                                     AppSecondaryButton(
-                                        text = "삭제",
+                                        text = "숨기기",
                                         onClick = { if (setNote.isNotBlank()) onDeleteSet(source, setNote) },
                                         modifier = Modifier.sizeIn(minWidth = 80.dp),
-                                        enabled = setNote.isNotBlank() && !isPurchased && !isEvaluationTarget,
+                                        enabled = setNote.isNotBlank() && !isPurchased && !isControl,
+                                    )
+                                }
+                                if (!isControl && setTickets.all { it.inputDataHash != null }) {
+                                    Text(
+                                        text = if (isEvaluationTarget) "사전 추천 평가 대상 · 화면에서 삭제해도 평가 기록은 보존됩니다." else "사후 등록 · 사전 추천 평가 제외",
+                                        color = LottoTextMutedColor,
+                                        style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
                                 setTickets.forEach { ticket ->
@@ -948,6 +958,7 @@ private fun PhysicalQrRegistrationCard(
             enabled = !isQrScanning,
         )
         AppSupportText("발표된 공식 당첨번호가 있으면 회차별 결과를 바로 확인할 수 있습니다.")
+        AppSupportText("번호 삭제는 화면 숨김입니다. 같은 QR을 다시 스캔하면 숨긴 번호를 복원하며 구매 금액과 통계를 추가하지 않습니다.")
     }
 }
 
@@ -1181,6 +1192,11 @@ private fun ControlComparisonSummary(comparisons: List<LottoControlComparison>) 
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
+                    text = "모드 ${comparison.generationMode ?: "미기록"} · 설정 ${comparison.generationConfigHash ?: "미기록"}",
+                    color = LottoTextMutedColor,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
                     text = "비교 ${comparison.pairedRoundCount}회차 · 추천 ${"%.2f".format(comparison.strategyAverageMatchCount)}개 · " +
                         "무작위 ${"%.2f".format(comparison.controlAverageMatchCount)}개 · 차이 $difference",
                     color = LottoTextMutedColor,
@@ -1211,13 +1227,13 @@ private fun ControlComparisonSummary(comparisons: List<LottoControlComparison>) 
 @Composable
 private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
     if (performances.isEmpty()) {
-        Text(text = "점수가 저장된 구매 번호의 추첨 결과가 없습니다.", color = LottoTextMutedColor)
+        Text(text = "점수가 저장된 사전 추천 번호의 추첨 결과가 없습니다.", color = LottoTextMutedColor)
         return
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(
-            text = "추천 당시 저장된 적합 점수와 실제 일치 개수의 관계를 참고용으로 표시합니다.",
+            text = "구매 여부와 관계없이 추첨 전에 저장한 추천의 적합 점수와 일치 개수를 비교합니다. 실제 구매 손익은 구매 내역에서 확인합니다.",
             color = LottoTextMutedColor,
             style = MaterialTheme.typography.bodySmall,
         )
@@ -1227,6 +1243,11 @@ private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
                     text = "${performance.sourceLabel} · ${performance.generationVersion}",
                     color = LottoTextStrongColor,
                     fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "모드 ${performance.generationMode ?: "미기록"} · 설정 ${performance.generationConfigHash ?: "미기록"}",
+                    color = LottoTextMutedColor,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
                     text = "평가 ${performance.sampleCount}건 · 평균 일치 ${"%.2f".format(performance.averageMatchCount)}개",

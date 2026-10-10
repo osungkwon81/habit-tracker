@@ -1,6 +1,9 @@
 ﻿package com.habittracker
 
 import android.os.Bundle
+import com.habittracker.ui.exchange.ExchangeScreen
+import com.habittracker.ui.exchange.ExchangePage
+import com.habittracker.ui.exchange.ExchangeViewModel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -169,7 +172,7 @@ private fun HabitTrackerApp() {
             composable(AppDestination.MORE.route) {
                 AppScreen {
                     item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.MEMO, AppDestination.PLANT, AppDestination.REMINDER, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
+                    items(listOf(AppDestination.EXCHANGE, AppDestination.MEMO, AppDestination.PLANT, AppDestination.REMINDER, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
                         ListItem(
                             headlineContent = { Text(destination.label) },
                             trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -307,6 +310,22 @@ private fun HabitTrackerApp() {
             composable(AppDestination.REMINDER.route) {
                 val viewModel: ReminderViewModel = viewModel(factory = viewModelFactory)
                 ReminderScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.EXCHANGE.route) {
+                val viewModel: ExchangeViewModel = viewModel(factory = viewModelFactory)
+                ExchangeScreen(
+                    viewModel = viewModel,
+                    onOpenRecords = { navController.navigate(AppDestination.EXCHANGE_RECORDS.route) { launchSingleTop = true } },
+                )
+            }
+            composable(AppDestination.EXCHANGE_RECORDS.route) { backStackEntry ->
+                val parentEntry = remember(backStackEntry) { navController.getBackStackEntry(AppDestination.EXCHANGE.route) }
+                val viewModel: ExchangeViewModel = viewModel(viewModelStoreOwner = parentEntry, factory = viewModelFactory)
+                ExchangeScreen(
+                    viewModel = viewModel,
+                    page = ExchangePage.RECORDS,
+                    onOpenRates = { navController.popBackStack(AppDestination.EXCHANGE.route, false) },
+                )
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT.route) {
                 val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)

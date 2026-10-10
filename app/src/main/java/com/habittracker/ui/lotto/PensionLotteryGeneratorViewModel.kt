@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.data.lotto.lotteryEvaluationNow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import com.habittracker.data.lotto.PensionOperatingSetting
+import com.habittracker.data.lotto.PensionExperimentSummary
 import java.time.LocalDateTime
 import java.security.MessageDigest
 import java.util.UUID
@@ -34,6 +40,65 @@ class PensionLotteryGeneratorViewModel(
     private val isSaving = MutableStateFlow(false)
     private val regeneratingType = MutableStateFlow<PensionLotteryGenerationType?>(null)
     private val generatingBackupType = MutableStateFlow<PensionLotteryGenerationType?>(null)
+    private val operatingSetting = MutableStateFlow<PensionOperatingSetting?>(null)
+    private val experimentState = MutableStateFlow(PensionExperimentUiState())
+    internal val experimentUiState: StateFlow<PensionExperimentUiState> = experimentState
+    private var experimentJob: Job? = null
+
+    init { refreshExperiments() }
+
+    private suspend fun currentAnalysis(savedDraws: List<PensionLotteryDrawEntity>): PensionLotteryGeneratorAnalysis? {
+        requireNotNull(operatingSetting.value) { "승인 설정을 확인하지 못했습니다. 기록·설정을 새로고침해 주세요." }
+        val setting = repository.pensionExperiments.setting()
+        operatingSetting.value = setting
+        return buildGeneratorAnalysis(savedDraws, setting.count, setting.approvalHash)
+    }
+
+    internal fun refreshExperiments() = experimentOperation { reloadExperiments() }
+    internal fun registerExperiment(document: ByteArray) = experimentOperation {
+        repository.pensionExperiments.register(document, repository.getPensionExperimentInput())
+        reloadExperiments(); statusMessage.value = "연금 실험을 등록했습니다. 비교 계산은 실행하지 않았습니다."
+    }
+    internal fun captureExperiment(id: String, target: Int) = experimentOperation {
+        repository.pensionExperiments.capture(id, target, repository.getPensionExperimentInput())
+        reloadExperiments(); statusMessage.value = "$target 회차의 추첨 전 입력과 추천 제외 목록을 확정했습니다."
+    }
+    internal fun executeExperiment(id: String) = experimentOperation {
+        repository.pensionExperiments.execute(id, repository.getPensionExperimentInput())
+        reloadExperiments(); statusMessage.value = "연금 비교 계산과 전체 결과 기록을 완료했습니다."
+    }
+    internal fun approveExperiment(id: String, reason: String) = experimentOperation {
+        repository.pensionExperiments.approve(id, repository.getPensionExperimentInput(), reason)
+        reloadExperiments(); statusMessage.value = "승인 설정을 운영 생성에 적용했습니다. 기존 번호와 기록은 보존됩니다."
+    }
+    internal fun rollbackExperimentSetting(reason: String) = experimentOperation {
+        repository.pensionExperiments.rollback(reason)
+        reloadExperiments(); statusMessage.value = "이전 승인 설정으로 복구했습니다. 기존 기록은 보존됩니다."
+    }
+    internal fun cancelExperiment() { experimentJob?.cancel() }
+    internal fun reportExperimentImportError(message: String) { statusMessage.value = message }
+    private suspend fun reloadExperiments() {
+        val setting = repository.pensionExperiments.setting()
+        val summaries = repository.pensionExperiments.list()
+        operatingSetting.value = setting
+        experimentState.value = experimentState.value.copy(operating = setting, experiments = summaries, issue = null)
+    }
+    private fun experimentOperation(action: suspend () -> Unit) {
+        if (experimentState.value.busy || isGenerating.value || isSaving.value) {
+            statusMessage.value = "진행 중인 생성·저장·실험 작업이 끝난 뒤 다시 시도해 주세요."
+            return
+        }
+        experimentState.value = experimentState.value.copy(busy = true)
+        experimentJob = viewModelScope.launch {
+            try { action() }
+            catch (cancelled: CancellationException) { statusMessage.value = "작업을 취소했습니다. 기록을 새로고침해 상태를 확인하세요."; throw cancelled }
+            catch (error: Exception) {
+                operatingSetting.value = null
+                experimentState.value = experimentState.value.copy(operating = null, issue = error.message)
+                statusMessage.value = error.message ?: "연금 실험 처리에 실패했습니다."
+            } finally { experimentState.value = experimentState.value.copy(busy = false) }
+        }
+    }
     private val operationState = combine(
         statusMessage,
         isGenerating,
@@ -44,7 +109,9 @@ class PensionLotteryGeneratorViewModel(
         PensionLotteryGeneratorOperationState(message, generating, saving, regenerating, generatingBackup)
     }
 
-    private val analysisState = draws.map { it to buildGeneratorAnalysis(it) }.flowOn(Dispatchers.Default)
+    private val analysisState = combine(draws, operatingSetting, experimentState) { saved, setting, experiment ->
+        saved to setting?.takeUnless { experiment.busy }?.let { buildGeneratorAnalysis(saved, it.count, it.approvalHash) }
+    }.flowOn(Dispatchers.Default)
     private val historyState = storedGeneratedNumbers.map { buildGenerationHistory(it) to buildBackupNumbers(it) }
         .flowOn(Dispatchers.Default)
 
@@ -57,7 +124,8 @@ class PensionLotteryGeneratorViewModel(
         val generatedNumbers = pendingNumbers.ifEmpty { generationHistory.firstOrNull()?.numbers.orEmpty() }
         val hasGenerationConditionChanged = analysis != null &&
             generatedNumbers.isNotEmpty() &&
-            !matchesCurrentGenerationConditions(generatedNumbers, analysis)
+            (!matchesCurrentGenerationConditions(generatedNumbers, analysis) ||
+                generatedNumbers.any { it.generationSnapshot?.inputDataHash != analysis.generationSnapshot.inputDataHash || it.generationSnapshot?.configJson != analysis.generationSnapshot.configJson })
         val currentGenerationId = generationHistory.firstOrNull()?.generationId
         PensionLotteryGeneratorUiState(
             latestRoundNo = savedDraws.firstOrNull()?.roundNo,
@@ -93,7 +161,7 @@ class PensionLotteryGeneratorViewModel(
     }
 
     fun generate() {
-        if (isGenerating.value || isSaving.value) return
+        if (isGenerating.value || isSaving.value || experimentState.value.busy) return
         val savedDraws = draws.value
         val excludedWinningNumbers = storedGeneratedNumbers.value
             .filterNot(PensionLotteryGeneratedNumberEntity::isControl)
@@ -103,19 +171,13 @@ class PensionLotteryGeneratorViewModel(
         viewModelScope.launch(Dispatchers.Default) {
             statusMessage.value = null
             runCatching {
-                val analysis = requireNotNull(buildGeneratorAnalysis(savedDraws)) {
-                    "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
-                }
-                requireNotNull(
-                    generateCandidateSet(
-                        analysis = analysis,
-                        excludedWinningNumbers = excludedWinningNumbers,
-                    ),
-                ) { "현재 적용 조건을 모두 만족하는 네 번호를 찾지 못했습니다." }
+                requireNotNull(operatingSetting.value) { "승인 설정을 확인하지 못했습니다. 기록·설정을 새로고침해 주세요." }
+                generatePensionOperatingBatch(repository.pensionExperiments, savedDraws, excludedWinningNumbers)
             }.onSuccess { results ->
                 pendingGeneratedNumbers.value = results
                 statusMessage.value = "출현형 2개와 미출현 혼합형 2개를 생성했습니다. 저장하면 고정됩니다."
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "연금번호 생성에 실패했습니다."
             }
             isGenerating.value = false
@@ -123,7 +185,7 @@ class PensionLotteryGeneratorViewModel(
     }
 
     fun regenerate(type: PensionLotteryGenerationType) {
-        if (isGenerating.value || isSaving.value) return
+        if (isGenerating.value || isSaving.value || experimentState.value.busy) return
         val savedDraws = draws.value
         val currentNumbers = pendingGeneratedNumbers.value
         if (currentNumbers.isEmpty()) return
@@ -140,11 +202,14 @@ class PensionLotteryGeneratorViewModel(
             regeneratingType.value = type
             statusMessage.value = null
             runCatching {
-                val analysis = requireNotNull(buildGeneratorAnalysis(savedDraws)) {
+                val analysis = requireNotNull(currentAnalysis(savedDraws)) {
                     "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
                 }
                 require(matchesCurrentGenerationConditions(currentNumbers, analysis)) {
                     GENERATION_CONDITION_CHANGED_MESSAGE
+                }
+                require(currentNumbers.all { it.generationSnapshot == analysis.generationSnapshot }) {
+                    GENERATION_INPUT_CHANGED_MESSAGE
                 }
                 val regenerated = requireNotNull(
                     generateCandidate(
@@ -161,6 +226,7 @@ class PensionLotteryGeneratorViewModel(
                 pendingGeneratedNumbers.value = results
                 statusMessage.value = "${type.label} 번호를 다시 생성했습니다. 확인 후 저장해 주세요."
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "${type.label} 번호 재생성에 실패했습니다."
             }
             regeneratingType.value = null
@@ -169,30 +235,33 @@ class PensionLotteryGeneratorViewModel(
     }
 
     fun saveGeneratedNumbers() {
-        if (isSaving.value || isGenerating.value) return
+        if (isSaving.value || isGenerating.value || experimentState.value.busy) return
         val numbers = pendingGeneratedNumbers.value
         if (numbers.isEmpty()) {
             statusMessage.value = "저장할 연금 생성번호가 없습니다."
             return
         }
+        isSaving.value = true
         viewModelScope.launch {
-            isSaving.value = true
             statusMessage.value = null
             runCatching {
-                val analysis = requireNotNull(withContext(Dispatchers.Default) { buildGeneratorAnalysis(draws.value) }) {
+                val savedDraws = draws.value
+                val analysis = requireNotNull(withContext(Dispatchers.Default) { currentAnalysis(savedDraws) }) {
                     "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
                 }
                 require(matchesCurrentGenerationConditions(numbers, analysis)) {
                     GENERATION_CONDITION_CHANGED_MESSAGE
                 }
+                val snapshot = requireNotNull(numbers.first().generationSnapshot) { GENERATION_INPUT_CHANGED_MESSAGE }
+                require(numbers.all { it.generationSnapshot == snapshot } && snapshot == analysis.generationSnapshot) {
+                    GENERATION_INPUT_CHANGED_MESSAGE
+                }
                 val generationId = "$FIXED_GENERATION_PREFIX${UUID.randomUUID()}"
-                val savedAt = LocalDateTime.now()
-                val savedDraws = draws.value
-                val analysisThroughRound = savedDraws.firstOrNull()?.roundNo
-                    ?: error("분석 기준 회차를 확인할 수 없습니다.")
-                val targetRoundNo = analysisThroughRound + 1
-                val generationConfigHash = PENSION_GENERATION_CONFIG.sha256()
-                val inputDataHash = pensionInputDataHash(savedDraws)
+                val savedAt = lotteryEvaluationNow()
+                val analysisThroughRound = snapshot.analysisThroughRound
+                val targetRoundNo = snapshot.targetRoundNo
+                val generationConfigHash = snapshot.configJson.sha256()
+                val inputDataHash = snapshot.inputDataHash
                 val recommendationEntities = numbers.map { result ->
                     result.toEntity(
                         generationId = generationId,
@@ -217,12 +286,17 @@ class PensionLotteryGeneratorViewModel(
                 repository.savePensionLotteryGeneratedNumbers(
                     recommendationEntities + controlEntities,
                 )
-            }.onSuccess {
+            }.onSuccess { isEvaluationTarget ->
                 if (pendingGeneratedNumbers.value == numbers) {
                     pendingGeneratedNumbers.value = emptyList()
                 }
-                statusMessage.value = "이번 주 고정 번호 ${numbers.size}개를 저장했습니다."
+                statusMessage.value = if (isEvaluationTarget) {
+                    "이번 주 고정 번호 ${numbers.size}개를 저장했습니다."
+                } else {
+                    "번호 ${numbers.size}개를 사후 등록했습니다. 사전 추천 성과에서는 제외됩니다."
+                }
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "연금 생성번호 저장에 실패했습니다."
             }
             isSaving.value = false
@@ -230,6 +304,7 @@ class PensionLotteryGeneratorViewModel(
     }
 
     fun deleteGeneration(generationId: String) {
+        if (experimentState.value.busy) return
         viewModelScope.launch {
             runCatching {
                 buildBackupNumbers(storedGeneratedNumbers.value)
@@ -239,13 +314,14 @@ class PensionLotteryGeneratorViewModel(
             }.onSuccess {
                 statusMessage.value = "연금번호 생성 히스토리를 삭제했습니다."
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "연금번호 생성 히스토리 삭제에 실패했습니다."
             }
         }
     }
 
     fun generateBackup(type: PensionLotteryGenerationType) {
-        if (isGenerating.value || isSaving.value) return
+        if (isGenerating.value || isSaving.value || experimentState.value.busy) return
         val currentHistory = buildGenerationHistory(storedGeneratedNumbers.value).firstOrNull() ?: return
         if (buildBackupNumbers(storedGeneratedNumbers.value).any { backup ->
                 backup.parentGenerationId == currentHistory.generationId && backup.number.type == type
@@ -260,12 +336,12 @@ class PensionLotteryGeneratorViewModel(
             .filterNot(PensionLotteryGeneratedNumberEntity::isControl)
             .map(PensionLotteryGeneratedNumberEntity::winningNumber)
             .toSet()
+        isGenerating.value = true
         viewModelScope.launch(Dispatchers.Default) {
-            isGenerating.value = true
             generatingBackupType.value = type
             statusMessage.value = null
             runCatching {
-                val analysis = requireNotNull(buildGeneratorAnalysis(draws.value)) {
+                val analysis = requireNotNull(currentAnalysis(draws.value)) {
                     "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
                 }
                 val backup = requireNotNull(
@@ -279,11 +355,12 @@ class PensionLotteryGeneratorViewModel(
                 ) { "현재 조건을 만족하는 ${type.label} 예비 번호를 찾지 못했습니다." }
                 val generationId = "$BACKUP_GENERATION_PREFIX${currentHistory.generationId}:$type"
                 repository.savePensionLotteryGeneratedNumbers(
-                    listOf(backup.toEntity(generationId, LocalDateTime.now())),
+                    listOf(backup.toEntity(generationId, lotteryEvaluationNow())),
                 )
             }.onSuccess {
                 statusMessage.value = "${type.label} 예비 번호를 저장했습니다."
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "예비 번호 생성에 실패했습니다."
             }
             generatingBackupType.value = null
@@ -292,17 +369,33 @@ class PensionLotteryGeneratorViewModel(
     }
 
     fun deleteBackup(generationId: String) {
+        if (experimentState.value.busy) return
         viewModelScope.launch {
             runCatching {
                 repository.deletePensionLotteryGeneration(generationId)
             }.onSuccess {
                 statusMessage.value = "예비 번호를 삭제했습니다."
             }.onFailure { error ->
+                propagateCancellation(error)
                 statusMessage.value = error.message ?: "예비 번호 삭제에 실패했습니다."
             }
         }
     }
+    private fun propagateCancellation(error: Throwable) {
+        if (error is CancellationException) {
+            isGenerating.value = false; isSaving.value = false
+            regeneratingType.value = null; generatingBackupType.value = null
+            throw error
+        }
+    }
 }
+
+internal data class PensionExperimentUiState(
+    val operating: PensionOperatingSetting? = null,
+    val experiments: List<PensionExperimentSummary> = emptyList(),
+    val busy: Boolean = false,
+    val issue: String? = null,
+)
 
 enum class PensionLotteryGenerationType(
     val label: String,
@@ -357,7 +450,16 @@ data class PensionLotteryGeneratedNumber(
     val coldPriorityScores: Map<Int, Int>,
     val generationSeed: Long,
     val generatedAt: LocalDateTime,
+    val generationSnapshot: PensionLotteryGenerationSnapshot? = null,
 )
+
+data class PensionLotteryGenerationSnapshot(
+    val analysisThroughRound: Int,
+    val inputDataHash: String,
+    val configJson: String,
+) {
+    val targetRoundNo: Int get() = analysisThroughRound + 1
+}
 
 data class PensionLotteryGeneratorUiState(
     val latestRoundNo: Int? = null,
@@ -407,10 +509,10 @@ data class PensionLotteryBackupNumber(
 private fun PensionLotteryGeneratedNumber.toEntity(
     generationId: String,
     savedAt: LocalDateTime,
-    targetRoundNo: Int? = null,
-    analysisThroughRound: Int? = null,
-    generationConfigHash: String? = null,
-    inputDataHash: String? = null,
+    targetRoundNo: Int? = generationSnapshot?.targetRoundNo,
+    analysisThroughRound: Int? = generationSnapshot?.analysisThroughRound,
+    generationConfigHash: String? = generationSnapshot?.configJson?.sha256(),
+    inputDataHash: String? = generationSnapshot?.inputDataHash,
     isEvaluationTarget: Boolean = false,
 ): PensionLotteryGeneratedNumberEntity = PensionLotteryGeneratedNumberEntity(
     generationId = generationId,
@@ -431,6 +533,7 @@ private fun PensionLotteryGeneratedNumber.toEntity(
     analysisThroughRound = analysisThroughRound,
     generationVersion = PENSION_GENERATION_VERSION,
     generationConfigHash = generationConfigHash,
+    generationConfigJson = generationSnapshot?.configJson,
     inputDataHash = inputDataHash,
     generationSeed = generationSeed,
     isEvaluationTarget = isEvaluationTarget,
@@ -502,10 +605,14 @@ private fun PensionLotteryGeneratedNumberEntity.toGeneratedNumber(): PensionLott
         coldPriorityScores = parsedColdPriorityScores,
         generationSeed = generationSeed ?: 0L,
         generatedAt = generatedAt,
+        generationSnapshot = if (analysisThroughRound != null && inputDataHash != null && generationConfigJson != null) {
+            PensionLotteryGenerationSnapshot(analysisThroughRound, inputDataHash, generationConfigJson)
+        } else null,
     )
 }
 
 private data class PensionLotteryGeneratorAnalysis(
+    val generationSnapshot: PensionLotteryGenerationSnapshot,
     val latestDraws: List<PensionLotteryDrawEntity>,
     val pastWinningNumbers: Set<String>,
     val targetScoreBand: String,
@@ -605,7 +712,10 @@ private fun matchesCurrentGenerationConditions(
 
 private fun buildGeneratorAnalysis(
     draws: List<PensionLotteryDrawEntity>,
+    appearedLastDigitCandidateCount: Int = 3,
+    approvalHash: String? = null,
 ): PensionLotteryGeneratorAnalysis? {
+    require(appearedLastDigitCandidateCount in 3..4)
     if (draws.size <= GENERATOR_ANALYSIS_WEEKS) return null
 
     val historicalDigitScores = draws.mapIndexedNotNull { index, draw ->
@@ -661,6 +771,11 @@ private fun buildGeneratorAnalysis(
     }
 
     return PensionLotteryGeneratorAnalysis(
+        generationSnapshot = PensionLotteryGenerationSnapshot(
+            analysisThroughRound = draws.first().roundNo,
+            inputDataHash = pensionInputDataHash(draws),
+            configJson = pensionExperimentConfiguration(appearedLastDigitCandidateCount, approvalHash),
+        ),
         latestDraws = latestDraws,
         pastWinningNumbers = draws.map(PensionLotteryDrawEntity::winningNumber).toSet(),
         targetScoreBand = targetScoreBand,
@@ -675,7 +790,7 @@ private fun buildGeneratorAnalysis(
         appearedDigits = appearedDigits,
         topAppearedLastDigits = appearedDigits.last()
             .sortedByDescending { digit -> trendWeightedScores.last()[digit] }
-            .take(3),
+            .take(appearedLastDigitCandidateCount),
         zeroScoreDigits = zeroScoreDigits,
         lowestPositiveScoreDigits = lowestPositiveScoreDigits,
     )
@@ -685,6 +800,7 @@ private fun generateCandidateSet(
     analysis: PensionLotteryGeneratorAnalysis,
     excludedWinningNumbers: Set<String>,
     random: Random = Random.Default,
+    trace: PensionGenerationTrace? = null,
 ): List<PensionLotteryGeneratedNumber>? {
     val pairTypes = listOf(
         PensionLotteryGenerationType.APPEARED to PensionLotteryGenerationType.COLD_MIX,
@@ -702,6 +818,7 @@ private fun generateCandidateSet(
                 excludedWinningNumbers = excludedWinningNumbers + selectedWinningNumbers,
                 maximumAttempts = MAX_SET_CANDIDATE_ATTEMPTS,
                 generationSeed = random.nextLong(),
+                trace = trace,
             )
             if (appearedCandidate == null) {
                 failed = true
@@ -715,6 +832,7 @@ private fun generateCandidateSet(
                 excludedWinningNumbers = excludedWinningNumbers + selectedWinningNumbers + appearedCandidate.winningNumber,
                 maximumAttempts = MAX_SET_CANDIDATE_ATTEMPTS,
                 generationSeed = random.nextLong(),
+                trace = trace,
             )
             if (coldMixCandidate == null) {
                 failed = true
@@ -738,6 +856,7 @@ private fun generateCandidate(
     excludedWinningNumbers: Set<String> = emptySet(),
     maximumAttempts: Int = MAX_GENERATION_ATTEMPTS,
     generationSeed: Long = Random.nextLong(),
+    trace: PensionGenerationTrace? = null,
 ): PensionLotteryGeneratedNumber? {
     val random = Random(generationSeed)
     if (
@@ -748,32 +867,35 @@ private fun generateCandidate(
         return null
     }
     repeat(maximumAttempts) {
+        trace?.attempt()
         val selection = when (type.pattern) {
             PensionLotteryNumberPattern.APPEARED -> buildAppearedSelection(
                 analysis = analysis,
                 comparisonLastDigit = comparisonNumber?.lastOrNull()?.digitToInt(),
                 random = random,
-            ) ?: return@repeat
+            )
 
             PensionLotteryNumberPattern.COLD_MIX -> buildColdMixSelection(
                 analysis = analysis,
                 comparisonLastDigit = comparisonNumber?.lastOrNull()?.digitToInt(),
                 random = random,
-            ) ?: return@repeat
+            )
         }
-        if (selection.winningNumber in analysis.pastWinningNumbers) return@repeat
-        if (selection.winningNumber in excludedWinningNumbers) return@repeat
-        if (comparisonNumber != null && differingPositionCount(selection.winningNumber, comparisonNumber) < 3) {
+        if (!pensionFilter(trace, "selection", selection != null)) return@repeat
+        requireNotNull(selection)
+        if (!pensionFilter(trace, "pastWinner", selection.winningNumber !in analysis.pastWinningNumbers)) return@repeat
+        if (!pensionFilter(trace, "recommendationAndBatch", selection.winningNumber !in excludedWinningNumbers)) return@repeat
+        if (!pensionFilter(trace, "pairDifference", comparisonNumber == null || differingPositionCount(selection.winningNumber, comparisonNumber) >= 3)) {
             return@repeat
         }
-        if (comparisonNumber != null && selection.winningNumber.last() == comparisonNumber.last()) return@repeat
-        if (pensionDuplicateLabel(selection.winningNumber) != analysis.targetDuplicateLabel) return@repeat
+        if (!pensionFilter(trace, "pairLastDigit", comparisonNumber == null || selection.winningNumber.last() != comparisonNumber.last())) return@repeat
+        if (!pensionFilter(trace, "duplicateType", pensionDuplicateLabel(selection.winningNumber) == analysis.targetDuplicateLabel)) return@repeat
 
         val digitScores = calculatePensionNumberScores(analysis.latestDraws, selection.winningNumber)
         val totalScore = digitScores.sum()
-        if (pensionScoreBandLabel(totalScore) != analysis.targetScoreBand) return@repeat
+        if (!pensionFilter(trace, "scoreBand", pensionScoreBandLabel(totalScore) == analysis.targetScoreBand)) return@repeat
         val availableGroups = (1..5).filter { groupNo -> groupNo != comparisonGroupNo }
-        if (availableGroups.isEmpty()) return@repeat
+        if (!pensionFilter(trace, "group", availableGroups.isNotEmpty())) return@repeat
 
         return PensionLotteryGeneratedNumber(
             type = type,
@@ -790,7 +912,8 @@ private fun generateCandidate(
             coldPositions = selection.coldPositions,
             coldPriorityScores = selection.coldPriorityScores,
             generationSeed = generationSeed,
-            generatedAt = LocalDateTime.now(),
+            generatedAt = lotteryEvaluationNow(),
+            generationSnapshot = analysis.generationSnapshot,
         )
     }
 
@@ -948,6 +1071,7 @@ private fun buildPensionControlEntities(
             analysisThroughRound = analysisThroughRound,
             generationVersion = PENSION_GENERATION_VERSION,
             generationConfigHash = generationConfigHash,
+            generationConfigJson = analysis.generationSnapshot.configJson,
             inputDataHash = inputDataHash,
             generationSeed = seed,
             isControl = true,
@@ -956,12 +1080,8 @@ private fun buildPensionControlEntities(
     }
 }
 
-private fun pensionInputDataHash(draws: List<PensionLotteryDrawEntity>): String = draws
-    .sortedBy(PensionLotteryDrawEntity::roundNo)
-    .joinToString("|") { draw ->
-        "${draw.roundNo}:${draw.groupNo}:${draw.winningNumber}:${draw.bonusNumber.orEmpty()}"
-    }
-    .sha256()
+private fun pensionInputDataHash(draws: List<PensionLotteryDrawEntity>): String =
+    com.habittracker.data.lotto.pensionGenerationInputHash(draws)
 
 private fun String.sha256(): String = MessageDigest.getInstance("SHA-256")
     .digest(toByteArray(Charsets.UTF_8))
@@ -1071,9 +1191,76 @@ private const val MAX_SET_CANDIDATE_ATTEMPTS = 2_000
 private const val LAST_DIGIT_POSITION = 5
 private const val GENERATION_CONDITION_CHANGED_MESSAGE =
     "최근 당첨번호 반영으로 번호 생성 적용 조건이 변경되었습니다. 네 번호를 다시 생성해 주세요."
+private const val GENERATION_INPUT_CHANGED_MESSAGE =
+    "생성 당시 분석 입력이 없거나 현재 입력과 다릅니다. 네 번호를 다시 생성해 주세요."
 private const val FIXED_GENERATION_PREFIX = "fixed:"
 private const val BACKUP_GENERATION_PREFIX = "backup:"
 private const val PENSION_CONTROL_COUNT = 4
 private const val PENSION_GENERATION_VERSION = "pension-collection-v1"
-private const val PENSION_GENERATION_CONFIG =
-    "recent=16;long=156;recentWeight=0.25;longWeight=0.75;types=appeared,coldMix;lastDigitPriority=true;duplicateTypes=tripleOrMore,twoPairsOrMore,onePair,none"
+private val PENSION_GENERATION_CONFIG = """
+    {
+      "implementationId": "pension-snapshot-v1",
+      "recent": $GENERATOR_ANALYSIS_WEEKS, "long": $LONG_TERM_TREND_WEEKS,
+      "recentWeight": $RECENT_TREND_WEIGHT, "longWeight": $LONG_TERM_TREND_WEIGHT,
+      "types": {"appeared": 2, "coldMix": 2}, "appearedLastDigitCandidateCount": 3,
+      "groupWeights": {"uniform": $UNIFORM_GROUP_WEIGHT, "recent": $RECENT_TREND_WEIGHT, "long": $LONG_TERM_GROUP_WEIGHT},
+      "trendScoreScale": $TREND_SCORE_SCALE,
+      "scoreBandUpperBounds": [50, 70, 90, 110], "scoreBandPolicy": "historical_mode",
+      "duplicateTypes": ["tripleOrMore", "twoPairsOrMore", "onePair", "none"], "duplicatePolicy": "blended_mode",
+      "coldPositionPolicy": "historical_modal_zero_count_or_1_to_2_lowest_positive_last_position_first",
+      "coldDigitWeight": "all_time_position_frequency_min_1", "appearedFrontDigitWeight": "uniform",
+      "maxAttempts": $MAX_GENERATION_ATTEMPTS, "maxSetAttempts": $MAX_SET_GENERATION_ATTEMPTS,
+      "maxSetCandidateAttempts": $MAX_SET_CANDIDATE_ATTEMPTS,
+      "excludePolicy": ["past_winners", "saved_recommendations", "batch_duplicates"],
+      "pairMinimumDifferentPositions": 3, "pairDifferentLastDigit": true, "pairDifferentGroup": true,
+      "controlCount": $PENSION_CONTROL_COUNT
+    }
+""".trimIndent()
+
+internal fun pensionExperimentConfiguration(count: Int, approvalHash: String? = null): String {
+    require(count in 3..4)
+    val config = PENSION_GENERATION_CONFIG.replace("\"appearedLastDigitCandidateCount\": 3", "\"appearedLastDigitCandidateCount\": $count")
+    return if (approvalHash == null) config else org.json.JSONObject(config).put("operatingApprovalHash", approvalHash).toString()
+}
+
+internal class PensionGenerationTrace(private val checkActive: () -> Unit = {}) {
+    var attempts: Long = 0
+        private set
+    private val reached = linkedMapOf<String, Long>()
+    private val passed = linkedMapOf<String, Long>()
+    fun attempt() { checkActive(); attempts++ }
+    fun filter(name: String, accepted: Boolean): Boolean {
+        reached[name] = reached.getOrDefault(name, 0) + 1
+        if (accepted) passed[name] = passed.getOrDefault(name, 0) + 1
+        return accepted
+    }
+    fun snapshot(): Map<String, Any?> = mapOf("attempts" to attempts, "filters" to reached.mapValues { (name, total) ->
+        mapOf("reached" to total, "passed" to passed.getOrDefault(name, 0), "conditionalPassRate" to passed.getOrDefault(name, 0).toDouble() / total)
+    }, "allFiltersPassRate" to if (attempts == 0L) null else passed.getOrDefault("group", 0).toDouble() / attempts)
+}
+
+private fun pensionFilter(trace: PensionGenerationTrace?, name: String, accepted: Boolean): Boolean =
+    trace?.filter(name, accepted) ?: accepted
+
+internal fun generatePensionExperimentBatch(
+    draws: List<PensionLotteryDrawEntity>, count: Int, seed: Long, exclusions: Set<String>, trace: PensionGenerationTrace,
+): List<PensionLotteryGeneratedNumber> {
+    val analysis = requireNotNull(buildGeneratorAnalysis(draws, count)) { "연금 생성 입력은 직전 회차까지 최소 17회가 필요합니다." }
+    return requireNotNull(generateCandidateSet(analysis, exclusions, Random(seed), trace)) {
+        "필수 조건을 만족하는 전체 4개 배치를 찾지 못했습니다. 후보 시도=${trace.attempts}"
+    }
+}
+
+internal suspend fun generatePensionOperatingBatch(
+    store: com.habittracker.data.lotto.PensionExperimentStore,
+    draws: List<PensionLotteryDrawEntity>, exclusions: Set<String>, random: Random = Random.Default,
+): List<PensionLotteryGeneratedNumber> {
+    val setting = store.setting()
+    return withContext(Dispatchers.Default) {
+        val context = kotlinx.coroutines.currentCoroutineContext()
+        val analysis = requireNotNull(buildGeneratorAnalysis(draws, setting.count, setting.approvalHash)) { "번호 생성을 위해 당첨번호가 17회 이상 필요합니다." }
+        requireNotNull(generateCandidateSet(analysis, exclusions, random, PensionGenerationTrace { context.ensureActive() })) {
+            "현재 적용 조건을 모두 만족하는 네 번호를 찾지 못했습니다."
+        }
+    }
+}

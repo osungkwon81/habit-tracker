@@ -10,6 +10,11 @@ data class LottoQrPurchase(
     val tickets: List<List<Int>>,
 )
 
+data class LottoQrImportResult(
+    val gameCount: Int,
+    val restoredGameCount: Int = 0,
+)
+
 object LottoQrParser {
     private const val maxQrLength = 2_048
     private val payloadPattern = Regex("(?:[?&]|&amp;)v=([^&#]+)", RegexOption.IGNORE_CASE)

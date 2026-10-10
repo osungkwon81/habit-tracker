@@ -26,6 +26,8 @@ enum class AppDestination(
     PENSION_LOTTO_GENERATOR("lotto/pension/generator", "연금번호 생성"),
     PLANT("plant", "반복 할 일"),
     REMINDER("reminder", "리마인더"),
+    EXCHANGE("exchange", "환율·환전"),
+    EXCHANGE_RECORDS("exchange/records", "환전·지출 입력"),
     NOTIFICATION_ASSISTANT("notification-assistant", "알림 생활비서"),
     NOTIFICATION_ASSISTANT_APPS("notification-assistant/apps", "알림 체크 앱"),
     NOTIFICATION_ASSISTANT_ACTIVE("notification-assistant/active", "실제 알림 목록"),

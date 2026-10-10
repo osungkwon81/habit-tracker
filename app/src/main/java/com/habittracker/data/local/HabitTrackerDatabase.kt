@@ -6,6 +6,9 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.habittracker.data.local.entity.ExchangeRateEntity
+import com.habittracker.data.local.entity.ExchangeRecordEntity
+import com.habittracker.data.local.entity.ExchangeExpenseEntity
 import com.habittracker.data.lotto.PensionLotterySeedData
 import com.habittracker.data.local.entity.DailyDiaryEntity
 import com.habittracker.data.local.entity.DailyRecordEntity
@@ -69,8 +72,11 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         PensionLotteryDrawEntity::class,
         PensionLotteryGeneratedNumberEntity::class,
         ReminderEntity::class,
+        ExchangeRecordEntity::class,
+        ExchangeRateEntity::class,
+        ExchangeExpenseEntity::class,
     ],
-    version = 38,
+    version = 41,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -79,7 +85,7 @@ abstract class HabitTrackerDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 38
+        const val DB_VERSION = 41
 
         // builder와 create를 나누면 암호화/복구 계층이 필요에 따라 빌더 설정을 재사용할 수 있다.
         fun builder(context: Context) =

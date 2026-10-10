@@ -979,6 +979,49 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_38_39 = object : Migration(38, 39) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `lotto_ticket` ADD COLUMN `input_data_hash` TEXT")
+            database.execSQL("ALTER TABLE `lotto_ticket` ADD COLUMN `is_hidden` INTEGER NOT NULL DEFAULT 0")
+            database.execSQL("ALTER TABLE `pension_lottery_generated_number` ADD COLUMN `generation_config_json` TEXT")
+        }
+    }
+
+    private val MIGRATION_39_40 = object : Migration(39, 40) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS `exchange_record` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `currency` TEXT NOT NULL,
+                    `won_amount` TEXT NOT NULL,
+                    `applied_rate` TEXT NOT NULL
+                )
+            """.trimIndent())
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS `exchange_rate` (
+                    `currency` TEXT NOT NULL,
+                    `quoted_at` TEXT NOT NULL,
+                    `quote_round` INTEGER NOT NULL,
+                    `rate` TEXT NOT NULL,
+                    PRIMARY KEY (`currency`, `quoted_at`, `quote_round`)
+                )
+            """.trimIndent())
+        }
+    }
+
+    private val MIGRATION_40_41 = object : Migration(40, 41) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("""
+                CREATE TABLE IF NOT EXISTS `exchange_expense` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `currency` TEXT NOT NULL,
+                    `foreign_amount` TEXT NOT NULL,
+                    `description` TEXT NOT NULL
+                )
+            """.trimIndent())
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -1013,6 +1056,9 @@ object HabitTrackerMigrations {
         MIGRATION_35_36,
         MIGRATION_36_37,
         MIGRATION_37_38,
+        MIGRATION_38_39,
+        MIGRATION_39_40,
+        MIGRATION_40_41,
     )
 }
 

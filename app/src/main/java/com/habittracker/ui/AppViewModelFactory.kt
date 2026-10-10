@@ -19,6 +19,7 @@ import com.habittracker.ui.plant.PlantViewModel
 import com.habittracker.ui.reminder.ReminderViewModel
 import com.habittracker.ui.stats.MonthlyStatsViewModel
 import com.habittracker.ui.stock.StockViewModel
+import com.habittracker.ui.exchange.ExchangeViewModel
 
 /**
  * Android가 ViewModel을 다시 만들 때 Repository 생성 방법을 알 수 있도록 연결하는 Factory다.
@@ -50,6 +51,11 @@ class AppViewModelFactory : ViewModelProvider.Factory {
             ) as T
             modelClass.isAssignableFrom(NotificationAssistantViewModel::class.java) -> NotificationAssistantViewModel(application.appContainer.notificationAssistantRepository) as T
             modelClass.isAssignableFrom(StockViewModel::class.java) -> StockViewModel(repository) as T
+            modelClass.isAssignableFrom(ExchangeViewModel::class.java) -> ExchangeViewModel(
+                application.appContainer.exchangeRepository,
+                application.appContainer.exchangeCollectionSettings,
+                extras.createSavedStateHandle(),
+            ) as T
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
     }

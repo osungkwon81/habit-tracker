@@ -72,6 +72,7 @@ fun NotificationAssistantScreen(
     onOpenTasks: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val isCollectionEnabled = NotificationAssistantListenerService.isCollectionEnabled
     val lifecycleOwner = LocalLifecycleOwner.current
     val preferences = remember(context) { NotificationAssistantPreferences(context) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -96,7 +97,7 @@ fun NotificationAssistantScreen(
         manager.isNotificationListenerAccessGranted(ComponentName(context, NotificationAssistantListenerService::class.java))
     }
     val selectableApps by produceState<List<SelectableNotificationApp>?>(initialValue = null, context, refresh, page) {
-        if (page == NotificationAssistantPage.APPS) {
+        if (page == NotificationAssistantPage.APPS && isCollectionEnabled) {
             value = withContext(Dispatchers.IO) { loadSelectableApps(context, preferences) }
         }
     }
@@ -162,12 +163,15 @@ fun NotificationAssistantScreen(
                     NotificationAssistantPage.TASKS -> "알림에서 찾은 할 일"
                 },
                 description = when (page) {
-                    NotificationAssistantPage.HOME -> "알림 확인, 앱 선택, 할 일을 각각 관리합니다."
-                    NotificationAssistantPage.APPS -> "분석할 앱을 선택합니다."
-                    NotificationAssistantPage.ACTIVE -> "선택한 앱의 현재 알림을 보여 줍니다."
+                    NotificationAssistantPage.HOME -> "수집 중단 전 저장된 정보를 확인합니다."
+                    NotificationAssistantPage.APPS -> "데이터 수집 중단으로 앱 선택을 일시 중지했습니다."
+                    NotificationAssistantPage.ACTIVE -> "알림 데이터 수집이 중단되어 있습니다."
                     NotificationAssistantPage.TASKS -> "알림에서 찾은 예약·마감 정보를 확인합니다."
                 },
             )
+        }
+        item {
+            AppSupportText("알림 데이터 수집을 중단했습니다. 기존 저장 데이터와 앱 선택 설정은 유지됩니다.")
         }
         if (page == NotificationAssistantPage.HOME) {
             item {
@@ -221,7 +225,7 @@ fun NotificationAssistantScreen(
             item { AppSecondaryButton("실제 알림 목록", onOpenActive, Modifier.fillMaxWidth()) }
             item { AppPrimaryButton("알림에서 찾은 할 일", onOpenTasks, Modifier.fillMaxWidth()) }
         }
-        if (page == NotificationAssistantPage.APPS) {
+        if (page == NotificationAssistantPage.APPS && isCollectionEnabled) {
         item {
             AppSectionCard {
                 Text("알림 접근", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -264,7 +268,9 @@ fun NotificationAssistantScreen(
         }
         }
         if (page == NotificationAssistantPage.ACTIVE) {
-            if (!hasAccess) {
+            if (!isCollectionEnabled) {
+                item { AppEmptyCard("수집 중단으로 현재 알림을 조회하지 않습니다.") }
+            } else if (!hasAccess) {
                 item { AppEmptyCard("알림 접근을 켠 뒤 확인할 수 있습니다.") }
             } else if (activeItems.isEmpty()) {
                 item { AppEmptyCard("선택한 앱의 현재 알림이 없습니다.") }

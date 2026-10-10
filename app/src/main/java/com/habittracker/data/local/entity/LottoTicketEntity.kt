@@ -54,6 +54,10 @@ data class LottoTicketEntity(
     val historyThroughRound: Int? = null,
     @ColumnInfo(name = "generation_seed")
     val generationSeed: Long? = null,
+    @ColumnInfo(name = "input_data_hash")
+    val inputDataHash: String? = null,
+    @ColumnInfo(name = "is_hidden", defaultValue = "0")
+    val isHidden: Boolean = false,
     @ColumnInfo(name = "analysis_score")
     val analysisScore: Double? = null,
     @ColumnInfo(name = "data_score")
@@ -91,6 +95,7 @@ data class LottoTicketEntity(
             generationConfigHash: String? = null,
             historyThroughRound: Int? = null,
             generationSeed: Long? = null,
+            inputDataHash: String? = null,
             analysisScore: Double? = null,
             dataScore: Double? = null,
             patternScore: Double? = null,
@@ -101,6 +106,7 @@ data class LottoTicketEntity(
             featureSnapshotJson: String? = null,
             generationMode: String? = null,
             recommendationRank: Int? = null,
+            createdAt: LocalDateTime = LocalDateTime.now(),
         ): LottoTicketEntity {
             require(numbers.size == 6) { "로또 번호는 6개여야 합니다." }
             require(numbers.all { it in 1..45 }) { "로또 번호는 1부터 45 사이여야 합니다." }
@@ -134,6 +140,7 @@ data class LottoTicketEntity(
                 generationConfigHash = generationConfigHash,
                 historyThroughRound = historyThroughRound,
                 generationSeed = generationSeed,
+                inputDataHash = inputDataHash,
                 analysisScore = analysisScore,
                 dataScore = dataScore,
                 patternScore = patternScore,
@@ -144,6 +151,7 @@ data class LottoTicketEntity(
                 featureSnapshotJson = featureSnapshotJson,
                 generationMode = generationMode,
                 recommendationRank = recommendationRank,
+                createdAt = createdAt,
             )
         }
     }

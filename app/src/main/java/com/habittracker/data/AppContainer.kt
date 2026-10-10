@@ -1,6 +1,8 @@
 ﻿package com.habittracker.data
 
 import android.content.Context
+import com.habittracker.data.exchange.ExchangeRepository
+import com.habittracker.data.exchange.ExchangeCollectionSettings
 import com.habittracker.data.local.HabitTrackerDatabase
 import com.habittracker.data.local.HabitTrackerDatabaseProtector
 import com.habittracker.data.repository.HabitRepository
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.first
 class AppContainer(context: Context) {
     // Activity Context를 오래 보관하면 메모리 누수가 생길 수 있어 Application Context로 정규화한다.
     private val applicationContext = context.applicationContext
+    val exchangeCollectionSettings = ExchangeCollectionSettings(applicationContext)
     private val databaseProtector = HabitTrackerDatabaseProtector(applicationContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _readiness = MutableStateFlow<Result<Unit>?>(null)
@@ -31,6 +34,8 @@ class AppContainer(context: Context) {
     lateinit var notificationAssistantRepository: NotificationAssistantRepository
         private set
     lateinit var reminderRepository: ReminderRepository
+        private set
+    lateinit var exchangeRepository: ExchangeRepository
         private set
 
     init {
@@ -43,7 +48,15 @@ class AppContainer(context: Context) {
                 }
                 notificationAssistantRepository = NotificationAssistantRepository(database, databaseProtector, database.habitDao())
                 reminderRepository = ReminderRepository(applicationContext, database, databaseProtector, database.habitDao())
+                exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao())
                 _readiness.value = Result.success(Unit)
+                try {
+                    exchangeCollectionSettings.restore()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.e("AppContainer", "환율 자동 수집 예약 복구 실패", error)
+                }
                 runCatching { reminderRepository.restoreSchedules() }
                     .onFailure { error -> Log.e("AppContainer", "Reminder schedule restoration failed", error) }
             } catch (cancelled: CancellationException) {
@@ -68,5 +81,10 @@ class AppContainer(context: Context) {
     suspend fun awaitReminderRepository(): ReminderRepository {
         readiness.filterNotNull().first().getOrThrow()
         return reminderRepository
+    }
+
+    suspend fun awaitExchangeRepository(): ExchangeRepository {
+        readiness.filterNotNull().first().getOrThrow()
+        return exchangeRepository
     }
 }

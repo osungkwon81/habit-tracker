@@ -48,6 +48,8 @@ data class PensionLotteryGeneratedNumberEntity(
     val generationVersion: String = "legacy",
     @ColumnInfo(name = "generation_config_hash")
     val generationConfigHash: String? = null,
+    @ColumnInfo(name = "generation_config_json")
+    val generationConfigJson: String? = null,
     @ColumnInfo(name = "input_data_hash")
     val inputDataHash: String? = null,
     @ColumnInfo(name = "generation_seed")
