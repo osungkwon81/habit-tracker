@@ -10,4 +10,5 @@ data class ExchangeRateEntity(
     @ColumnInfo(name = "quoted_at") val quotedAt: LocalDateTime,
     @ColumnInfo(name = "quote_round") val quoteRound: Int,
     val rate: String,
+    @ColumnInfo(defaultValue = "'SHINHAN'") val source: String = "SHINHAN",
 )

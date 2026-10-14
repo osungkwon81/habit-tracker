@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -81,6 +82,7 @@ import com.habittracker.ui.lotto.PensionLotteryGeneratorViewModel
 import com.habittracker.ui.memo.MemoScreen
 import com.habittracker.ui.memo.MemoViewModel
 import com.habittracker.ui.navigation.AppDestination
+import com.habittracker.ui.components.AppSpacing
 import com.habittracker.ui.notification.NotificationAssistantScreen
 import com.habittracker.ui.notification.NotificationAssistantPage
 import com.habittracker.ui.notification.NotificationAssistantViewModel
@@ -160,7 +162,16 @@ private fun HabitTrackerApp() {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             if (!isTopLevel && route != null) {
-                TextButton(onClick = { guard.navigate { navController.popBackStack() } }) { Text("‹ 뒤로") }
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = AppSpacing.sm, vertical = AppSpacing.xs),
+                ) {
+                    TextButton(
+                        onClick = { guard.navigate { navController.popBackStack() } },
+                        modifier = Modifier.sizeIn(minWidth = 88.dp, minHeight = 48.dp),
+                    ) { Text("‹ 뒤로") }
+                }
             }
         },
     ) { innerPadding ->
@@ -311,11 +322,28 @@ private fun HabitTrackerApp() {
                 val viewModel: ReminderViewModel = viewModel(factory = viewModelFactory)
                 ReminderScreen(viewModel = viewModel)
             }
-            composable(AppDestination.EXCHANGE.route) {
+            composable(
+                AppDestination.EXCHANGE.route,
+                arguments = listOf(androidx.navigation.navArgument("widgetCurrency") {
+                    type = androidx.navigation.NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }),
+                deepLinks = listOf(androidx.navigation.navDeepLink { uriPattern = "habittracker://exchange/rates?widgetCurrency={widgetCurrency}" }),
+            ) {
                 val viewModel: ExchangeViewModel = viewModel(factory = viewModelFactory)
                 ExchangeScreen(
                     viewModel = viewModel,
                     onOpenRecords = { navController.navigate(AppDestination.EXCHANGE_RECORDS.route) { launchSingleTop = true } },
+                    onOpenCollectionSettings = { navController.navigate(AppDestination.EXCHANGE_COLLECTION_SETTINGS.route) { launchSingleTop = true } },
+                )
+            }
+            composable(AppDestination.EXCHANGE_COLLECTION_SETTINGS.route) { backStackEntry ->
+                val parentEntry = remember(backStackEntry) { navController.getBackStackEntry(AppDestination.EXCHANGE.route) }
+                val viewModel: ExchangeViewModel = viewModel(viewModelStoreOwner = parentEntry, factory = viewModelFactory)
+                ExchangeScreen(
+                    viewModel = viewModel,
+                    page = ExchangePage.COLLECTION_SETTINGS,
                 )
             }
             composable(AppDestination.EXCHANGE_RECORDS.route) { backStackEntry ->

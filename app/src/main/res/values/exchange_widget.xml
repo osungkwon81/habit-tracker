@@ -1,0 +1,14 @@
+<resources>
+    <string name="exchange_widget_name">환율 그래프 2×2</string>
+    <string name="exchange_widget_heading">환율</string>
+    <string name="exchange_widget_description">선택한 통화의 저장된 환율과 그래프를 표시합니다.</string>
+    <string name="exchange_widget_loading">저장된 환율을 불러오는 중</string>
+    <string name="exchange_widget_empty">저장된 환율 없음</string>
+    <string name="exchange_widget_select_currency">눌러서 통화 선택</string>
+    <string name="exchange_widget_error">저장된 환율을 불러오지 못했습니다.</string>
+    <color name="exchange_widget_background">#000000</color>
+    <color name="exchange_widget_text">#FFFFFF</color>
+    <color name="exchange_widget_rate">#FDE68A</color>
+    <color name="exchange_widget_support">#B8C0C7</color>
+    <color name="exchange_widget_accent">#5EEAD4</color>
+</resources>

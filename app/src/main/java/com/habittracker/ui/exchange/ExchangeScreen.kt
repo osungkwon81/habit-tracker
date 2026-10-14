@@ -1,6 +1,8 @@
 package com.habittracker.ui.exchange
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,13 +11,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -33,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.exchange.ExchangeCurrency
 import com.habittracker.data.exchange.ExchangeCollectionSettings
 import com.habittracker.data.exchange.ExchangeQuote
+import com.habittracker.data.exchange.ExchangeRateSource
 import com.habittracker.data.exchange.ExchangeRecord
 import com.habittracker.data.exchange.ExchangeExpense
 import com.habittracker.ui.components.AppActionNotice
@@ -54,21 +61,30 @@ import com.habittracker.ui.components.LocalAppNavigationGuard
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
-import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 
-enum class ExchangePage { RATES, RECORDS }
+enum class ExchangePage { RATES, RECORDS, COLLECTION_SETTINGS }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExchangeScreen(
     viewModel: ExchangeViewModel,
     page: ExchangePage = ExchangePage.RATES,
     onOpenRates: () -> Unit = {},
     onOpenRecords: () -> Unit = {},
+    onOpenCollectionSettings: () -> Unit = {},
 ) {
     val isRecordsPage = page == ExchangePage.RECORDS
+    val isRatesPage = page == ExchangePage.RATES
+    val isCollectionSettingsPage = page == ExchangePage.COLLECTION_SETTINGS
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val editor by viewModel.editor.collectAsStateWithLifecycle()
     val expenseEditor by viewModel.expenseEditor.collectAsStateWithLifecycle()
@@ -77,6 +93,9 @@ fun ExchangeScreen(
     val isExpenseEntry = entryType == ExchangeEntryType.EXPENSE
     val selectedCode by viewModel.currency.collectAsStateWithLifecycle()
     val collectionInterval by viewModel.collectionIntervalMinutes.collectAsStateWithLifecycle()
+    val recollectionStartDate by viewModel.recollectionStartDate.collectAsStateWithLifecycle()
+    val today = LocalDate.now(ZoneId.of("Asia/Seoul"))
+    val validRecollectionStart = recollectionStartDate?.let { !it.isAfter(today) } == true
     var automaticCollection by rememberSaveable(collectionInterval) { mutableStateOf(collectionInterval > 0L) }
     var intervalInput by rememberSaveable(collectionInterval) {
         mutableStateOf(if (collectionInterval > 0L) collectionInterval.toString() else "")
@@ -88,14 +107,23 @@ fun ExchangeScreen(
     val discardCollectionChanges = {
         automaticCollection = collectionInterval > 0L
         intervalInput = if (collectionInterval > 0L) collectionInterval.toString() else ""
+        viewModel.clearRecollectionStartDate()
     }
     val selected = ExchangeCurrency.valueOf(selectedCode)
     val guard = LocalAppNavigationGuard.current
     var deleteTarget by remember { mutableStateOf<ExchangeRecord?>(null) }
     var deleteExpenseTarget by remember { mutableStateOf<ExchangeExpense?>(null) }
-    SideEffect { guard.hasUnsavedChanges = if (isRecordsPage) editor.hasChanges || expenseEditor.hasChanges else collectionHasChanges }
+    var showExpenseDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showRecollectionDatePicker by rememberSaveable { mutableStateOf(false) }
+    var confirmRecollection by rememberSaveable { mutableStateOf(false) }
+    SideEffect {
+        guard.hasUnsavedChanges = when (page) {
+            ExchangePage.RECORDS -> editor.hasChanges || expenseEditor.hasChanges
+            ExchangePage.COLLECTION_SETTINGS -> collectionHasChanges || (recollectionStartDate != null && !state.isRecollecting)
+            ExchangePage.RATES -> false
+        }
+    }
     DisposableEffect(guard) { onDispose { guard.hasUnsavedChanges = false } }
-    LaunchedEffect(viewModel, page) { if (!isRecordsPage) viewModel.refresh() }
     AppActionNotice(state.message, viewModel::clearMessage)
     val hasSelectedData = state.currency == selected
     val quotes = if (hasSelectedData) state.quotes else emptyList()
@@ -103,6 +131,59 @@ fun ExchangeScreen(
     val amount = positiveDecimal(editor.wonAmount)
     val rate = positiveDecimal(editor.appliedRate)
     val expenseAmount = positiveDecimal(expenseEditor.foreignAmount)
+    if (isCollectionSettingsPage && showRecollectionDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = recollectionStartDate?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showRecollectionDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            viewModel.updateRecollectionStartDate(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                        }
+                        showRecollectionDatePicker = false
+                    },
+                    enabled = datePickerState.selectedDateMillis != null && !state.isRecollecting,
+                ) { Text("선택") }
+            },
+            dismissButton = { TextButton(onClick = { showRecollectionDatePicker = false }) { Text("취소") } },
+        ) { DatePicker(state = datePickerState) }
+    }
+    if (isCollectionSettingsPage && confirmRecollection && recollectionStartDate != null) {
+        AppConfirmDialog(
+            title = "환율 이력을 다시 수집할까요?",
+            message = "$recollectionStartDate ~ 오늘($today)의 달러·엔화 고시를 가져와 기존 환율 이력을 교체합니다. 네이버가 제공하지 않는 구간은 비어 있을 수 있습니다. 환전·지출 기록과 위젯 설정은 유지합니다.",
+            confirmText = "다시 수집",
+            onConfirm = { confirmRecollection = false; viewModel.recollectRates() },
+            onDismiss = { confirmRecollection = false },
+        )
+    }
+    if (isRecordsPage && isExpenseEntry && showExpenseDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = expenseEditor.expenseDate?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showExpenseDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            viewModel.updateExpenseDate(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                        }
+                        showExpenseDatePicker = false
+                    },
+                    enabled = datePickerState.selectedDateMillis != null && !state.isSaving,
+                ) { Text("선택") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExpenseDatePicker = false }) { Text("취소") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
     deleteTarget?.let { record ->
         AppConfirmDialog(
             title = "환전 기록 삭제",
@@ -131,11 +212,19 @@ fun ExchangeScreen(
     } } else null) {
         item {
             AppHeroCard(
-                title = if (isRecordsPage) "환전·지출 입력" else "현재 환율·그래프",
-                description = if (isRecordsPage) "환전 기록과 외화 지출을 입력하고 남은 금액을 확인합니다." else "신한은행 매매기준율과 수집 이력을 확인합니다.",
+                title = when (page) {
+                    ExchangePage.RATES -> "현재 환율·그래프"
+                    ExchangePage.RECORDS -> "환전·지출 입력"
+                    ExchangePage.COLLECTION_SETTINGS -> "환율 수집 설정"
+                },
+                description = when (page) {
+                    ExchangePage.RATES -> "신한은행 매매기준율과 수집 이력을 확인합니다."
+                    ExchangePage.RECORDS -> "환전 기록과 외화 지출을 입력하고 남은 금액을 확인합니다."
+                    ExchangePage.COLLECTION_SETTINGS -> "자동 수집 주기는 달러·엔화에 공통으로 적용됩니다."
+                },
             )
         }
-        item {
+        if (!isCollectionSettingsPage) item {
             AppSecondaryButton(
                 text = if (isRecordsPage) "현재 환율·그래프 보기" else "환전·지출 입력·기록",
                 onClick = {
@@ -153,7 +242,15 @@ fun ExchangeScreen(
                 enabled = !state.isSaving && !state.isUpdatingCollection,
             )
         }
-        item {
+        if (isRatesPage) item {
+            AppSecondaryButton(
+                text = "환율 수집 설정",
+                onClick = { guard.navigate { onOpenCollectionSettings() } },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isUpdatingCollection,
+            )
+        }
+        if (!isCollectionSettingsPage) item {
             Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                 ExchangeCurrency.entries.forEach { currency ->
                     AppSelectableChip(currency.label, selected == currency, onClick = {
@@ -182,7 +279,7 @@ fun ExchangeScreen(
                 }
             }
         }
-        if (!isRecordsPage) {
+        if (isRatesPage) {
         item {
             AppSectionHeader(title = "현재 고시환율", subtitle = selected.rateLabel)
             if (latest != null) {
@@ -198,17 +295,33 @@ fun ExchangeScreen(
             } else if (!state.isRefreshing && latest == null && state.isLoaded && hasSelectedData) {
                 AppSupportText("아직 수집된 환율이 없습니다.")
             }
-            AppSecondaryButton("환율 새로고침", viewModel::refresh, Modifier.fillMaxWidth(), enabled = !state.isRefreshing)
+            AppSecondaryButton("달러·엔화 함께 새로고침", viewModel::refresh, Modifier.fillMaxWidth(), enabled = !state.isRefreshing && !state.isBackfilling && !state.isRecollecting)
         }
         item {
+            val chart by viewModel.chartState.collectAsStateWithLifecycle()
+            val periodCode by viewModel.chartPeriod.collectAsStateWithLifecycle()
+            val period = ExchangeChartPeriod.valueOf(periodCode)
             AppSectionHeader("환율 추이")
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                ExchangeChartPeriod.entries.forEach { option ->
+                    AppSelectableChip(option.label, period == option, onClick = { viewModel.selectChartPeriod(option) })
+                }
+            }
+            AppSupportText(when (period) {
+                ExchangeChartPeriod.ALL -> "저장된 모든 고시환율을 표시합니다."
+                ExchangeChartPeriod.TODAY -> "${chart.today} · 한국 시간 기준 오늘 저장된 고시환율입니다."
+                ExchangeChartPeriod.DAILY -> "각 날짜의 마지막 저장 고시환율을 표시합니다."
+                ExchangeChartPeriod.MONTHLY -> "각 월의 마지막 저장 고시환율을 표시합니다."
+            })
             when {
-                !hasSelectedData || (!state.isLoaded && state.loadError == null) -> AppLoadingCard("수집 환율을 불러오고 있습니다.")
                 state.loadError != null -> Text(state.loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                quotes.isEmpty() -> AppEmptyCard("수집한 환율이 쌓이면 변화를 볼 수 있습니다.")
-                else -> ExchangeRateChart(quotes, selected)
+                !hasSelectedData || !chart.isLoaded || chart.currency != selected || chart.period != period -> AppLoadingCard("수집 환율을 불러오고 있습니다.")
+                chart.quotes.isEmpty() -> AppEmptyCard(if (period == ExchangeChartPeriod.TODAY) "오늘 저장된 고시환율이 없습니다." else "수집한 환율이 쌓이면 변화를 볼 수 있습니다.")
+                else -> ExchangeRateChart(chart.quotes, selected, period)
             }
         }
+        }
+        if (isCollectionSettingsPage) {
         item {
             AppSectionCard {
                 AppSectionHeader("환율 수집 주기")
@@ -232,8 +345,42 @@ fun ExchangeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.isUpdatingCollection && (!automaticCollection || validInterval),
                 )
-                AppSupportText("앱을 닫아도 인터넷 연결 시 달러·엔화를 함께 수집합니다. 한국 시간 기준 토·일요일에는 자동 수집을 건너뜁니다. 신규 예약의 첫 자동 수집은 설정한 간격 이후이며 절전·네트워크 상황에 따라 늦어질 수 있습니다. 화면 진입·새로고침 수집은 주말에도 사용할 수 있습니다.")
+                AppSupportText("자동 수집은 한국 시간 기준 평일(월~금)에만 달러·엔화를 함께 수집하며, 주말에는 건너뜁니다. 앱을 닫아도 예약은 유지됩니다. 첫 자동 수집은 설정한 간격 이후이며 절전·네트워크 상황에 따라 늦어질 수 있습니다. 화면 진입 시에는 DB에 저장된 환율만 표시합니다.")
             }
+        }
+        item {
+            AppSectionHeader("환율 이력 다시 수집", "네이버 · 신한은행")
+            AppSecondaryButton(
+                text = recollectionStartDate?.let { "시작 날짜: $it · 달력" } ?: "시작 날짜 선택 · 달력",
+                onClick = { showRecollectionDatePicker = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isRecollecting && !state.isBackfilling && !state.isRefreshing,
+            )
+            AppSupportText("종료 날짜: 오늘($today) · 한국 시간 기준")
+            if (recollectionStartDate != null && !validRecollectionStart) {
+                Text("시작 날짜는 오늘 이전 또는 오늘로 선택해 주세요.", color = MaterialTheme.colorScheme.error)
+            }
+            AppSupportText("선택한 시작일부터 오늘까지 제공되는 고시로 환율 이력을 교체합니다. 환전·지출 기록과 위젯 설정은 유지합니다.")
+            AppSecondaryButton(
+                text = if (state.isRecollecting) "환율 이력 다시 수집 중" else "이력 교체하고 다시 수집",
+                onClick = { confirmRecollection = true },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = validRecollectionStart && !state.isRecollecting && !state.isBackfilling && !state.isRefreshing,
+            )
+            if (state.isRecollecting) AppSupportText("선택 구간의 고시를 조회하고 있습니다. 조회가 끝난 뒤 기존 이력을 교체합니다.")
+            if (state.recollectionError != null) Text(state.recollectionError.orEmpty(), color = MaterialTheme.colorScheme.error)
+        }
+        item {
+            AppSectionHeader("누락 환율 보충", "네이버 · 신한은행")
+            AppSupportText("달러·엔화 각각 처음과 마지막으로 저장한 고시 사이에서 빠진 고시만 가져옵니다. 기존 기록은 유지하며 네이버가 제공하지 않는 구간은 그대로 남습니다.")
+            AppSecondaryButton(
+                text = if (state.isBackfilling) "누락 고시 보충 중" else "빠진 고시 가져오기",
+                onClick = viewModel::backfillMissingRates,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.isBackfilling && !state.isRefreshing && !state.isRecollecting,
+            )
+            if (state.isBackfilling) AppSupportText("저장 구간의 과거 고시를 조회하고 있습니다.")
+            if (state.backfillError != null) Text(state.backfillError.orEmpty(), color = MaterialTheme.colorScheme.error)
         }
         }
         if (isRecordsPage) {
@@ -250,6 +397,12 @@ fun ExchangeScreen(
         item {
             AppSectionCard {
                 if (expenseEditor.id != null) AppSupportText("지출 기록 수정 중")
+                AppSecondaryButton(
+                    text = expenseEditor.expenseDate?.let { "지출 날짜: $it · 달력" } ?: "지출 날짜 선택 · 달력",
+                    onClick = { showExpenseDatePicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !state.isSaving,
+                )
                 AppTextField(
                     value = expenseEditor.foreignAmount, onValueChange = viewModel::updateExpenseAmount,
                     label = "지출 금액(${selected.amountUnitLabel})", singleLine = true,
@@ -332,6 +485,7 @@ fun ExchangeScreen(
             else -> items(state.expenses, key = { "expense:${it.id}" }) { expense ->
                 AppSectionCard {
                     Text(expense.description, style = MaterialTheme.typography.titleMedium)
+                    AppSupportText(expense.expenseDate?.toString() ?: "날짜 미등록")
                     Text("${expense.foreignAmount.money()} ${selected.amountUnitLabel}")
                     AppButtonRow(
                         primaryText = "수정", onPrimaryClick = { guard.navigate { viewModel.editExpense(expense) } },
@@ -365,18 +519,34 @@ private fun Comparison(amount: BigDecimal, appliedRate: BigDecimal, currentRate:
 }
 
 @Composable
-private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCurrency) {
-    var selectedIndex by rememberSaveable(currency.name) { mutableIntStateOf(-1) }
+private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCurrency, period: ExchangeChartPeriod) {
+    var selectedIndex by rememberSaveable(currency.name, period.name) { mutableIntStateOf(-1) }
     val selected = quotes[if (selectedIndex < 0) quotes.lastIndex else selectedIndex.coerceAtMost(quotes.lastIndex)]
-    val points = remember(quotes) {
+    val axisFormat = remember(period) { DateTimeFormatter.ofPattern(when (period) {
+        ExchangeChartPeriod.ALL -> "yyyy.MM.dd HH:mm:ss"
+        ExchangeChartPeriod.TODAY -> "HH:mm:ss"
+        ExchangeChartPeriod.DAILY -> "yyyy.MM.dd"
+        ExchangeChartPeriod.MONTHLY -> "yyyy.MM"
+    }) }
+    val pointLabel = when (period) {
+        ExchangeChartPeriod.ALL, ExchangeChartPeriod.TODAY -> "고시"
+        ExchangeChartPeriod.DAILY -> "일"
+        ExchangeChartPeriod.MONTHLY -> "월"
+    }
+    val points = remember(quotes, period) {
         val low = quotes.minOf { it.rate.toDouble() }
         val high = quotes.maxOf { it.rate.toDouble() }
         val padding = ((high - low) * 0.1).coerceAtLeast(0.01)
-        val seconds = Duration.between(quotes.first().quotedAt, quotes.last().quotedAt).seconds.coerceAtLeast(1)
-        quotes.map {
+        fun distance(quote: ExchangeQuote, index: Int): Long = when (period) {
+            ExchangeChartPeriod.ALL, ExchangeChartPeriod.TODAY -> index.toLong()
+            ExchangeChartPeriod.DAILY -> ChronoUnit.DAYS.between(quotes.first().quotedAt.toLocalDate(), quote.quotedAt.toLocalDate())
+            ExchangeChartPeriod.MONTHLY -> ChronoUnit.MONTHS.between(YearMonth.from(quotes.first().quotedAt), YearMonth.from(quote.quotedAt))
+        }
+        val span = distance(quotes.last(), quotes.lastIndex).coerceAtLeast(1)
+        quotes.mapIndexed { index, quote ->
             Offset(
-                Duration.between(quotes.first().quotedAt, it.quotedAt).seconds.toFloat() / seconds,
-                (1 - (it.rate.toDouble() - low + padding) / (high - low + 2 * padding)).toFloat(),
+                distance(quote, index).toFloat() / span,
+                (1 - (quote.rate.toDouble() - low + padding) / (high - low + 2 * padding)).toFloat(),
             )
         }
     }
@@ -385,7 +555,7 @@ private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCur
     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
         AppSupportText("최저 ${quotes.minOf { it.rate }.money()}원 · 최고 ${quotes.maxOf { it.rate }.money()}원")
         Canvas(Modifier.fillMaxWidth().height(180.dp).padding(4.dp).semantics {
-            contentDescription = "${currency.label} 수집 환율 그래프. ${quotes.size}개 고시. 아래 슬라이더로 고시별 환율을 확인할 수 있습니다."
+            contentDescription = "${currency.label} ${period.label} 환율 그래프. ${quotes.size}개 지점. 아래 슬라이더로 환율을 확인할 수 있습니다."
         }) {
             listOf(0f, 0.5f, 1f).forEach { ratio ->
                 drawLine(gridColor, Offset(0f, size.height * ratio), Offset(size.width, size.height * ratio))
@@ -398,18 +568,21 @@ private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCur
             drawCircle(lineColor, 4.dp.toPx(), position(points[index]))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(quotes.first().quotedAt.format(quoteTimeFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-            Text(quotes.last().quotedAt.format(quoteTimeFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            Text(quotes.first().quotedAt.format(axisFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            Text(quotes.last().quotedAt.format(axisFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
         }
         if (quotes.size > 1) Slider(
             value = (if (selectedIndex < 0) quotes.lastIndex else selectedIndex.coerceAtMost(quotes.lastIndex)).toFloat(),
             onValueChange = { selectedIndex = it.roundToInt() }, valueRange = 0f..quotes.lastIndex.toFloat(),
-            modifier = Modifier.semantics { contentDescription = "수집한 고시 선택" },
+            modifier = Modifier.semantics { contentDescription = "${period.label} 환율 지점 선택" },
         )
         if (selectedIndex >= 0) {
-            Text("선택한 고시 ${selected.quotedAt.format(quoteTimeFormat)} · ${selected.round}회차 · ${selected.rate.money()}원")
+            Text("선택한 $pointLabel ${selected.quotedAt.format(axisFormat)} · ${selected.rate.money()}원")
+            AppSupportText("고시 ${selected.quotedAt.format(quoteTimeFormat)} · ${selected.round}회차 · 출처: ${selected.source.label}")
         }
-        AppSupportText(if (quotes.size == 1) "고시가 1개 수집되었습니다. 다음 고시 수집 후 추이를 표시합니다." else "수집한 고시만 연결한 추이입니다. 미수집 구간의 실제 변동은 포함하지 않습니다.")
+        val hasNaverQuotes = remember(quotes) { quotes.any { it.source == ExchangeRateSource.NAVER_SHINHAN } }
+        if (hasNaverQuotes) AppSupportText("네이버에서 수집한 신한은행 고시가 포함되어 있습니다. 슬라이더로 선택 지점의 출처를 확인할 수 있습니다.")
+        AppSupportText(if (quotes.size == 1) "표시할 지점이 1개입니다. 점으로 환율을 표시합니다." else "저장된 환율만 연결한 추이입니다. 저장 이력이 없는 구간의 실제 변동은 포함하지 않습니다.")
     }
 }
 

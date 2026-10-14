@@ -1,5 +1,8 @@
 package com.habittracker.data.exchange
 
+import android.util.Base64
+import android.content.Context
+import android.util.Log
 import androidx.room.withTransaction
 import com.habittracker.data.local.HabitDao
 import com.habittracker.data.local.HabitTrackerDatabase
@@ -7,11 +10,15 @@ import com.habittracker.data.local.HabitTrackerDatabaseProtector
 import com.habittracker.data.local.entity.ExchangeRateEntity
 import com.habittracker.data.local.entity.ExchangeRecordEntity
 import com.habittracker.data.local.entity.ExchangeExpenseEntity
+import com.habittracker.widget.ExchangeRateWidgetProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Cookie
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,8 +28,12 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.coroutines.coroutineContext
 
 enum class ExchangeCurrency(val label: String, val unit: Int) {
@@ -31,9 +42,13 @@ enum class ExchangeCurrency(val label: String, val unit: Int) {
     val amountUnitLabel: String get() = if (this == USD) "달러" else "엔"
 }
 
-data class ExchangeQuote(val quotedAt: LocalDateTime, val round: Int, val rate: BigDecimal)
+enum class ExchangeRateSource(val label: String) {
+    SHINHAN("신한은행"), NAVER_SHINHAN("네이버 · 신한은행");
+}
+
+data class ExchangeQuote(val quotedAt: LocalDateTime, val round: Int, val rate: BigDecimal, val source: ExchangeRateSource = ExchangeRateSource.SHINHAN)
 data class ExchangeRecord(val id: Long, val wonAmount: BigDecimal, val appliedRate: BigDecimal)
-data class ExchangeExpense(val id: Long, val foreignAmount: BigDecimal, val description: String)
+data class ExchangeExpense(val id: Long, val foreignAmount: BigDecimal, val description: String, val expenseDate: LocalDate? = null)
 data class ExchangeBalance(val currency: ExchangeCurrency, val exchangedAmount: BigDecimal, val spentAmount: BigDecimal) {
     val remainingAmount: BigDecimal get() = exchangedAmount.subtract(spentAmount)
 }
@@ -42,7 +57,9 @@ class ExchangeRepository(
     private val database: HabitTrackerDatabase,
     private val protector: HabitTrackerDatabaseProtector,
     private val dao: HabitDao,
+    context: Context,
 ) {
+    private val applicationContext = context.applicationContext
     private val refreshMutex = Mutex()
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -67,9 +84,33 @@ class ExchangeRepository(
                     .put("serviceType", "GU").put("serviceCode", "F3730")
                     .put("language", "ko").put("webUri", "/rib/mnew/index.jsp")))
         val rates = withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url("https://m.shinhan.com/serviceEndpoint/httpDigital")
+            val keyRequest = Request.Builder()
+                .url("https://m.shinhan.com/comjsp/comInitInfo.jsp")
                 .header("Referer", "https://m.shinhan.com/rib/mnew/index.jsp")
+                .post(ByteArray(0).toRequestBody())
+                .build()
+            val (keyBytes, cookies) = client.newCall(keyRequest).execute().use { response ->
+                check(response.isSuccessful) { "신한은행 환율 암호화 준비 실패: HTTP ${response.code}" }
+                val keyJson = JSONObject(checkNotNull(response.body) { "신한은행 환율 암호화 응답이 없습니다." }.string())
+                val keyHex = keyJson.getString("v").trim()
+                check(keyHex.matches(Regex("[0-9a-fA-F]{64}"))) { "신한은행 환율 암호화 키 형식이 유효하지 않습니다." }
+                val bytes = ByteArray(32) { index -> keyHex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
+                bytes to Cookie.parseAll(response.request.url, response.headers)
+            }
+            coroutineContext.ensureActive()
+            // 공개 웹의 shbSec.js 규칙: 본문만 AES-256-CBC로 암호화하고 IV는 키 앞 16바이트를 사용한다.
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(keyBytes.copyOfRange(0, 16)))
+            val encryptedBody = cipher.doFinal(requestJson.getJSONObject("dataBody").toString().toByteArray(Charsets.UTF_8))
+            requestJson.put("dataBody", Base64.encodeToString(encryptedBody, Base64.NO_WRAP))
+            requestJson.getJSONObject("dataHeader").put("encG", "1").put("procG", "1")
+            val requestUrl = "https://m.shinhan.com/serviceEndpoint/httpDigital".toHttpUrl()
+            val cookieHeader = cookies.filter { it.matches(requestUrl) }
+                .joinToString("; ") { "${it.name}=${it.value}" }
+            val request = Request.Builder()
+                .url(requestUrl)
+                .header("Referer", "https://m.shinhan.com/rib/mnew/index.jsp")
+                .apply { if (cookieHeader.isNotEmpty()) header("Cookie", cookieHeader) }
                 .post(requestJson.toString().toRequestBody("application/json; charset=UTF-8".toMediaType()))
                 .build()
             client.newCall(request).execute().use { response ->
@@ -112,7 +153,80 @@ class ExchangeRepository(
             }
             insertedIds.any { it != -1L }
         }
-        if (changed) protector.requestBackup(database)
+        if (changed) notifyRatesChanged()
+    }
+
+    suspend fun backfillMissingRates(): Int = refreshMutex.withLock {
+        val history = NaverShinhanRateHistory(client)
+        val candidates = mutableListOf<ExchangeRateEntity>()
+        for (currency in ExchangeCurrency.entries) {
+            val existing = dao.getExchangeRates(currency.name)
+            if (existing.size < 2) {
+                Log.i("Exchange", "누락 고시 보충 생략: currency=${currency.name} reason=저장 구간 부족 count=${existing.size}")
+                continue
+            }
+            candidates.addAll(history.fetchMissing(currency, existing))
+        }
+        coroutineContext.ensureActive()
+        val insertedCount = database.withTransaction {
+            val missing = mutableListOf<ExchangeRateEntity>()
+            for ((currency, rows) in candidates.groupBy { it.currency }) {
+                val existing = dao.getExchangeRates(currency).associateBy { it.quotedAt.toLocalDate() to it.quoteRound }
+                for (row in rows) {
+                    val previous = existing[row.quotedAt.toLocalDate() to row.quoteRound]
+                    if (previous == null) missing.add(row)
+                    else check(previous.quotedAt == row.quotedAt && previous.rate.toBigDecimal().compareTo(row.rate.toBigDecimal()) == 0) {
+                        "네이버 보충 고시 불일치: currency=$currency date=${row.quotedAt.toLocalDate()} round=${row.quoteRound}"
+                    }
+                }
+            }
+            val inserted = dao.insertExchangeRates(missing)
+            missing.forEachIndexed { index, row ->
+                if (inserted[index] == -1L) {
+                    val previous = dao.getExchangeRate(row.currency, row.quotedAt, row.quoteRound)
+                    check(previous != null && previous.rate.toBigDecimal().compareTo(row.rate.toBigDecimal()) == 0) {
+                        "네이버 보충 저장 불일치: currency=${row.currency} quotedAt=${row.quotedAt} round=${row.quoteRound}"
+                    }
+                }
+            }
+            inserted.count { it != -1L }
+        }
+        if (insertedCount > 0) notifyRatesChanged()
+        insertedCount
+    }
+
+    suspend fun recollectRates(startDate: LocalDate): Int = refreshMutex.withLock {
+        val endDate = LocalDate.now(ZoneId.of("Asia/Seoul"))
+        require(!startDate.isAfter(endDate)) { "시작 날짜는 오늘 이후로 선택할 수 없습니다: start=$startDate end=$endDate" }
+        val history = NaverShinhanRateHistory(client)
+        val collected = mutableListOf<ExchangeRateEntity>()
+        for (currency in ExchangeCurrency.entries) {
+            val rows = history.fetchRange(currency, startDate, endDate)
+            check(rows.isNotEmpty()) { "선택 구간에 제공되는 ${currency.label} 고시가 없어 기존 이력을 유지합니다: start=$startDate end=$endDate" }
+            collected.addAll(rows)
+        }
+        coroutineContext.ensureActive()
+        // 두 통화의 조회가 끝난 뒤 교체한다. 조회 실패나 저장 오류로 기존 이력을 잃지 않게 한다.
+        database.withTransaction {
+            dao.deleteAllExchangeRates()
+            val inserted = dao.insertExchangeRates(collected)
+            check(inserted.size == collected.size && inserted.all { it != -1L }) {
+                "환율 이력 교체 중 고시 중복이 발생했습니다: start=$startDate end=$endDate"
+            }
+        }
+        notifyRatesChanged()
+        collected.size
+    }
+
+    private suspend fun notifyRatesChanged() {
+        protector.requestBackup(database)
+        try {
+            ExchangeRateWidgetProvider.enqueueUpdate(applicationContext)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e("ExchangeWidget", "환율 저장 후 위젯 갱신 예약 실패", error)
+        }
     }
 
     suspend fun save(id: Long?, currency: ExchangeCurrency, wonAmount: BigDecimal, appliedRate: BigDecimal) {
@@ -128,11 +242,11 @@ class ExchangeRepository(
         protector.requestBackup(database)
     }
 
-    suspend fun saveExpense(id: Long?, currency: ExchangeCurrency, foreignAmount: BigDecimal, description: String) {
+    suspend fun saveExpense(id: Long?, currency: ExchangeCurrency, foreignAmount: BigDecimal, description: String, expenseDate: LocalDate? = null) {
         require(foreignAmount.signum() > 0) { "지출 금액은 0보다 커야 합니다." }
         val content = description.trim()
         require(content.isNotEmpty()) { "지출 내용을 입력해 주세요." }
-        val expense = ExchangeExpenseEntity(id ?: 0, currency.name, foreignAmount.toPlainString(), content)
+        val expense = ExchangeExpenseEntity(id ?: 0, currency.name, foreignAmount.toPlainString(), content, expenseDate)
         if (id == null) dao.insertExchangeExpense(expense)
         else require(dao.updateExchangeExpense(expense) == 1) { "지출 기록 $id 수정 실패: 기록을 찾을 수 없습니다." }
         protector.requestBackup(database)

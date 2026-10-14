@@ -41,6 +41,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".widget.ExchangeRateWidgetConfigureActivity"
+            android:exported="true"
+            android:theme="@style/Theme.HabitTracker">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".data.notification.NotificationAssistantListenerService"
             android:enabled="false"
@@ -59,6 +67,17 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-enabled live stock price monitoring, risk alerts, and guarded KIS order automation" />
         </service>
+        <receiver
+            android:name=".widget.ExchangeRateWidgetProvider"
+            android:exported="false"
+            android:label="@string/exchange_widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/exchange_rate_widget_info" />
+        </receiver>
         <receiver
             android:name=".data.reminder.ReminderCompleteReceiver"
             android:enabled="true"

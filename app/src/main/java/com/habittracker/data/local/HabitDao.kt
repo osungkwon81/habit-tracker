@@ -58,6 +58,12 @@ interface HabitDao {
     @Query("SELECT * FROM exchange_rate WHERE currency = :currency ORDER BY quoted_at ASC, quote_round ASC")
     fun observeExchangeRates(currency: String): Flow<List<ExchangeRateEntity>>
 
+    @Query("SELECT * FROM exchange_rate WHERE currency = :currency ORDER BY quoted_at ASC, quote_round ASC")
+    suspend fun getExchangeRates(currency: String): List<ExchangeRateEntity>
+
+    @Query("DELETE FROM exchange_rate")
+    suspend fun deleteAllExchangeRates(): Int
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertExchangeRates(rates: List<ExchangeRateEntity>): List<Long>
 

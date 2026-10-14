@@ -1022,6 +1022,18 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_41_42 = object : Migration(41, 42) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `exchange_expense` ADD COLUMN `expense_date` TEXT")
+        }
+    }
+
+    private val MIGRATION_42_43 = object : Migration(42, 43) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `exchange_rate` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'SHINHAN'")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -1059,6 +1071,8 @@ object HabitTrackerMigrations {
         MIGRATION_38_39,
         MIGRATION_39_40,
         MIGRATION_40_41,
+        MIGRATION_41_42,
+        MIGRATION_42_43,
     )
 }
 

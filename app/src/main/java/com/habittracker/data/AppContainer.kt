@@ -48,7 +48,7 @@ class AppContainer(context: Context) {
                 }
                 notificationAssistantRepository = NotificationAssistantRepository(database, databaseProtector, database.habitDao())
                 reminderRepository = ReminderRepository(applicationContext, database, databaseProtector, database.habitDao())
-                exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao())
+                exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao(), applicationContext)
                 _readiness.value = Result.success(Unit)
                 try {
                     exchangeCollectionSettings.restore()
