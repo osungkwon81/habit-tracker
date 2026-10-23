@@ -29,6 +29,37 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
+internal fun PensionAutomaticHistory(viewModel: PensionLotteryGeneratorViewModel) {
+    val state by viewModel.experimentUiState.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AppSectionHeader(title = "자동 평가 이력")
+        Text(when (state.operating?.count) {
+            3 -> "현재 생성 방식: 기본 설정"
+            4 -> "현재 생성 방식: 검증 후 끝자리 후보를 넓힌 설정"
+            else -> "현재 설정 확인 중"
+        })
+        state.issue?.let { Text("기록 확인 필요: $it") }
+        if (state.busy) Text("평가 이력을 읽고 있습니다.")
+        if (!state.busy && state.experiments.isEmpty() && state.issue == null) Text("아직 평가 이력이 없습니다. 자동 개선을 켜면 앱이 준비합니다.")
+        state.experiments.forEach { entry ->
+            val targets = entry.specification?.get("targetRounds")?.let(LottoDesignRecordJson::list).orEmpty()
+            AppSectionHeader(title = "${targets.firstOrNull() ?: "-"}~${targets.lastOrNull() ?: "-"}회 평가")
+            Text(when {
+                entry.issues.isNotEmpty() || entry.failures.isNotEmpty() -> "기록 문제로 평가 보류"
+                entry.state == "REGISTERED" -> "추첨 전 자료 수집 ${entry.capturedRounds.size}/${targets.size}회"
+                entry.judgment.decision == LottoExperimentDecision.ADOPTION_CANDIDATE -> "개선 기준 통과 · 적용 조건 확인 대상"
+                else -> "기존 설정 유지 · ${entry.judgment.decision.label}"
+            })
+            if (entry.state == "SUCCESS" && entry.issues.isEmpty()) {
+                val baseline = entry.rounds.map { LottoDesignRecordJson.decimal(it.getValue("baselineRate")) }.average()
+                val candidate = entry.rounds.map { LottoDesignRecordJson.decimal(it.getValue("candidateRate")) }.average()
+                Text("기존 ${pensionPercent(baseline)} · 변경 후보 ${pensionPercent(candidate)}")
+            }
+        }
+    }
+}
+
+@Composable
 internal fun PensionExperimentSection(viewModel: PensionLotteryGeneratorViewModel) {
     val state by viewModel.experimentUiState.collectAsStateWithLifecycle()
     val context = LocalContext.current

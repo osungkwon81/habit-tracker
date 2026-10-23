@@ -36,6 +36,9 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
     private fun splits() = app.applicationInfo.splitSourceDirs.orEmpty().associate { File(it).name to hash(File(it).readBytes()) }
 
     suspend fun setting(): PensionOperatingSetting = locked { readSetting() }
+    internal suspend fun hasAppliedExperiment(id: String): Boolean = locked {
+        operations().any { it["action"] == "APPLY" && obj(it.getValue("proof"))["experimentId"] == id }
+    }
     suspend fun list(): List<PensionExperimentSummary> = locked { directories().map(::recover) }
 
     suspend fun register(document: ByteArray, input: PensionExperimentInput): String = locked {
@@ -174,7 +177,9 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
         }
     }
 
-    suspend fun approve(id: String, input: PensionExperimentInput, reason: String) = locked {
+    suspend fun approve(id: String, input: PensionExperimentInput, reason: String,
+        automaticAuthorization: (() -> Boolean)? = null,
+    ) = locked {
         require(reason.isNotBlank()) { "승인 이유가 필요합니다." }
         val recovered = recover(directory(id)); val spec = requireNotNull(recovered.specification)
         require(recovered.judgment.decision == LottoExperimentDecision.ADOPTION_CANDIDATE) { recovered.judgment.reason }
@@ -187,7 +192,8 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
         recovered.rounds.forEach { round -> val current = input.draws.singleOrNull { it.roundNo == int(round.getValue("targetRound")) }
             require(current != null && round["targetData"] == PensionExperimentComparison.input(listOf(current), emptySet())) { "당첨 원본이 정정됐습니다. 기존 결과를 덮어쓰지 않습니다." }
         }
-        appendSetting(4, "APPLY", reason, mapOf("experimentId" to id, "registrationHash" to hash(spec), "resultHash" to hash(result), "sourceHash" to spec["sourceHash"], "decision" to recovered.judgment.decision.name))
+        require(automaticAuthorization == null || automaticAuthorization()) { "자동 개선 권한이 해제되어 적용하지 않았습니다." }
+        appendSetting(4, "APPLY", reason, mapOf("automatic" to (automaticAuthorization != null), "experimentId" to id, "registrationHash" to hash(spec), "resultHash" to hash(result), "sourceHash" to spec["sourceHash"], "decision" to recovered.judgment.decision.name))
     }
 
     suspend fun rollback(reason: String) = locked {
@@ -196,6 +202,34 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
         val count = int(previous.getValue("previousCount"))
         require(previous["previousConfigHash"] == hash(PensionExperimentComparison.configuration(count))) { "이전 설정을 현재 구현으로 재현할 수 없습니다." }
         appendSetting(count, "ROLLBACK", reason, mapOf("restoredFrom" to previous.getValue("recordHash")))
+    }
+
+    internal suspend fun rollbackInvalidAutomaticInput(input: PensionExperimentInput, authorized: () -> Boolean): String? = locked {
+        val last = operations().lastOrNull() ?: return@locked null
+        val proof = obj(last.getValue("proof"))
+        if (last["action"] != "APPLY" || proof["automatic"] != true) return@locked null
+        val id = text(proof, "experimentId")
+        val folder = directory(id)
+        val spec = registration(folder)
+        val recovered = recover(folder)
+        require(recovered.state == "SUCCESS" && !recovered.exclusionUncertain) { "자동 적용 근거를 복구할 수 없습니다. 자동 개선을 보류합니다." }
+        val lastRound = rounds(spec).last()
+        val history = PensionExperimentComparison.draws(obj(readInput(folder, spec, lastRound).getValue("input")))
+        val result = recovered.rounds.single { int(it.getValue("targetRound")) == lastRound }
+        val original = history + PensionExperimentComparison.draws(obj(result.getValue("targetData")))
+        val current = input.draws.associateBy { it.roundNo }
+        val changed = original.any { old ->
+            val draw = current[old.roundNo]
+            draw == null || old.groupNo != draw.groupNo || old.winningNumber != draw.winningNumber || old.bonusNumber != draw.bonusNumber
+        }
+        if (!changed) return@locked null
+        val previous = int(last.getValue("previousCount"))
+        require(last["previousConfigHash"] == hash(PensionExperimentComparison.configuration(previous))) { "이전 설정의 구현 호환성을 확인할 수 없습니다." }
+        require(authorized()) { "자동 개선이 해제되어 자동 복구를 중단했습니다." }
+        val reason = "자동 적용 근거의 입력·정답 변경으로 끝자리 후보 최대 $previous 복구: $id"
+        appendSetting(previous, "ROLLBACK", reason, mapOf("automatic" to true, "invalidatedExperimentId" to id,
+            "restoredFrom" to last.getValue("recordHash")))
+        reason
     }
 
     private fun recover(directory: File): PensionExperimentSummary {
@@ -504,11 +538,12 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
         private val SEOUL = ZoneId.of("Asia/Seoul")
         private val ID_TIME = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmssSSS'Z'").withZone(java.time.ZoneOffset.UTC)
         private val ID = Regex("pension-[0-9]{8}T[0-9]{9}Z-[0-9a-f-]{36}")
-        val SOURCE_FILES = listOf("app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorViewModel.kt", "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorScreen.kt",
+        val SOURCE_FILES = (listOf("app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorViewModel.kt", "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorScreen.kt",
+            "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryPerformanceAnalyzer.kt", "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryPerformanceSection.kt",
             "app/src/main/java/com/habittracker/ui/lotto/PensionExperimentSection.kt", "app/src/main/java/com/habittracker/data/lotto/PensionExperimentStore.kt",
             "app/src/main/java/com/habittracker/data/lotto/PensionExperimentComparison.kt", "app/src/main/java/com/habittracker/data/lotto/LottoExperimentPolicy.kt",
             "app/src/main/java/com/habittracker/data/lotto/LottoDesignRecordJson.kt", "app/src/main/java/com/habittracker/data/lotto/LottoDesignRunStore.kt",
             "app/src/main/java/com/habittracker/data/lotto/LotteryDrawSyncModels.kt", "app/src/main/java/com/habittracker/data/repository/HabitRepository.kt",
-            "app/build.gradle.kts", "build.gradle.kts", "gradle/libs.versions.toml").sorted()
+            "app/build.gradle.kts", "build.gradle.kts", "gradle/libs.versions.toml") + LotteryAutoImprovement.SOURCE_FILES).distinct().sorted()
     }
 }

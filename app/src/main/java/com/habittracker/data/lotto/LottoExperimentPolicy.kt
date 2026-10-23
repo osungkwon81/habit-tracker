@@ -20,7 +20,7 @@ data class LottoExperimentJudgment(
     val controlAdjusted: LottoDifferenceInterval? = null,
 )
 
-/** 수치나 통계 가정을 자동 확정하지 않는다. 정책 문서는 실험 등록 시 사용자가 확인한다. */
+/** 수동 확정 또는 사용자가 위임한 자동 등록 정책을 등록 시 고정해 평가한다. */
 internal object LottoExperimentPolicy {
     const val METHOD = "bounded-martingale-hoeffding-v1"
 
@@ -59,7 +59,7 @@ internal object LottoExperimentPolicy {
         val rejected = policy["rejectWhenUpperNonPositive"] == true && (b.upper <= 0 || c.upper <= 0)
         return LottoExperimentJudgment(
             if (accepted) LottoExperimentDecision.ADOPTION_CANDIDATE else if (rejected) LottoExperimentDecision.REJECT else LottoExperimentDecision.HOLD,
-            if (accepted) "개선 추정치 문턱과 두 비교의 Bonferroni 보정 하한 조건을 충족했습니다. 실제 개선 폭이 문턱 이상임을 입증한 뜻은 아닙니다. 사용자 승인 전에는 적용하지 않습니다."
+            if (accepted) "개선 추정치 문턱과 두 비교의 Bonferroni 보정 하한 조건을 충족했습니다. 실제 개선 폭이 문턱 이상임을 입증한 뜻은 아닙니다. 적용 권한과 입력·기록을 다시 확인합니다."
             else if (rejected) "사전 확정한 기각 기준(비교 차이의 보정 상한 0 이하)에 해당합니다."
             else "채택 조건 미충족입니다. 기존 설정을 유지하고 같은 구간을 늘려 재검정하지 않습니다.",
             n, b95, c95, b, c,

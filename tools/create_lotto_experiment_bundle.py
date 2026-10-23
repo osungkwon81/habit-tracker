@@ -62,10 +62,22 @@ def main():
             "app/src/main/java/com/habittracker/data/repository/HabitRepository.kt",
             "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorViewModel.kt",
             "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryGeneratorScreen.kt",
+            "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryPerformanceAnalyzer.kt",
+            "app/src/main/java/com/habittracker/ui/lotto/PensionLotteryPerformanceSection.kt",
             "app/src/main/java/com/habittracker/ui/lotto/PensionExperimentSection.kt",
         ]
+    paths += [
+        "app/src/main/java/com/habittracker/data/AppContainer.kt",
+        "app/src/main/java/com/habittracker/data/lotto/LotteryAutoImprovement.kt",
+        "app/src/main/java/com/habittracker/data/lotto/LotteryAutoImprovementWorker.kt",
+        "app/src/main/java/com/habittracker/data/lotto/LotteryAutomaticRegistration.kt",
+        "app/src/main/java/com/habittracker/data/lotto/LotteryHistoryAudit.kt",
+        "app/src/main/java/com/habittracker/data/lotto/LotteryDrawSyncModels.kt",
+        "app/src/main/java/com/habittracker/ui/lotto/LotteryAutoImprovementSection.kt",
+        "app/src/main/java/com/habittracker/ui/components/DesignSystem.kt",
+    ]
     files = []
-    for relative in sorted(paths):
+    for relative in sorted(set(paths)):
         path = (project / relative).resolve(strict=True)
         if project not in path.parents:
             raise ValueError(f"프로젝트 밖 소스 경로: {relative}")

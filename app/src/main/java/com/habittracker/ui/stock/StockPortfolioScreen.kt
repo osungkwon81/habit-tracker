@@ -2,6 +2,10 @@ package com.habittracker.ui.stock
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -206,8 +210,6 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "▦",
-                eyebrow = "STOCK · PORTFOLIO",
                 title = "보유·매수 내역",
                 description = "매수 주문 1건을 1행으로 묶어 수량·단가·잔여수량·수익률을 표시합니다.",
             )
@@ -226,21 +228,30 @@ fun StockPortfolioScreen(viewModel: StockViewModel) {
         item {
             AppSectionCard {
                 StockSectionTitle("현재 보유 종목")
-                uiState.ownedStocks.forEach { stock ->
-                    Text(
-                        "${stock.productName} (${stock.productCode})",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        "현재가 ${stock.currentPrice.toWon()}",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        "${stock.quantity}주 · 평균단가 ${stock.averagePrice.toWon()}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                uiState.ownedStocks.forEachIndexed { index, stock ->
+                    if (index > 0) {
+                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                            Text(stock.productName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("${stock.productCode} · ${stock.quantity}주", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                            Text("현재가", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stock.currentPrice.toWon(), style = MaterialTheme.typography.titleLarge,
+                                textAlign = TextAlign.End)
+                            Text("평균단가 ${stock.averagePrice.toWon()}", style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.End, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                 }
                 if (uiState.ownedStocks.isEmpty()) AppSupportText("조회된 보유 종목이 없습니다.")
                 AppPrimaryButton(

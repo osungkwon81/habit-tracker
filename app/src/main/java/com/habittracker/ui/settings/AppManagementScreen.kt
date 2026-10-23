@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -20,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.habittracker.data.AppSettingsStore
@@ -58,8 +61,6 @@ fun AppManagementScreen() {
         item {
             AppHeroCard(
                 title = "앱 관리",
-                description = "앱 전체에 적용되는 알림과 음성 입력을 관리합니다.",
-                eyebrow = "APP · SETTINGS",
             )
         }
         item {
@@ -83,7 +84,7 @@ fun AppManagementScreen() {
                         AppSettingsStore.setLotterySyncFailureNotificationsEnabled(context, enabled)
                     },
                 )
-                AppPrimaryButton(
+                com.habittracker.ui.components.AppSecondaryButton(
                     text = "테스트 알림 보내기",
                     onClick = {
                         if (
@@ -122,7 +123,8 @@ private fun SettingToggleRow(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -130,6 +132,6 @@ private fun SettingToggleRow(
             Text(text = title, style = MaterialTheme.typography.titleSmall)
             Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }

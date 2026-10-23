@@ -99,8 +99,6 @@ fun StockJournalScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "✎",
-                eyebrow = "STOCK · JOURNAL",
                 title = "매매일지",
                 description = "오늘부터 KIS 체결을 자동으로 저장하고 매도 건을 실제 매수 lot과 연결합니다.",
             )

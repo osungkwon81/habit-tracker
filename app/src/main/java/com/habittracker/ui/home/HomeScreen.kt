@@ -48,10 +48,16 @@ import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSpacing
-import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.DayOfWeek
 import java.time.YearMonth
-import java.time.temporal.TemporalAdjusters
+import com.habittracker.ui.navigation.AppDestination
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.compose.foundation.lazy.items
+import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.TextButton
@@ -59,8 +65,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
-import com.habittracker.ui.components.AppPrimaryButton
-import com.habittracker.ui.components.AppSecondaryButton
 
 private val CalendarRecordDiaryTone = Color(0xFFF8F4EA)
 private val CalendarRecordTone = Color(0xFFEAF6EE)
@@ -74,19 +78,18 @@ private val CalendarTodayBorder = Color(0xFFD4A017)
 fun HomeScreen(
     viewModel: HomeViewModel,
     onOpenRecord: (LocalDate) -> Unit,
-    onOpenMemo: () -> Unit,
-    onOpenStock: () -> Unit,
-    onOpenLotto: () -> Unit,
-    onOpenPlant: () -> Unit,
-    onOpenReminder: () -> Unit,
-    onOpenNotificationAssistant: () -> Unit,
-    onOpenCard: () -> Unit,
+    onOpenDestination: (AppDestination) -> Unit,
 ) {
     // 화면이 STARTED 이상일 때만 Flow를 수집해 백그라운드의 불필요한 작업을 막는다.
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val monthDays = remember(uiState.currentMonth) { buildCalendarDays(uiState.currentMonth) }
     val recordedDates = remember(uiState.summaries, uiState.diarySummaries) {
         (uiState.summaries.keys + uiState.diarySummaries.keys).toSet().sortedDescending()
+    }
+    var menuRefresh by remember { mutableStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshToday()
+        menuRefresh++
     }
     val today = LocalDate.now()
     var selectedDate by remember(uiState.currentMonth) { mutableStateOf<LocalDate?>(null) }
@@ -106,46 +109,46 @@ fun HomeScreen(
     AppScreen {
         item {
             AppHeroCard(
-                title = "오늘의 생활",
-                description = "자주 쓰는 기능과 오늘 필요한 정보를 빠르게 확인하세요.",
-                iconRes = R.drawable.ic_launcher_art_v5,
-                eyebrow = "MY DAILY DASHBOARD",
+                title = "홈",
                 status = "${today.year}년 ${today.monthValue}월 ${today.dayOfMonth}일",
-                action = {
-                    AppPrimaryButton(text = "오늘 기록 남기기", onClick = { onOpenRecord(today) }, modifier = Modifier.fillMaxWidth())
-                },
             )
         }
         item {
-            WorkspaceSection(
-                onOpenStock = onOpenStock,
-                onOpenMemo = onOpenMemo,
-                onOpenLotto = onOpenLotto,
-                onOpenPlant = onOpenPlant,
-                onOpenCard = onOpenCard,
-            )
+            WorkspaceSection(refresh = menuRefresh, onOpenDestination = onOpenDestination)
         }
         item {
-            AppSectionHeader(title = "리마인더", subtitle = "완료할 때까지 설정한 간격으로 다시 알려드려요.")
-            AppSecondaryButton(
-                text = "리마인더 만들기",
-                onClick = onOpenReminder,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    AppSectionHeader(title = "오늘 해야 할 일")
+                }
+                TextButton(onClick = { onOpenDestination(AppDestination.REMINDER) }) { Text("전체 보기") }
+            }
+        }
+        val remindersError = uiState.remindersError
+        when {
+            uiState.remindersLoading -> item {
+                com.habittracker.ui.components.AppLoadingCard("오늘 할 일을 불러오고 있습니다.")
+            }
+            remindersError != null -> item {
+                com.habittracker.ui.components.AppStatusText(remindersError)
+            }
+            uiState.reminders.isEmpty() -> item {
+                AppEmptyCard("오늘 예정된 미완료 리마인더가 없습니다.")
+            }
+            else -> items(uiState.reminders, key = { "reminder-${it.id}" }) { reminder ->
+                androidx.compose.material3.ListItem(
+                    headlineContent = { Text(reminder.title, style = MaterialTheme.typography.titleMedium) },
+                    supportingContent = {
+                        Text("${reminder.remindAt.format(DateTimeFormatter.ofPattern("HH:mm"))} · ${reminder.repeatIntervalMinutes}분 간격으로 알림")
+                    },
+                    trailingContent = { com.habittracker.ui.components.AppChevron() },
+                    modifier = Modifier.clip(MaterialTheme.shapes.large)
+                        .clickable { onOpenDestination(AppDestination.REMINDER) },
+                )
+            }
         }
         item {
-            AppSectionHeader(title = "알림 생활비서", subtitle = "놓치기 쉬운 예약·마감·배송 알림을 확인하세요.")
-            AppSecondaryButton(
-                text = "알림에서 할 일 찾기",
-                onClick = onOpenNotificationAssistant,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            AppSectionHeader(
-                title = "생활 기록",
-                subtitle = "날짜를 선택하면 기록과 일기를 한눈에 볼 수 있어요.",
-            )
+            TodayRecordButton(onClick = { onOpenRecord(today) })
         }
         item {
             CalendarSection(
@@ -172,58 +175,64 @@ fun HomeScreen(
 }
 
 @Composable
+private fun TodayRecordButton(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .clickable(role = Role.Button, onClickLabel = "오늘 기록 남기기", onClick = onClick)
+            .padding(AppSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("오늘 기록", style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text("습관 · 운동", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Image(
+            painter = painterResource(R.drawable.ill_daily_empty),
+            contentDescription = null,
+            modifier = Modifier.size(52.dp),
+            contentScale = ContentScale.Fit,
+        )
+        com.habittracker.ui.components.AppChevron()
+    }
+}
+
+@Composable
 private fun WorkspaceSection(
-    onOpenStock: () -> Unit,
-    onOpenMemo: () -> Unit,
-    onOpenLotto: () -> Unit,
-    onOpenPlant: () -> Unit,
-    onOpenCard: () -> Unit,
+    refresh: Int,
+    onOpenDestination: (AppDestination) -> Unit,
 ) {
     val context = LocalContext.current
-    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
-        AppSectionHeader(
-            title = "자주 쓰는 기능",
-            subtitle = "사용 빈도가 높은 메뉴를 먼저 배치했어요.",
-        )
-        val defaultActions = listOf(
-            HomeQuickAction("stock", R.drawable.ic_category_stock, "주식", "포트폴리오와 자동화", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenStock),
-            HomeQuickAction("card", R.drawable.ic_category_card, "카드", "사용 이력과 결제 예정", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenCard),
-            HomeQuickAction("lottery", R.drawable.ic_category_lotto, "동행복권", "로또·연금복권", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenLotto),
-            HomeQuickAction("plant", R.drawable.ic_category_repeat, "반복 할 일", "오늘 해야 할 일", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenPlant),
-            HomeQuickAction("memo", R.drawable.ic_category_memo, "메모", "빠른 메모와 잠금", Color(0xFFE7F1ED), Color(0xFF17645B), onOpenMemo),
-        )
-        val currentWeekKey = LocalDate.now()
-            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            .toString()
-        val menuOrder = remember(context, currentWeekKey) {
-            WeeklyMenuUsageStore.currentOrder(context, defaultActions.map(HomeQuickAction::id))
+    val defaultOrder = remember {
+        val preferred = listOf(AppDestination.STOCK, AppDestination.CARD, AppDestination.LOTTO, AppDestination.PLANT, AppDestination.MEMO)
+        preferred + AppDestination.entries.filter {
+            it !in preferred && it != AppDestination.HOME && it != AppDestination.MORE &&
+                !AppDestination.NOTIFICATION_ASSISTANT.matches(it.route)
         }
-        val orderIndex = menuOrder.withIndex().associate { (index, id) -> id to index }
-        val actions = defaultActions
-            .sortedBy { action -> orderIndex[action.id] ?: Int.MAX_VALUE }
-            .map { action ->
-                action.copy(
-                    onClick = {
-                        WeeklyMenuUsageStore.recordClick(context, action.id)
-                        action.onClick()
-                    },
-                )
-            }
-        FeatureSpotlightCard(action = actions.first())
-        actions.drop(1).chunked(2).forEach { rowItems ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
-            ) {
+    }
+    var menuOrder by remember { mutableStateOf(defaultOrder.take(5)) }
+    LaunchedEffect(context, refresh) {
+        menuOrder = withContext(Dispatchers.IO) { HomeMenuUsageStore.currentOrder(context, defaultOrder).take(5) }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+        val actions = menuOrder.map { destination ->
+            HomeQuickAction(
+                id = destination.route,
+                iconRes = destination.iconRes,
+                title = destination.homeLabel,
+                onClick = { onOpenDestination(destination) },
+            )
+        }
+        val columnCount = if (androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.3f) 2 else 3
+        actions.chunked(columnCount).forEach { rowItems ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                 rowItems.forEach { action ->
-                    QuickActionCard(
-                        action = action,
-                        modifier = Modifier.weight(1f),
-                    )
+                    QuickActionCard(action, modifier = Modifier.weight(1f))
                 }
-                if (rowItems.size == 1) {
-                    Box(modifier = Modifier.weight(1f))
-                }
+                if (rowItems.size < columnCount) Box(Modifier.weight(1f))
             }
         }
     }
@@ -233,75 +242,35 @@ private data class HomeQuickAction(
     val id: String,
     @DrawableRes val iconRes: Int,
     val title: String,
-    val subtitle: String,
-    val containerColor: Color,
-    val accentColor: Color,
     val onClick: () -> Unit,
 )
 
-private object WeeklyMenuUsageStore {
+internal object HomeMenuUsageStore {
     private const val preferencesName = "home-quick-menu-usage"
-    private const val weekKey = "counting-week"
-    private const val orderKey = "display-order"
-    private const val countPrefix = "count-"
+    private const val dayPrefix = "screen-day-"
 
-    fun currentOrder(context: Context, defaultOrder: List<String>): List<String> {
-        val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-        val currentWeek = LocalDate.now()
-            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            .toString()
-        val savedWeek = preferences.getString(weekKey, null)
-        if (savedWeek == null) {
-            preferences.edit().putString(weekKey, currentWeek).apply()
-        } else if (savedWeek != currentWeek) {
-            val defaultIndex = defaultOrder.withIndex().associate { (index, id) -> id to index }
-            val nextOrder = defaultOrder.sortedWith(
-                compareByDescending<String> { id -> preferences.getInt("$countPrefix$id", 0) }
-                    .thenBy { id -> defaultIndex.getValue(id) },
-            )
-            val editor = preferences.edit()
-                .putString(weekKey, currentWeek)
-                .putString(orderKey, nextOrder.joinToString(","))
-            defaultOrder.forEach { id -> editor.remove("$countPrefix$id") }
-            editor.apply()
-        }
-        val savedOrder = preferences.getString(orderKey, null)
-            ?.split(',')
-            ?.filter(defaultOrder::contains)
-            .orEmpty()
-        return savedOrder + defaultOrder.filterNot(savedOrder::contains)
-    }
-
-    fun recordClick(context: Context, menuId: String) {
-        val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-        val key = "$countPrefix$menuId"
-        preferences.edit().putInt(key, preferences.getInt(key, 0) + 1).apply()
-    }
-}
-
-@Composable
-private fun FeatureSpotlightCard(action: HomeQuickAction) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.extraLarge)
-            .background(action.containerColor)
-            .border(1.dp, action.accentColor.copy(alpha = 0.16f), MaterialTheme.shapes.extraLarge)
-            .clickable(onClick = action.onClick)
-            .padding(AppSpacing.md),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FeatureIcon(action = action, size = 56)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(action.title, style = MaterialTheme.typography.titleLarge, color = action.accentColor)
-                Text(action.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    fun currentOrder(context: Context, defaultOrder: List<AppDestination>): List<AppDestination> {
+        val values = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).all
+        val today = LocalDate.now()
+        val counts = defaultOrder.associateWith { destination ->
+            (0L..6L).sumOf { offset ->
+                (values["$dayPrefix${today.minusDays(offset)}|${destination.route}"] as? Int ?: 0).toLong()
             }
-            Text("›", style = MaterialTheme.typography.headlineMedium, color = action.accentColor)
         }
+        return defaultOrder.sortedByDescending { counts.getValue(it) }
+    }
+
+    fun recordVisit(context: Context, destination: AppDestination) {
+        if (destination == AppDestination.HOME || destination == AppDestination.MORE) return
+        val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val today = LocalDate.now()
+        val key = "$dayPrefix$today|${destination.route}"
+        val editor = preferences.edit().putInt(key, preferences.getInt(key, 0) + 1)
+        val cutoff = today.minusDays(6).toString()
+        preferences.all.keys.filter {
+            it.startsWith(dayPrefix) && it.removePrefix(dayPrefix).substringBefore('|') < cutoff
+        }.forEach(editor::remove)
+        editor.apply()
     }
 }
 
@@ -310,62 +279,21 @@ private fun QuickActionCard(
     action: HomeQuickAction,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
-            .clip(MaterialTheme.shapes.large)
-            .background(action.containerColor)
-            .border(1.dp, action.accentColor.copy(alpha = 0.12f), MaterialTheme.shapes.large)
-            .clickable(onClick = action.onClick)
-            .padding(14.dp),
+    Column(
+        modifier = modifier.clip(MaterialTheme.shapes.medium)
+            .clickable(role = Role.Button, onClick = action.onClick).padding(vertical = 12.dp, horizontal = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            FeatureIcon(action = action, size = 44)
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = action.title,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = action.accentColor,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = action.subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Text("›", style = MaterialTheme.typography.titleLarge, color = action.accentColor)
-            }
-        }
+        FeatureIcon(action = action, size = 48)
+        Text(action.title, style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
 private fun FeatureIcon(action: HomeQuickAction, size: Int) {
-    Box(
-        modifier = Modifier
-            .size(size.dp)
-            .clip(MaterialTheme.shapes.medium)
-            .background(Color.White.copy(alpha = 0.62f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            painter = painterResource(action.iconRes),
-            contentDescription = null,
-            modifier = Modifier.size((size - 10).dp),
-            contentScale = ContentScale.Fit,
-        )
-    }
+    com.habittracker.ui.components.AppFeatureIcon(action.id, action.iconRes, Modifier.size(size.dp))
 }
 
 @Composable
@@ -394,7 +322,7 @@ private fun CalendarSection(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (index == 0 || index == 6) CalendarWeekendTone else Color.Black,
+                    color = if (index == 0 || index == 6) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
             }
@@ -465,7 +393,7 @@ private fun RowScope.CalendarDayCell(
                     text = date.dayOfMonth.toString(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = if (summary?.isHoliday == true || isWeekend) CalendarWeekendTone else Color.Black,
+                    color = if (summary?.isHoliday == true || isWeekend) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = (if (summary != null) "●" else " ") + (if (hasDiary) "━" else " "),
@@ -570,9 +498,7 @@ private fun SummaryRowCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(AppSpacing.sm),
+            .padding(vertical = AppSpacing.xs),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
             Text(

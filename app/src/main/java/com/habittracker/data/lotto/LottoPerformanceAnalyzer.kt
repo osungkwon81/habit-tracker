@@ -115,9 +115,11 @@ object LottoPerformanceAnalyzer {
         val values = samples
             .groupBy(LottoPerformanceSample::roundNo)
             .mapNotNull { (_, roundSamples) ->
-                val componentScores = roundSamples.mapNotNull { sample -> componentScore(sample, component) }
-                if (componentScores.isEmpty()) return@mapNotNull null
-                componentScores.average() to roundSamples.map(LottoPerformanceSample::matchCount).average()
+                val scoredMatches = roundSamples.mapNotNull { sample ->
+                    componentScore(sample, component)?.let { score -> score to sample.matchCount }
+                }
+                if (scoredMatches.isEmpty()) return@mapNotNull null
+                scoredMatches.map { it.first }.average() to scoredMatches.map { it.second }.average()
             }
         return LottoScoreCorrelation(
             component = component,

@@ -2,7 +2,11 @@
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.hardware.biometrics.BiometricPrompt
+import android.hardware.fingerprint.FingerprintManager
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.os.CancellationSignal
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -37,19 +41,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
 import com.habittracker.data.local.entity.MemoNoteEntity
-import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppButtonRow
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
+import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppStatusText
@@ -59,79 +61,59 @@ import com.habittracker.ui.components.AppVoiceInputButton
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun MemoScreen(viewModel: MemoViewModel) {
+fun MemoScreen(viewModel: MemoViewModel, startNew: Boolean = false) {
+    LaunchedEffect(viewModel, startNew) {
+        if (startNew) viewModel.initializeNewEntry()
+    }
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var passwordDialogTarget by remember { mutableStateOf<MemoNoteEntity?>(null) }
-    var unlockPassword by remember { mutableStateOf("") }
-    var showUnlockPassword by remember { mutableStateOf(false) }
-    var biometricMessage by remember { mutableStateOf<String?>(null) }
+    var fingerprintTarget by remember { mutableStateOf<MemoNoteEntity?>(null) }
+    var fingerprintMessage by remember { mutableStateOf<String?>(null) }
+    var authenticationAttempt by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
-    // nullable 값을 let으로 좁히면 다이얼로그 내부에서 강제 언래핑(!!) 없이 안전하게 사용할 수 있다.
-    passwordDialogTarget?.let { targetMemo ->
+    fingerprintTarget?.let { targetMemo ->
+        DisposableEffect(targetMemo.id, authenticationAttempt, lifecycleOwner) {
+            val signal = CancellationSignal()
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) {
+                    signal.cancel()
+                    fingerprintTarget = null
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            fingerprintMessage = "지문 센서에 손가락을 대 주세요."
+            authenticateMemoFingerprint(
+                context = context,
+                signal = signal,
+                onSuccess = {
+                    if (!signal.isCanceled && fingerprintTarget?.id == targetMemo.id) {
+                        fingerprintTarget = null
+                        viewModel.unlockMemoWithBiometric(targetMemo.id)
+                    }
+                },
+                onError = { if (!signal.isCanceled) fingerprintMessage = it },
+            )
+            onDispose {
+                signal.cancel()
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
         AlertDialog(
-            onDismissRequest = {
-                passwordDialogTarget = null
-                unlockPassword = ""
-                showUnlockPassword = false
-                biometricMessage = null
-            },
-            confirmButton = {
-                AppPrimaryButton(text = "열기", onClick = {
-                    viewModel.unlockMemo(targetMemo.id, unlockPassword)
-                    passwordDialogTarget = null
-                    unlockPassword = ""
-                    showUnlockPassword = false
-                })
-            },
-            dismissButton = {
-                AppButtonRow(
-                    primaryText = "취소",
-                    onPrimaryClick = {
-                        passwordDialogTarget = null
-                        unlockPassword = ""
-                        showUnlockPassword = false
-                    },
-                )
-            },
-            title = { Text("잠금 메모") },
+            onDismissRequest = { fingerprintTarget = null },
+            title = { Text("지문으로 메모 열기") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("이 메모는 잠겨 있습니다. 4~10자리 비밀번호를 입력해 주세요.")
-                    AppTextField(
-                        value = unlockPassword,
-                        onValueChange = { unlockPassword = it.digitsOnly().take(10) },
-                        label = "비밀번호 4~10자리",
-                        singleLine = true,
-                        visualTransformation = if (showUnlockPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingContent = {
-                            TextButton(onClick = { showUnlockPassword = !showUnlockPassword }) {
-                                Text(if (showUnlockPassword) "숨김" else "표시")
-                            }
-                        },
-                    )
-                    if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)) {
-                        AppPrimaryButton(
-                            text = "지문으로 열기",
-                            onClick = {
-                                val memoId = targetMemo.id
-                                authenticateMemoFingerprint(
-                                    context = context,
-                                    onSuccess = {
-                                        passwordDialogTarget = null
-                                        unlockPassword = ""
-                                        biometricMessage = null
-                                        viewModel.unlockMemoWithBiometric(memoId)
-                                    },
-                                    onError = { biometricMessage = it },
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    biometricMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Text("등록된 지문으로만 잠금을 해제할 수 있습니다.")
+                    fingerprintMessage?.let { AppStatusText(it) }
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = { authenticationAttempt++ }) { Text("다시 인증") }
+            },
+            dismissButton = {
+                TextButton(onClick = { fingerprintTarget = null }) { Text("취소") }
             },
         )
     }
@@ -145,7 +127,7 @@ fun MemoScreen(viewModel: MemoViewModel) {
             onNewMemo = viewModel::startNewMemo,
             onOpenMemo = { memoNote ->
                 if (memoNote.isLocked) {
-                    passwordDialogTarget = memoNote
+                    fingerprintTarget = memoNote
                 } else {
                     viewModel.openMemo(memoNote)
                 }
@@ -156,31 +138,57 @@ fun MemoScreen(viewModel: MemoViewModel) {
     }
 }
 
+@Suppress("DEPRECATION")
+private fun memoFingerprintUnavailableReason(context: Context): String? {
+    val manager = context.getSystemService(FingerprintManager::class.java)
+    return when {
+        !context.packageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT) ||
+            manager == null || !manager.isHardwareDetected -> "지문 인식을 지원하지 않아 잠금 메모를 사용할 수 없습니다."
+        !manager.hasEnrolledFingerprints() -> "기기 설정에서 지문을 등록해 주세요."
+        else -> null
+    }
+}
+
+@Suppress("DEPRECATION")
 private fun authenticateMemoFingerprint(
     context: Context,
+    signal: CancellationSignal,
     onSuccess: () -> Unit,
     onError: (String) -> Unit,
 ) {
     try {
-        val executor = context.mainExecutor
-        val prompt = BiometricPrompt.Builder(context)
-            .setTitle("잠금 메모 열기")
-            .setSubtitle("등록된 지문으로 본인 확인")
-            .setNegativeButton("취소", executor) { _, _ -> }
-            .build()
-        prompt.authenticate(CancellationSignal(), executor, object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+        val unavailableReason = memoFingerprintUnavailableReason(context)
+        if (unavailableReason != null) {
+            onError(unavailableReason)
+            return
+        }
+        val manager = context.getSystemService(FingerprintManager::class.java)
+        if (manager == null) {
+            onError("지문 인증을 시작할 수 없습니다. 기기 설정을 확인해 주세요.")
+            return
+        }
+        manager.authenticate(null, signal, 0, object : FingerprintManager.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: FingerprintManager.AuthenticationResult) {
                 onSuccess()
             }
 
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED &&
-                    errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED
-                ) onError("지문 인증에 실패했습니다: $errString")
+            override fun onAuthenticationFailed() {
+                onError("지문이 일치하지 않습니다. 센서에 다시 손가락을 대 주세요.")
             }
-        })
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                if (errorCode != FingerprintManager.FINGERPRINT_ERROR_CANCELED) {
+                    onError("지문 인증에 실패했습니다: $errString")
+                }
+            }
+
+            override fun onAuthenticationHelp(helpCode: Int, helpString: CharSequence) {
+                onError(helpString.toString())
+            }
+        }, null)
     } catch (error: Exception) {
-        onError("지문 인증을 시작할 수 없습니다: ${error.message ?: "기기 설정을 확인해 주세요."}")
+        android.util.Log.e("MemoFingerprint", "지문 인증 시작 실패", error)
+        onError("지문 인증을 시작할 수 없습니다. 기기 설정을 확인해 주세요.")
     }
 }
 
@@ -193,16 +201,12 @@ private fun MemoListScreen(
     onTogglePinned: (MemoNoteEntity) -> Unit,
     onLoadMore: () -> Unit,
 ) {
-    AppScreen {
+    AppScreen(bottomBar = {
+        AppPrimaryButton(text = "새 메모", onClick = onNewMemo, modifier = Modifier.fillMaxWidth())
+    }) {
         item {
             AppHeroCard(
                 title = "메모",
-                description = "빠른 메모와 잠금 메모를 검색합니다.",
-                iconRes = R.drawable.ic_category_memo,
-                eyebrow = "QUICK · MEMO",
-                action = {
-                    AppPrimaryButton(text = "새 메모", onClick = onNewMemo, modifier = Modifier.fillMaxWidth())
-                },
             )
         }
         item {
@@ -219,7 +223,7 @@ private fun MemoListScreen(
             item { AppStatusText(message) }
         }
         if (uiState.memoNotes.isEmpty()) {
-            item { AppEmptyCard("검색 결과가 없습니다.") }
+            item { AppEmptyCard(if (uiState.searchQuery.isBlank()) "저장된 메모가 없습니다." else "검색 결과가 없습니다.") }
         } else {
             itemsIndexed(uiState.memoNotes, key = { _, memoNote -> memoNote.id }) { index, memoNote ->
                 if (index == uiState.memoNotes.lastIndex && uiState.canLoadMore) {
@@ -235,19 +239,21 @@ private fun MemoListScreen(
 
 @Composable
 private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
-    var showEditorPassword by remember(uiState.selectedMemoId, uiState.isLocked) { mutableStateOf(false) }
+    val context = LocalContext.current
+    var lockMessage by remember { mutableStateOf<String?>(null) }
     var speechStatusMessage by remember { mutableStateOf<String?>(null) }
 
-    AppScreen {
+    AppScreen(bottomBar = {
+        AppButtonRow(
+            primaryText = "저장",
+            onPrimaryClick = viewModel::saveMemo,
+            secondaryText = "목록",
+            onSecondaryClick = viewModel::showList,
+        )
+    }) {
         item {
             AppHeroCard(
                 title = if (uiState.selectedMemoId == null) "메모 작성" else "메모 수정",
-                description = "내용과 잠금 여부를 설정합니다.",
-                iconRes = R.drawable.ic_category_memo,
-                eyebrow = "QUICK · MEMO",
-                action = {
-                    AppButtonRow(primaryText = "목록으로", onPrimaryClick = viewModel::showList)
-                },
             )
         }
         item {
@@ -272,33 +278,18 @@ private fun MemoEditorScreen(viewModel: MemoViewModel, uiState: MemoUiState) {
                     supportingText = speechStatusMessage,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = uiState.isLocked, onCheckedChange = viewModel::updateLocked)
+                    Checkbox(checked = uiState.isLocked, onCheckedChange = { locked ->
+                        lockMessage = if (locked) memoFingerprintUnavailableReason(context) else null
+                        if (lockMessage == null) viewModel.updateLocked(locked)
+                    })
                     Text("잠금", color = MaterialTheme.colorScheme.onSurface)
                 }
-                if (uiState.isLocked) {
-                    AppTextField(
-                        value = uiState.password,
-                        onValueChange = viewModel::updatePassword,
-                        label = "비밀번호 4~10자리",
-                        singleLine = true,
-                        visualTransformation = if (showEditorPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingContent = {
-                            TextButton(onClick = { showEditorPassword = !showEditorPassword }) {
-                                Text(if (showEditorPassword) "숨김" else "표시")
-                            }
-                        },
-                    )
-                    AppSupportText("잠금 메모는 저장 시 4~10자리 숫자 비밀번호가 필요합니다.")
-                }
+                AppSupportText("잠금 메모는 등록된 지문으로만 열 수 있습니다. 비밀번호는 사용하지 않습니다.")
+                lockMessage?.let { AppStatusText(it) }
                 if (uiState.selectedMemoId != null) {
-                    AppButtonRow(
-                        primaryText = "메모 저장",
-                        onPrimaryClick = viewModel::saveMemo,
-                        secondaryText = "삭제",
-                        onSecondaryClick = viewModel::deleteMemo,
-                    )
-                } else {
-                    AppSaveButton(text = "메모 저장", onClick = viewModel::saveMemo, modifier = Modifier.fillMaxWidth())
+                    androidx.compose.material3.TextButton(onClick = viewModel::deleteMemo) {
+                        Text("메모 삭제", color = MaterialTheme.colorScheme.error)
+                    }
                 }
                 uiState.statusMessage?.let { message ->
                     AppStatusText(message)
@@ -329,7 +320,7 @@ private fun MemoListCard(memoNote: MemoNoteEntity, onClick: () -> Unit, onToggle
             )
             Surface(
                 onClick = onTogglePinned,
-                modifier = Modifier.size(40.dp),
+                modifier = Modifier.size(48.dp),
                 shape = CircleShape,
                 color = if (memoNote.isPinned) {
                     MaterialTheme.colorScheme.primaryContainer

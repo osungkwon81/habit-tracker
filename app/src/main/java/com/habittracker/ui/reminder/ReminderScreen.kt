@@ -52,7 +52,10 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun ReminderScreen(viewModel: ReminderViewModel) {
+fun ReminderScreen(viewModel: ReminderViewModel, startNew: Boolean = false) {
+    androidx.compose.runtime.LaunchedEffect(viewModel, startNew) {
+        if (startNew) viewModel.initializeNewEntry()
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     AppActionNotice(uiState.message, viewModel::clearMessage)
     when (uiState.screenMode) {
@@ -93,7 +96,16 @@ private fun ReminderEditorScreen(viewModel: ReminderViewModel, uiState: Reminder
         remindAt.isAfter(LocalDateTime.now()) &&
         !uiState.isSaving
 
-    AppScreen {
+    AppScreen(bottomBar = {
+        com.habittracker.ui.components.AppButtonRow(
+            primaryText = if (uiState.isSaving) "저장 중" else "저장",
+            onPrimaryClick = viewModel::save,
+            primaryEnabled = canSave,
+            secondaryText = "목록",
+            onSecondaryClick = { navigationGuard.navigate(viewModel::closeEditor) },
+            secondaryEnabled = !uiState.isSaving,
+        )
+    }) {
         item {
             AppHeroCard(
                 title = "리마인더 설정",
@@ -167,18 +179,6 @@ private fun ReminderEditorScreen(viewModel: ReminderViewModel, uiState: Reminder
                 if (!remindAt.isAfter(LocalDateTime.now())) {
                     Text("현재 이후의 날짜와 시간을 선택해 주세요.", color = MaterialTheme.colorScheme.error)
                 }
-                AppSaveButton(
-                    onClick = viewModel::save,
-                    text = if (uiState.isSaving) "저장 중" else "리마인더 저장",
-                    enabled = canSave,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                AppSecondaryButton(
-                    text = "취소",
-                    onClick = { navigationGuard.navigate(viewModel::closeEditor) },
-                    enabled = !uiState.isSaving,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
     }
@@ -202,18 +202,12 @@ private fun ReminderListScreen(viewModel: ReminderViewModel, uiState: ReminderUi
 
     val activeReminders = uiState.reminders.filter { it.completedAt == null }
     val completedReminders = uiState.reminders.filter { it.completedAt != null }
-    AppScreen {
+    AppScreen(bottomBar = {
+        AppPrimaryButton(text = "새 리마인더", onClick = viewModel::startEditor, modifier = Modifier.fillMaxWidth())
+    }) {
         item {
             AppHeroCard(
                 title = "리마인더",
-                description = "진행 중인 알림을 확인하고 완료 체크합니다.",
-                action = {
-                    AppPrimaryButton(
-                        text = "새 리마인더 설정",
-                        onClick = viewModel::startEditor,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item { AppSectionHeader(title = "진행 중") }
@@ -266,14 +260,12 @@ private fun ReminderRow(
                 Text(
                     "${reminder.remindAt.format(DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm"))} · ${reminder.repeatIntervalMinutes}분 간격",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            androidx.compose.material3.TextButton(onClick = onDelete, enabled = enabled) {
+                Text("삭제")
+            }
         }
-        AppSecondaryButton(
-            text = "삭제",
-            onClick = onDelete,
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }

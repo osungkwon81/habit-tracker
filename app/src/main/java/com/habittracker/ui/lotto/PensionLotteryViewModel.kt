@@ -87,6 +87,7 @@ class PensionLotteryViewModel(
     private val repository: HabitRepository,
 ) : ViewModel() {
     private val selectedTab = MutableStateFlow(PensionLotteryTab.INPUT)
+    private var menuTabInitialized = false
     private val selectedRange = MutableStateFlow(PensionLotteryRange.SIXTEEN)
     private val roundInput = MutableStateFlow("")
     private val groupInput = MutableStateFlow("")
@@ -281,6 +282,12 @@ class PensionLotteryViewModel(
     fun selectTab(tab: PensionLotteryTab) {
         selectedTab.value = tab
         statusMessage.value = null
+    }
+
+    fun initializeMenuTab(tab: PensionLotteryTab) {
+        if (menuTabInitialized) return
+        menuTabInitialized = true
+        selectTab(tab)
     }
 
     fun clearStatusMessage() {

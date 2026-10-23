@@ -40,6 +40,10 @@ import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppStatusText
+import com.habittracker.ui.components.AppLoadingCard
+import com.habittracker.ui.components.AppSupportText
+import com.habittracker.ui.components.AppMenuGroup
+import com.habittracker.ui.components.AppSectionNavigation
 import java.time.format.DateTimeFormatter
 
 private val PensionGenerationTimeFormatter = DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm:ss")
@@ -48,12 +52,20 @@ private val PensionGenerationTimeFormatter = DateTimeFormatter.ofPattern("yyyy.M
 fun PensionLotteryGeneratorScreen(
     viewModel: PensionLotteryGeneratorViewModel,
     onBack: () -> Unit,
+    initialSection: String = "NUMBERS",
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     var deleteTarget by remember { mutableStateOf<PensionLotteryGenerationHistory?>(null) }
     var backupDeleteTarget by remember { mutableStateOf<PensionLotteryBackupNumber?>(null) }
     var showExperiments by rememberSaveable { mutableStateOf(false) }
+    var showPerformance by rememberSaveable { mutableStateOf(false) }
+    var section by rememberSaveable { mutableStateOf(initialSection) }
+    androidx.compose.runtime.LaunchedEffect(section) {
+        if (section == "IMPROVEMENT") viewModel.refreshAutoImprovement()
+    }
+    val autoImprovement = if (section == "IMPROVEMENT") viewModel.autoImprovementState.collectAsStateWithLifecycle().value else null
+    val performance = if (section == "IMPROVEMENT" && showPerformance) viewModel.performanceUiState.collectAsStateWithLifecycle().value else null
 
     deleteTarget?.let { history ->
         AppConfirmDialog(
@@ -84,20 +96,42 @@ fun PensionLotteryGeneratorScreen(
     AppScreen {
         item {
             AppHeroCard(
-                title = "연금번호 생성",
-                description = "직전 16주 점수와 동일 숫자·자리별 출현 통계를 조합합니다.",
-                icon = "🎰",
-                eyebrow = "PENSION 720+ · GENERATOR",
+                title = "연금 추천 번호",
+                description = "번호 생성·저장 이력·자동 개선을 관리합니다.",
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
             )
         }
         item {
-            AppSecondaryButton(text = if (showExperiments) "연금 실험 접기" else "연금 비교 실험·승인·복구", onClick = {
+            AppSectionNavigation(
+                title = "연금복권",
+                groups = listOf(
+                    AppMenuGroup("추천 번호", listOf("NUMBERS" to "번호 생성", "HISTORY" to "저장 이력", "IMPROVEMENT" to "자동 개선")),
+                    AppMenuGroup("복권 관리", listOf("MANAGEMENT" to "구입·당첨·추첨 결과")),
+                ),
+                selectedKey = section,
+                onSelect = { key ->
+                    if (key == "MANAGEMENT") onBack() else {
+                        section = key
+                    }
+                },
+            )
+        }
+        if (section == "IMPROVEMENT" && autoImprovement != null) item {
+            LotteryAutoImprovementSection(
+                product = com.habittracker.data.lotto.LotteryProduct.PENSION_720,
+                state = autoImprovement,
+                onRefresh = { viewModel.refreshAutoImprovement() },
+                onEnabledChange = { viewModel.setAutoImprovementEnabled(it) },
+            )
+        }
+        if (section == "IMPROVEMENT") item {
+            AppSecondaryButton(text = if (showExperiments) "평가 이력 접기" else "평가 이력 보기", onClick = {
                 showExperiments = !showExperiments
                 if (showExperiments) viewModel.refreshExperiments()
             })
         }
-        if (showExperiments) item { PensionExperimentSection(viewModel) }
+        if (section == "IMPROVEMENT" && showExperiments) item { PensionAutomaticHistory(viewModel) }
+        if (section == "NUMBERS") {
         item {
             PensionLotteryGeneratorRuleCard(uiState)
         }
@@ -119,16 +153,13 @@ fun PensionLotteryGeneratorScreen(
                         uiState.isGenerating -> "번호 생성 중"
                         uiState.hasGenerationConditionChanged -> "입력 확인 필요 · 번호 새로 생성"
                         uiState.generatedNumbers.isEmpty() -> "이번 주 고정 번호 4개 생성"
-                        else -> "새 주 고정 번호 4개 생성"
+                        else -> "현재 조건으로 새 번호 4개 생성"
                     },
                     onClick = viewModel::generate,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = uiState.canGenerate && !uiState.isGenerating && !uiState.isSaving,
                 )
             }
-        }
-        uiState.statusMessage?.let { message ->
-            item { AppStatusText(message) }
         }
         if (uiState.generatedNumbers.isEmpty()) {
             item {
@@ -143,7 +174,7 @@ fun PensionLotteryGeneratorScreen(
         } else {
             item {
                 AppSectionHeader(
-                    title = "현재 추천 번호",
+                    title = if (uiState.hasUnsavedGeneration) "생성한 추천 번호" else "저장한 고정 번호",
                     subtitle = when {
                         uiState.hasGenerationConditionChanged -> "입력 확인 필요 · 재생성 필요"
                         uiState.hasUnsavedGeneration -> "방금 생성됨 · 저장 전"
@@ -152,6 +183,9 @@ fun PensionLotteryGeneratorScreen(
                         }
                     },
                 )
+            }
+            if (!uiState.hasUnsavedGeneration) {
+                item { PensionLotterySavedConditionsCard(uiState) }
             }
             if (uiState.hasUnsavedGeneration) {
                 item {
@@ -163,7 +197,7 @@ fun PensionLotteryGeneratorScreen(
                         },
                         onClick = viewModel::saveGeneratedNumbers,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !uiState.hasGenerationConditionChanged &&
+                        enabled = uiState.canGenerate && !uiState.hasGenerationConditionChanged &&
                             !uiState.isGenerating &&
                             !uiState.isSaving,
                     )
@@ -179,43 +213,69 @@ fun PensionLotteryGeneratorScreen(
                     backup = backup,
                     isRegenerating = uiState.regeneratingType == result.type,
                     isGeneratingBackup = uiState.generatingBackupType == result.type,
-                    actionEnabled = !uiState.hasGenerationConditionChanged &&
+                    actionEnabled = (if (uiState.hasUnsavedGeneration) {
+                        uiState.canGenerate && !uiState.hasGenerationConditionChanged
+                    } else {
+                        uiState.backupUnavailableReason == null
+                    }) &&
                         !uiState.isGenerating &&
                         !uiState.isSaving,
+                    backupUnavailableReason = uiState.backupUnavailableReason,
                     onRegenerate = { viewModel.regenerate(result.type) },
                     onGenerateBackup = { viewModel.generateBackup(result.type) },
                     onDeleteBackup = { backupDeleteTarget = backup },
                 )
             }
         }
-        val previousHistory = if (uiState.hasUnsavedGeneration) {
-            uiState.generationHistory
-        } else {
-            uiState.generationHistory.drop(1)
         }
-        if (previousHistory.isNotEmpty()) {
+        if (section == "IMPROVEMENT") item {
+            AppSecondaryButton(
+                text = if (showPerformance) "수집 자료·추천 성과 접기" else "수집 자료·추천 성과 보기",
+                onClick = { showPerformance = !showPerformance },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (section == "IMPROVEMENT" && showPerformance) {
+            if (performance == null) {
+                item { AppLoadingCard("저장된 평가 자료를 집계하고 있습니다.") }
+            } else {
+                item { PensionLotteryPerformanceOverview(performance) }
+                items(performance.settings, key = { "${it.generationVersion}:${it.configHash}" }) { setting ->
+                    PensionLotterySettingPerformanceSection(setting)
+                }
+            }
+        }
+        if (section == "HISTORY") {
+        if (uiState.generationHistory.isNotEmpty()) {
             item {
                 AppSectionHeader(
-                    title = if (uiState.hasUnsavedGeneration) "저장된 생성 히스토리" else "이전 생성 히스토리",
+                    title = "저장한 번호",
                 )
             }
-            items(previousHistory, key = PensionLotteryGenerationHistory::generationId) { history ->
+            items(uiState.generationHistory, key = PensionLotteryGenerationHistory::generationId) { history ->
                 PensionLotteryGenerationHistoryCard(
                     history = history,
                     onDelete = { deleteTarget = history },
                 )
             }
+        } else {
+            item { AppEmptyCard("저장한 생성 번호가 없습니다.") }
+        }
         }
     }
 }
 
 @Composable
 private fun PensionLotteryGeneratorRuleCard(uiState: PensionLotteryGeneratorUiState) {
+    var showDetails by rememberSaveable { mutableStateOf(false) }
     AppSectionCard {
         AppSectionHeader(
-            title = "적용 조건",
-            subtitle = "최근 16회 패턴을 최근 156회 흐름과 혼합해 반영합니다.",
+            title = "새 번호 생성 조건",
+            subtitle = "출현형 2개 · 미출현 혼합형 2개. 저장 번호에는 생성 당시 조건을 유지합니다.",
         )
+        Text("끝자리 후보 · 출현 ${uiState.appearedLastDigitCandidates.joinToString("·").ifEmpty { "계산 대기" }} / 혼합 ${uiState.coldMixLastDigitCandidates.joinToString("·").ifEmpty { "계산 대기" }}")
+        AppSecondaryButton(text = if (showDetails) "조건 상세 접기" else "조건 상세", onClick = { showDetails = !showDetails })
+        if (showDetails) {
         GeneratorRuleRow(
             label = "16주 점수 구간",
             value = uiState.targetScoreBand?.let { band ->
@@ -234,20 +294,28 @@ private fun PensionLotteryGeneratorRuleCard(uiState: PensionLotteryGeneratorUiSt
                 "${zeroScoreCount}개 · ${uiState.targetZeroScoreDrawCount}회"
             } ?: "계산 대기",
         )
-        GeneratorRuleRow(
-            label = "마지막 숫자 후보",
-            value = if (
-                uiState.appearedLastDigitCandidates.isNotEmpty() &&
-                uiState.coldMixLastDigitCandidates.isNotEmpty()
-            ) {
-                "출현 ${uiState.appearedLastDigitCandidates.joinToString("·")} · " +
-                    "혼합 ${uiState.coldMixLastDigitCandidates.joinToString("·")} / 서로 다르게"
-            } else {
-                "계산 대기"
-            },
-        )
-        GeneratorRuleRow(label = "주간 고정 구성", value = "출현형 2개 · 미출현 혼합형 2개")
         GeneratorRuleRow(label = "예비 번호", value = "고정 번호별 1개 생성 · 삭제 가능")
+        }
+    }
+}
+
+@Composable
+private fun PensionLotterySavedConditionsCard(uiState: PensionLotteryGeneratorUiState) {
+    val snapshot = uiState.generatedNumbers.firstOrNull()?.generationSnapshot
+    val conditions = uiState.savedGenerationConditions
+    AppSectionCard {
+        AppSectionHeader(
+            title = snapshot?.let { "${it.targetRoundNo}회차 생성 당시 조건" } ?: "생성 당시 조건",
+            subtitle = "저장한 번호는 유지하며, 예비 번호도 같은 회차·조건을 사용합니다.",
+        )
+        if (conditions != null) {
+            Text("분석 기준 ${conditions.analysisThroughRound}회 · 점수 ${conditions.scoreBand} · 동일 숫자 ${conditions.duplicateLabel} · 0점 자리 ${conditions.zeroScoreCount}개")
+            Text("끝자리 후보: 출현 ${conditions.appearedLastDigits.joinToString("·")} · 혼합 ${conditions.coldMixLastDigits.joinToString("·")}")
+        } else {
+            AppSupportText("생성 당시 입력·설정을 재현할 수 없습니다. 번호별 저장된 점수는 유지하며 예비 번호 생성은 제한합니다.")
+        }
+        if (uiState.hasLatestConditionsChanged) AppSupportText("최신 입력·조건이 생성 당시와 다릅니다. 저장한 번호를 교체할 필요는 없으며 새 번호 생성은 선택 사항입니다.")
+        uiState.backupUnavailableReason?.let { AppSupportText("예비 번호: $it") }
     }
 }
 
@@ -281,10 +349,12 @@ private fun PensionLotteryGeneratedNumberCard(
     isRegenerating: Boolean,
     isGeneratingBackup: Boolean,
     actionEnabled: Boolean,
+    backupUnavailableReason: String?,
     onRegenerate: () -> Unit,
     onGenerateBackup: () -> Unit,
     onDeleteBackup: () -> Unit,
 ) {
+    var showExplanation by rememberSaveable(result.winningNumber) { mutableStateOf(false) }
     AppSectionCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -323,13 +393,15 @@ private fun PensionLotteryGeneratedNumberCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("${result.groupNo}조", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text("동일 숫자 ${result.duplicateLabel}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (showExplanation) Text("동일 숫자 ${result.duplicateLabel}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         PensionLotteryNumberRow(
             winningNumber = result.winningNumber,
             highlightedPositions = result.coldPositions,
-            scores = result.digitScores,
+            scores = if (showExplanation) result.digitScores else emptyList(),
         )
+        AppSecondaryButton(text = if (showExplanation) "번호 해설 접기" else "번호 해설 보기", onClick = { showExplanation = !showExplanation })
+        if (showExplanation) {
         Text(
             text = "합계 ${result.totalScore}점 · ${result.scoreBand} 구간",
             modifier = Modifier.fillMaxWidth(),
@@ -352,10 +424,15 @@ private fun PensionLotteryGeneratedNumberCard(
                 fontWeight = FontWeight.SemiBold,
             )
         }
+        }
         if (isFixed) {
             if (backup == null) {
                 AppSecondaryButton(
-                    text = if (isGeneratingBackup) "예비 번호 생성 중" else "예비 번호 생성",
+                    text = when {
+                        isGeneratingBackup -> "예비 번호 생성 중"
+                        backupUnavailableReason != null -> backupUnavailableReason
+                        else -> "예비 번호 생성"
+                    },
                     onClick = onGenerateBackup,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = actionEnabled,

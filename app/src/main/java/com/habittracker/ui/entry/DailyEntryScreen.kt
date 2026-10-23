@@ -61,6 +61,7 @@ fun DailyEntryScreen(
     initialDate: String,
     onOpenAdmin: (() -> Unit)? = null,
     onOpenStats: (() -> Unit)? = null,
+    initialCategory: String = "전체",
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -76,7 +77,7 @@ fun DailyEntryScreen(
     var memo by rememberSaveable(uiState.selectedDate, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(uiState.memo)) }
     var isHoliday by rememberSaveable(uiState.selectedDate) { mutableStateOf(uiState.isHoliday) }
     var expanded by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf(false) }
-    var selectedCategory by remember(uiState.selectedDate, uiState.taskItems) { mutableStateOf("전체") }
+    var selectedCategory by rememberSaveable(uiState.selectedDate) { mutableStateOf(initialCategory) }
     // 날짜별 초안을 저장해 화면 재생성 중에도 편집 내용을 유지한다.
     var editableItems by rememberSaveable(uiState.selectedDate, stateSaver = TaskItemsSaver) {
         mutableStateOf(uiState.taskItems.map(TaskItemEditorState.Companion::from))
@@ -133,25 +134,22 @@ fun DailyEntryScreen(
         item {
             AppHeroCard(
                 title = "일일 기록",
-                description = "날짜별 습관과 운동 기록을 입력합니다.",
-                iconRes = R.drawable.ic_category_record,
-                eyebrow = "HABIT · DAILY",
                 action = {
                     onOpenAdmin?.let { openAdmin ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             onOpenStats?.let { openStats ->
-                                AppSecondaryButton(
-                                    text = "통계",
+                                com.habittracker.ui.components.AppNavigationRow(
+                                    title = "통계",
                                     onClick = { navigationGuard.navigate(openStats) },
                                     modifier = Modifier.weight(1f),
                                 )
                             }
+                            com.habittracker.ui.components.AppNavigationRow(
+                                title = "항목 관리",
+                                onClick = { navigationGuard.navigate(openAdmin) },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
-                        AppSecondaryButton(
-                            text = "항목 관리",
-                            onClick = { navigationGuard.navigate(openAdmin) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                     }
                 },
             )

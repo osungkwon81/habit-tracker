@@ -60,8 +60,6 @@ fun StockRebalanceScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "⚖",
-                eyebrow = "STOCK · REBALANCE",
                 title = "목표 비중 리밸런싱",
                 description = "목표로 등록한 종목들의 보유 평가액 안에서 목표 수량을 계산합니다. 현금과 미등록 종목은 제외합니다.",
             )

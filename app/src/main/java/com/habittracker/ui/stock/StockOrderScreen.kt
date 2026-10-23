@@ -60,8 +60,6 @@ fun StockOrderScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "↕",
-                eyebrow = "STOCK · ORDER",
                 title = "매수·매도",
                 description = "매수·매도 가능 수량과 안전 한도를 확인한 뒤 실전 주문합니다.",
             )

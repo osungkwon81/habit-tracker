@@ -15,12 +15,12 @@ import androidx.compose.ui.unit.dp
 
 private val LightColors = lightColorScheme(
     primary = Primary600,
-    secondary = Primary100,
-    secondaryContainer = Color(0xFFE2EEE8),
+    secondary = Primary600,
+    secondaryContainer = Primary100,
     onSecondaryContainer = Color(0xFF123D33),
     surfaceTint = Primary600,
-    tertiary = Gray100,
-    background = Gray25,
+    tertiary = Color(0xFF477DB3),
+    background = Gray0,
     surface = Gray0,
     surfaceVariant = Gray50,
     onPrimary = Color.White,
@@ -33,7 +33,7 @@ private val LightColors = lightColorScheme(
     error = Color(0xFFB3261E),
     errorContainer = Color(0xFFFCE8E6),
     onErrorContainer = Color(0xFF601410),
-    primaryContainer = Color(0xFFE2EEE8),
+    primaryContainer = Primary100,
     onPrimaryContainer = Color(0xFF123D33),
     onError = Gray0,
 )

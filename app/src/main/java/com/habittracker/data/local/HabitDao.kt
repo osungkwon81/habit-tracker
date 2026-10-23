@@ -126,6 +126,12 @@ interface HabitDao {
     )
     fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>>
 
+    @Query("SELECT * FROM pension_lottery_generated_number WHERE generation_id = :generationId")
+    suspend fun getPensionLotteryGeneration(generationId: String): List<PensionLotteryGeneratedNumberEntity>
+
+    @Query("SELECT * FROM pension_lottery_generated_number WHERE substr(generation_id, 1, length(:prefix)) = :prefix AND is_hidden = 0")
+    suspend fun getVisiblePensionLotteryBackups(prefix: String): List<PensionLotteryGeneratedNumberEntity>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>)
 

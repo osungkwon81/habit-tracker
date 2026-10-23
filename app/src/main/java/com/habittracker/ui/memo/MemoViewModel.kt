@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.MemoNoteEntity
 import com.habittracker.data.repository.HabitRepository
-import com.habittracker.ui.digitsOnly
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -32,7 +31,6 @@ private data class MemoEditorState(
     val title: String,
     val content: String,
     val isLocked: Boolean,
-    val password: String,
 )
 
 private data class MemoListState(
@@ -49,7 +47,6 @@ class MemoViewModel(
     private val title = MutableStateFlow("")
     private val content = MutableStateFlow("")
     private val isLocked = MutableStateFlow(false)
-    private val password = MutableStateFlow("")
     private val statusMessage = MutableStateFlow<String?>(null)
     private val screenMode = MutableStateFlow(MemoScreenMode.LIST)
     private val searchQuery = MutableStateFlow("")
@@ -71,9 +68,8 @@ class MemoViewModel(
         title,
         content,
         isLocked,
-        password,
-    ) { memoId, title, content, isLocked, password ->
-        MemoEditorState(memoId, title, content, isLocked, password)
+    ) { memoId, title, content, isLocked ->
+        MemoEditorState(memoId, title, content, isLocked)
     }
 
     private val listState = combine(
@@ -97,7 +93,6 @@ class MemoViewModel(
             title = editor.title,
             content = editor.content,
             isLocked = editor.isLocked,
-            password = editor.password,
             statusMessage = message,
             screenMode = mode,
             searchQuery = list.searchQuery,
@@ -130,13 +125,6 @@ class MemoViewModel(
 
     fun updateLocked(value: Boolean) {
         isLocked.value = value
-        if (!value) {
-            password.value = ""
-        }
-    }
-
-    fun updatePassword(value: String) {
-        password.value = value.digitsOnly().take(10)
     }
 
     fun updateSearchQuery(value: String) {
@@ -155,6 +143,14 @@ class MemoViewModel(
         statusMessage.value = null
     }
 
+    private var menuEntryInitialized = false
+
+    fun initializeNewEntry() {
+        if (menuEntryInitialized) return
+        menuEntryInitialized = true
+        startNewMemo()
+    }
+
     fun startNewMemo() {
         resetEditor()
         statusMessage.value = null
@@ -162,26 +158,17 @@ class MemoViewModel(
     }
 
     fun openMemo(memoNote: MemoNoteEntity) {
+        if (memoNote.isLocked) return
+        openMemoEditor(memoNote)
+    }
+
+    private fun openMemoEditor(memoNote: MemoNoteEntity) {
         selectedMemoId.value = memoNote.id
         title.value = memoNote.title
         content.value = memoNote.content
         isLocked.value = memoNote.isLocked
-        password.value = ""
         statusMessage.value = null
         screenMode.value = MemoScreenMode.EDITOR
-    }
-
-    fun unlockMemo(memoId: Long, password: String) {
-        viewModelScope.launch {
-            runCatching {
-                repository.verifyMemoPassword(memoId, password)
-            }.onSuccess { memoNote ->
-                openMemo(memoNote)
-                statusMessage.value = "잠금 메모를 열었습니다."
-            }.onFailure { error ->
-                statusMessage.value = error.message ?: "잠금 해제에 실패했습니다."
-            }
-        }
     }
 
     fun unlockMemoWithBiometric(memoId: Long) {
@@ -191,7 +178,7 @@ class MemoViewModel(
                 if (memoNote == null || !memoNote.isLocked) {
                     statusMessage.value = "잠금 메모 $memoId 를 찾을 수 없습니다."
                 } else {
-                    openMemo(memoNote)
+                    openMemoEditor(memoNote)
                     statusMessage.value = "지문으로 잠금 메모를 열었습니다."
                 }
             } catch (cancelled: CancellationException) {
@@ -227,7 +214,6 @@ class MemoViewModel(
                     title = title.value,
                     content = content.value,
                     isLocked = lockedSnapshot,
-                    password = password.value.takeIf(String::isNotEmpty),
                 )
             }.onSuccess {
                 resetEditor()
@@ -267,7 +253,6 @@ class MemoViewModel(
         title.value = ""
         content.value = ""
         isLocked.value = false
-        password.value = ""
     }
 }
 
@@ -277,7 +262,6 @@ data class MemoUiState(
     val title: String = "",
     val content: String = "",
     val isLocked: Boolean = false,
-    val password: String = "",
     val statusMessage: String? = null,
     val screenMode: MemoScreenMode = MemoScreenMode.LIST,
     val searchQuery: String = "",

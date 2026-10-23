@@ -47,12 +47,20 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         if (ids.isEmpty()) return Result.success()
         var selections = emptyMap<Int, ExchangeCurrency?>()
         var periods = emptyMap<Int, ExchangeChartPeriod>()
+        var daysByWidget = emptyMap<Int, Int>()
         return try {
             selections = withContext(Dispatchers.IO) {
                 ids.associateWith { ExchangeRateWidgetProvider.selectedCurrency(applicationContext, it) }
             }
             periods = withContext(Dispatchers.IO) {
                 ids.associateWith { ExchangeRateWidgetProvider.selectedPeriod(applicationContext, it) }
+            }
+            daysByWidget = withContext(Dispatchers.IO) {
+                ids.associateWith { id ->
+                    val days = ExchangeRateWidgetProvider.selectedDays(applicationContext, id)
+                    require(days > 0) { "환율 위젯 조회 일수 오류: widgetId=$id days=$days" }
+                    if (periods.getValue(id) == ExchangeChartPeriod.TODAY) days else 1
+                }
             }
             val currencies = selections.values.filterNotNull().distinct()
             // DB 스냅샷만 읽는다. 위젯 갱신이 은행 조회나 수집 예약으로 이어지지 않게 한다.
@@ -63,20 +71,21 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
             }
             val rendered = withContext(Dispatchers.Default) {
                 val today = LocalDate.now(ZoneId.of("Asia/Seoul"))
-                val series = ids.asSequence().mapNotNull { id -> selections[id]?.let { it to periods.getValue(id) } }.distinct()
-                    .associateWith { (currency, period) -> chartRows(rowsByCurrency.getValue(currency), period, today) }
+                val series = ids.asSequence().mapNotNull { id -> selections[id]?.let { Triple(it, periods.getValue(id), daysByWidget.getValue(id)) } }.distinct()
+                    .associateWith { (currency, period, days) -> chartRows(rowsByCurrency.getValue(currency), period, today, days) }
                 val graphs = series.mapValues { (selection, rows) ->
                     if (rows.isEmpty()) null else drawGraph(rows, rows.map { it.rate.toDouble() }, selection.second)
                 }
                 ids.associateWith { id ->
                     val currency = selections[id]
                     val period = periods.getValue(id)
-                    createViews(id, currency, period).apply {
+                    val days = daysByWidget.getValue(id)
+                    createViews(id, currency, period, days).apply {
                         if (currency == null) {
                             setTextViewText(R.id.widget_notice, applicationContext.getString(R.string.exchange_widget_select_currency))
                         } else {
-                            val selection = currency to period
-                            bindCurrency(this, currency, rowsByCurrency.getValue(currency), series.getValue(selection), graphs[selection], period)
+                            val selection = Triple(currency, period, days)
+                            bindCurrency(this, currency, rowsByCurrency.getValue(currency), series.getValue(selection), graphs[selection], period, days)
                         }
                     }
                 }
@@ -91,7 +100,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         } catch (error: Exception) {
             Log.e("ExchangeWidget", "환율 위젯 DB 조회/표시 실패: widgetIds=${ids.joinToString()}", error)
             for (id in ids) {
-                val notice = createViews(id, selections[id], periods[id] ?: ExchangeChartPeriod.ALL)
+                val notice = createViews(id, selections[id], periods[id] ?: ExchangeChartPeriod.ALL, daysByWidget[id] ?: 1)
                 notice.setTextViewText(R.id.widget_notice, applicationContext.getString(R.string.exchange_widget_error))
                 notice.setViewVisibility(R.id.widget_rate, View.GONE)
                 manager.updateAppWidget(id, notice)
@@ -100,7 +109,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         }
     }
 
-    private fun createViews(widgetId: Int, currency: ExchangeCurrency?, period: ExchangeChartPeriod) = RemoteViews(applicationContext.packageName, R.layout.exchange_rate_widget).apply {
+    private fun createViews(widgetId: Int, currency: ExchangeCurrency?, period: ExchangeChartPeriod, days: Int) = RemoteViews(applicationContext.packageName, R.layout.exchange_rate_widget).apply {
         val openRates = if (currency == null) {
             Intent(applicationContext, ExchangeRateWidgetConfigureActivity::class.java)
                 .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
@@ -109,7 +118,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
                 ExchangeCurrency.USD -> "미국"
                 ExchangeCurrency.JPY -> "일본"
             })
-            setTextViewText(R.id.widget_currency, "${currency.unit}${currency.amountUnitLabel} · ${period.label}")
+            setTextViewText(R.id.widget_currency, "${currency.unit}${currency.amountUnitLabel} · ${ExchangeRateWidgetProvider.periodLabel(period, days)}")
             Intent(applicationContext, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
                 data = Uri.parse("habittracker://exchange/rates?widgetCurrency=${currency.name}")
@@ -121,7 +130,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         )
     }
 
-    private fun bindCurrency(views: RemoteViews, currency: ExchangeCurrency, allRows: List<ExchangeRateEntity>, rows: List<ExchangeRateEntity>, graph: Bitmap?, period: ExchangeChartPeriod) {
+    private fun bindCurrency(views: RemoteViews, currency: ExchangeCurrency, allRows: List<ExchangeRateEntity>, rows: List<ExchangeRateEntity>, graph: Bitmap?, period: ExchangeChartPeriod, days: Int) {
         val latest = allRows.lastOrNull()
         if (latest == null) {
             views.setTextViewText(R.id.widget_notice, applicationContext.getString(R.string.exchange_widget_empty))
@@ -133,7 +142,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         views.setTextViewText(R.id.widget_rate, rateText)
         views.setContentDescription(R.id.widget_rate, "${currency.rateLabel} $rateText. 저장된 고시 ${latest.quotedAt.format(quoteFormat)} · ${latest.quoteRound}회차")
         if (rows.isEmpty()) {
-            views.setTextViewText(R.id.widget_notice, "오늘 저장된 고시 없음")
+            views.setTextViewText(R.id.widget_notice, "${ExchangeRateWidgetProvider.periodLabel(period, days)} 저장된 고시 없음")
             views.setViewVisibility(R.id.widget_graph, View.GONE)
             return
         }
@@ -142,12 +151,15 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         views.setImageViewBitmap(R.id.widget_graph, checkNotNull(graph))
         val sourceDescription = if (rows.any { it.source == ExchangeRateSource.NAVER_SHINHAN.name }) " 네이버에서 수집한 신한은행 고시가 포함되어 있습니다." else ""
         val representativeDescription = if (period == ExchangeChartPeriod.DAILY || period == ExchangeChartPeriod.MONTHLY) " 해당 일·월의 마지막 저장 고시환율입니다." else ""
-        views.setContentDescription(R.id.widget_graph, "${currency.label} ${period.label} 환율 그래프. ${rows.size}개 지점.$representativeDescription 미수집 구간의 실제 변동은 포함하지 않습니다.$sourceDescription")
+        views.setContentDescription(R.id.widget_graph, "${currency.label} ${ExchangeRateWidgetProvider.periodLabel(period, days)} 환율 그래프. ${rows.size}개 지점.$representativeDescription 미수집 구간의 실제 변동은 포함하지 않습니다.$sourceDescription")
     }
 
-    private fun chartRows(rows: List<ExchangeRateEntity>, period: ExchangeChartPeriod, today: LocalDate): List<ExchangeRateEntity> = when (period) {
+    private fun chartRows(rows: List<ExchangeRateEntity>, period: ExchangeChartPeriod, today: LocalDate, days: Int): List<ExchangeRateEntity> = when (period) {
         ExchangeChartPeriod.ALL -> rows
-        ExchangeChartPeriod.TODAY -> rows.filter { it.quotedAt.toLocalDate() == today }
+        ExchangeChartPeriod.TODAY -> {
+            val start = today.minusDays(days.toLong() - 1)
+            rows.filter { it.quotedAt.toLocalDate() in start..today }
+        }
         ExchangeChartPeriod.DAILY -> {
             val daily = linkedMapOf<LocalDate, ExchangeRateEntity>()
             rows.forEach { daily[it.quotedAt.toLocalDate()] = it }

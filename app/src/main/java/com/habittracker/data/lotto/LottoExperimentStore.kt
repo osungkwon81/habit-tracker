@@ -32,7 +32,7 @@ data class LottoApprovedSetting(val priorDraws: Double, val approval: Map<String
     val configJson: String get() = LottoNumberGenerator.configurationSnapshot(priorDraws)
 }
 
-/** 기존 실행 기록과 분리한 등록·승인 이력. 자동 재실행·자동 적용은 하지 않는다. */
+/** 등록·승인 이력의 경계. 외부 자동화도 같은 판정·무결성 검증을 거쳐 적용한다. */
 class LottoExperimentStore(context: Context, private val now: () -> Instant = { Instant.now() }) {
     private val app = context.applicationContext
     private val records = LottoDesignRunStore(app)
@@ -183,6 +183,10 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
 
     suspend fun approvedSetting(): LottoApprovedSetting = locked { readSetting() }
 
+    internal suspend fun hasAppliedExperiment(id: String): Boolean = locked {
+        readOperations().any { it["action"] == "APPLY" && obj(it.getValue("evidence"))["experimentId"] == id }
+    }
+
     suspend fun captureInputs(id: String, target: Int, draws: List<LottoPriorDesignDraw>) = locked {
         val directory = experimentDirectory(id)
         val spec = readRegistration(directory)
@@ -202,7 +206,9 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
         write(File(folder, "$target.json"), record + ("recordHash" to LottoDesignRecordJson.hash(record)))
     }
 
-    suspend fun approve(id: String, draws: List<LottoPriorDesignDraw>, approvalReason: String) = locked {
+    suspend fun approve(id: String, draws: List<LottoPriorDesignDraw>, approvalReason: String,
+        automaticAuthorization: (() -> Boolean)? = null,
+    ) = locked {
         require(approvalReason.isNotBlank()) { "승인 이유가 필요합니다." }
         val directory = experimentDirectory(id)
         val spec = readRegistration(directory)
@@ -225,7 +231,9 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
         val runSource = read(File(app.filesDir, "lotto-design-runs/$id/source-manifest.json"))
         require(runSource - setOf("formatVersion", "runId", "kind") == source) { "평가 소스 증빙과 등록 증빙이 다릅니다." }
         require(runtimeApkHash == source["apkHash"] && actualSplits() == stringMap(source.getValue("splitApkHashes"))) { "평가 이후 앱 구현이 바뀌었습니다. 새 실험이 필요합니다." }
+        require(automaticAuthorization == null || automaticAuthorization()) { "자동 개선 권한이 해제되어 적용하지 않았습니다." }
         appendSetting(64.0, "APPLY", approvalReason, mapOf(
+            "automatic" to (automaticAuthorization != null),
             "experimentId" to id, "registrationHash" to LottoDesignRecordJson.hash(spec),
             "evaluationPlanHash" to LottoDesignRecordJson.hash(runPlan),
             "evaluationEventsHash" to hashFile(File(File(app.filesDir, "lotto-design-runs/$id"), "events.jsonl")),
@@ -240,6 +248,31 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
         val previous = LottoDesignRecordJson.decimal(log.last().getValue("previousPriorDraws"))
         require(log.last()["previousConfigJson"] == LottoNumberGenerator.configurationSnapshot(previous)) { "이전 설정을 현재 구현으로 재현할 수 없습니다. 복구를 보류합니다." }
         appendSetting(previous, "ROLLBACK", approvalReason, mapOf("restoredFromOperation" to log.last().getValue("sequence")))
+    }
+
+    internal suspend fun rollbackInvalidAutomaticInput(draws: List<LottoPriorDesignDraw>, authorized: () -> Boolean): String? = locked {
+        val last = readOperations().lastOrNull() ?: return@locked null
+        val proof = obj(last.getValue("evidence"))
+        if (last["action"] != "APPLY" || proof["automatic"] != true) return@locked null
+        val id = text(proof, "experimentId")
+        val run = records.recover().runs.single { it.runId == id }
+        require(run.state == LottoDesignRunState.SUCCESS && !run.exclusionCoverageUncertain) { "자동 적용 근거를 복구할 수 없습니다. 자동 개선을 보류합니다." }
+        val frozen = obj(LottoDesignRecordJson.decode(requireNotNull(run.planJson).toByteArray()))
+        val original = LottoDesignRecordJson.list(frozen.getValue("draws")).map(::obj)
+        val current = draws.associateBy { it.roundNo }
+        val changed = original.any { row ->
+            val draw = current[int(row.getValue("roundNo"))]
+            draw == null || draw.numbers.sorted() != LottoDesignRecordJson.list(row.getValue("numbers")).map(LottoDesignRecordJson::integer) ||
+                draw.bonusNumber != row["bonusNumber"]?.let(LottoDesignRecordJson::integer)
+        }
+        if (!changed) return@locked null
+        val previous = LottoDesignRecordJson.decimal(last.getValue("previousPriorDraws"))
+        require(last["previousConfigJson"] == LottoNumberGenerator.configurationSnapshot(previous)) { "이전 설정의 구현 호환성을 확인할 수 없습니다." }
+        require(authorized()) { "자동 개선이 해제되어 자동 복구를 중단했습니다." }
+        val reason = "자동 적용 근거의 입력·정답 변경으로 priorDraws $previous 복구: $id"
+        appendSetting(previous, "ROLLBACK", reason, mapOf("automatic" to true, "invalidatedExperimentId" to id,
+            "restoredFromOperation" to last.getValue("sequence"), "invalidatedPlanHash" to LottoDesignRecordJson.hash(frozen)))
+        reason
     }
 
     private fun prepare(spec: Map<String, Any?>, draws: List<LottoPriorDesignDraw>): LottoPriorDesignPlan {
@@ -362,7 +395,8 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
         require(files.map { it.relativePath }.distinct().size == files.size) { "소스 파일 경로가 중복됩니다." }
         val required = setOf("LottoNumberGenerator.kt", "LottoPriorDesignComparison.kt", "LottoDesignRunStore.kt", "LottoDesignRecordJson.kt",
             "LottoExperimentStore.kt", "LottoExperimentPolicy.kt", "LottoViewModel.kt", "LottoScreen.kt", "LottoExperimentSection.kt", "HabitRepository.kt")
-        require(files.map { File(it.relativePath).name }.toSet().containsAll(required) && files.map { it.relativePath }.containsAll(listOf("app/build.gradle.kts", "build.gradle.kts", "gradle/libs.versions.toml"))) { "계산·정책·적용·화면·빌드 관련 실제 소스를 모두 보존해 주세요." }
+        require(files.map { File(it.relativePath).name }.toSet().containsAll(required) &&
+            files.map { it.relativePath }.containsAll(LotteryAutoImprovement.SOURCE_FILES + listOf("app/build.gradle.kts", "build.gradle.kts", "gradle/libs.versions.toml"))) { "계산·정책·적용·화면·빌드 관련 실제 소스를 모두 보존해 주세요." }
         val sourceMap = input + ("files" to files.map { mapOf("path" to it.relativePath, "sha256" to it.sha256) })
         val source = evidence(directory, sourceMap)
         require(source.buildSourceHash == LottoDesignRecordJson.hash(sourceMap.getValue("files"))) { "소스 목록 전체 해시 불일치" }

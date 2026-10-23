@@ -5,13 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -22,18 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import androidx.core.content.ContextCompat
-import com.habittracker.R
 import com.habittracker.ui.components.AppHeroCard
-import com.habittracker.ui.components.AppPrimaryButton
+import com.habittracker.ui.components.AppNavigationRow
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
@@ -47,7 +32,6 @@ fun LotteryHomeScreen(
     onOpenPensionLottery: () -> Unit,
 ) {
     val context = LocalContext.current
-    var showGoldenPig by remember { mutableStateOf(true) }
     val permissionPreferences = remember(context) {
         context.getSharedPreferences("lottery-notification-permission", android.content.Context.MODE_PRIVATE)
     }
@@ -64,16 +48,11 @@ fun LotteryHomeScreen(
         notificationPermissionGranted = granted
     }
     LaunchedEffect(Unit) {
-        delay(1_650)
-        showGoldenPig = false
-    }
-    LaunchedEffect(Unit) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !notificationPermissionGranted &&
             !permissionPreferences.getBoolean("requested", false)
         ) {
-            // 첫 진입의 행운 인사가 시스템 권한 창에 가려지지 않도록 순서를 분리한다.
             delay(1_850)
             permissionPreferences.edit().putBoolean("requested", true).apply()
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -85,24 +64,19 @@ fun LotteryHomeScreen(
             item {
                 AppHeroCard(
                     title = "동행복권",
-                    description = "관리할 복권 종류를 선택합니다.",
-                    iconRes = R.drawable.ic_category_lotto,
-                    eyebrow = "LOTTERY · SELECT",
                 )
             }
             item {
                 AppSectionCard {
-                    AppSectionHeader(
-                        title = "복권 선택",
-                        subtitle = "로또 6/45 또는 연금복권 720+로 이동합니다.",
-                    )
-                    AppPrimaryButton(
-                        text = "로또 6/45",
+                    AppNavigationRow(
+                        title = "로또 6/45",
+                        subtitle = "번호 생성 · 구입 내역 · 추첨 결과",
                         onClick = onOpenLotto645,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    AppPrimaryButton(
-                        text = "연금복권 720+",
+                    AppNavigationRow(
+                        title = "연금복권 720+",
+                        subtitle = "추천 번호 · 구입 내역 · 당첨 확인",
                         onClick = onOpenPensionLottery,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -125,25 +99,6 @@ fun LotteryHomeScreen(
                         )
                     }
                 }
-            }
-        }
-        AnimatedVisibility(
-            visible = showGoldenPig,
-            modifier = Modifier.align(Alignment.Center),
-            enter = fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 0.88f, animationSpec = tween(320)),
-            exit = fadeOut(animationSpec = tween(420)) + scaleOut(targetScale = 0.86f, animationSpec = tween(420)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(236.dp)
-                    .background(Color.White.copy(alpha = 0.88f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.lottery_golden_pig),
-                    contentDescription = "행운을 전하는 황금돼지",
-                    modifier = Modifier.size(206.dp),
-                )
             }
         }
     }

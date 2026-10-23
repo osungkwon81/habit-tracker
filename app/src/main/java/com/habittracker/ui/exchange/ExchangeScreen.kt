@@ -81,7 +81,15 @@ fun ExchangeScreen(
     onOpenRates: () -> Unit = {},
     onOpenRecords: () -> Unit = {},
     onOpenCollectionSettings: () -> Unit = {},
+    initialEntryType: ExchangeEntryType? = null,
 ) {
+    var menuEntryInitialized by rememberSaveable { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(viewModel, initialEntryType) {
+        if (!menuEntryInitialized && initialEntryType != null) {
+            viewModel.selectEntryType(initialEntryType)
+            menuEntryInitialized = true
+        }
+    }
     val isRecordsPage = page == ExchangePage.RECORDS
     val isRatesPage = page == ExchangePage.RATES
     val isCollectionSettingsPage = page == ExchangePage.COLLECTION_SETTINGS
@@ -213,8 +221,8 @@ fun ExchangeScreen(
         item {
             AppHeroCard(
                 title = when (page) {
-                    ExchangePage.RATES -> "현재 환율·그래프"
-                    ExchangePage.RECORDS -> "환전·지출 입력"
+                    ExchangePage.RATES -> "환율"
+                    ExchangePage.RECORDS -> "환전·지출"
                     ExchangePage.COLLECTION_SETTINGS -> "환율 수집 설정"
                 },
                 description = when (page) {
@@ -225,8 +233,8 @@ fun ExchangeScreen(
             )
         }
         if (!isCollectionSettingsPage) item {
-            AppSecondaryButton(
-                text = if (isRecordsPage) "현재 환율·그래프 보기" else "환전·지출 입력·기록",
+            com.habittracker.ui.components.AppNavigationRow(
+                title = if (isRecordsPage) "현재 환율" else "환전·지출 기록",
                 onClick = {
                     guard.navigate {
                         if (isRecordsPage) {
@@ -243,8 +251,8 @@ fun ExchangeScreen(
             )
         }
         if (isRatesPage) item {
-            AppSecondaryButton(
-                text = "환율 수집 설정",
+            com.habittracker.ui.components.AppNavigationRow(
+                title = "환율 수집 설정",
                 onClick = { guard.navigate { onOpenCollectionSettings() } },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.isUpdatingCollection,
@@ -270,9 +278,10 @@ fun ExchangeScreen(
                 else -> Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     state.balances.filter { it.currency == selected }.forEach { balance ->
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                            AppSupportText("남은 금액")
+                            Text("${balance.remainingAmount.money()} ${balance.currency.amountUnitLabel}", style = MaterialTheme.typography.displaySmall)
                             AppSupportText("환전 합계 ${balance.exchangedAmount.money()} ${balance.currency.amountUnitLabel}")
                             AppSupportText("지출 합계 ${balance.spentAmount.money()} ${balance.currency.amountUnitLabel}")
-                            Text("남은 금액 ${balance.remainingAmount.money()} ${balance.currency.amountUnitLabel}", style = MaterialTheme.typography.titleLarge)
                         }
                     }
                     AppSupportText("환전 합계는 당시 적용 환율로 계산한 추정 외화 수량입니다.")
@@ -283,7 +292,7 @@ fun ExchangeScreen(
         item {
             AppSectionHeader(title = "현재 고시환율", subtitle = selected.rateLabel)
             if (latest != null) {
-                Text("${latest.rate.money()}원", style = MaterialTheme.typography.headlineMedium)
+                Text("${latest.rate.money()}원", style = MaterialTheme.typography.displaySmall)
                 AppSupportText("고시 ${latest.quotedAt.format(quoteTimeFormat)} · ${latest.round}회차")
             }
             if (state.isRefreshing) AppSupportText("신한은행 환율을 조회하고 있습니다.")
@@ -295,7 +304,7 @@ fun ExchangeScreen(
             } else if (!state.isRefreshing && latest == null && state.isLoaded && hasSelectedData) {
                 AppSupportText("아직 수집된 환율이 없습니다.")
             }
-            AppSecondaryButton("달러·엔화 함께 새로고침", viewModel::refresh, Modifier.fillMaxWidth(), enabled = !state.isRefreshing && !state.isBackfilling && !state.isRecollecting)
+            AppSecondaryButton("새로고침", viewModel::refresh, enabled = !state.isRefreshing && !state.isBackfilling && !state.isRecollecting)
         }
         item {
             val chart by viewModel.chartState.collectAsStateWithLifecycle()
@@ -552,9 +561,12 @@ private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCur
     }
     val lineColor = MaterialTheme.colorScheme.primary
     val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val chartHeight = (180 * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        Text("${selected.rate.money()}원", style = MaterialTheme.typography.headlineSmall)
+        AppSupportText("$pointLabel ${selected.quotedAt.format(axisFormat)}")
         AppSupportText("최저 ${quotes.minOf { it.rate }.money()}원 · 최고 ${quotes.maxOf { it.rate }.money()}원")
-        Canvas(Modifier.fillMaxWidth().height(180.dp).padding(4.dp).semantics {
+        Canvas(Modifier.fillMaxWidth().height(chartHeight).padding(4.dp).semantics {
             contentDescription = "${currency.label} ${period.label} 환율 그래프. ${quotes.size}개 지점. 아래 슬라이더로 환율을 확인할 수 있습니다."
         }) {
             listOf(0f, 0.5f, 1f).forEach { ratio ->
@@ -565,11 +577,13 @@ private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCur
                 drawLine(lineColor, position(points[index]), position(points[index + 1]), 2.dp.toPx())
             }
             val index = if (selectedIndex < 0) points.lastIndex else selectedIndex.coerceAtMost(points.lastIndex)
+            val selectedPoint = position(points[index])
+            drawLine(gridColor, Offset(selectedPoint.x, 0f), Offset(selectedPoint.x, size.height), 1.dp.toPx())
             drawCircle(lineColor, 4.dp.toPx(), position(points[index]))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(quotes.first().quotedAt.format(axisFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-            Text(quotes.last().quotedAt.format(axisFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            Text(quotes.last().quotedAt.format(axisFormat), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
         }
         if (quotes.size > 1) Slider(
             value = (if (selectedIndex < 0) quotes.lastIndex else selectedIndex.coerceAtMost(quotes.lastIndex)).toFloat(),
@@ -577,7 +591,6 @@ private fun ExchangeRateChart(quotes: List<ExchangeQuote>, currency: ExchangeCur
             modifier = Modifier.semantics { contentDescription = "${period.label} 환율 지점 선택" },
         )
         if (selectedIndex >= 0) {
-            Text("선택한 $pointLabel ${selected.quotedAt.format(axisFormat)} · ${selected.rate.money()}원")
             AppSupportText("고시 ${selected.quotedAt.format(quoteTimeFormat)} · ${selected.round}회차 · 출처: ${selected.source.label}")
         }
         val hasNaverQuotes = remember(quotes) { quotes.any { it.source == ExchangeRateSource.NAVER_SHINHAN } }

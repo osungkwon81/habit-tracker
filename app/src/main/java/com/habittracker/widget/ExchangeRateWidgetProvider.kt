@@ -23,18 +23,20 @@ class ExchangeRateWidgetProvider : AppWidgetProvider() {
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         val editor = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).edit()
-        appWidgetIds.forEach { editor.remove("currency_$it"); editor.remove("period_$it") }
+        appWidgetIds.forEach { editor.remove("currency_$it"); editor.remove("period_$it"); editor.remove("days_$it") }
         editor.apply()
     }
 
     override fun onRestored(context: Context, oldWidgetIds: IntArray, newWidgetIds: IntArray) {
         val currencies = oldWidgetIds.map { selectedCurrency(context, it) }
         val periods = oldWidgetIds.map { selectedPeriod(context, it) }
+        val days = oldWidgetIds.map { selectedDays(context, it) }
         val editor = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).edit()
-        oldWidgetIds.forEach { editor.remove("currency_$it"); editor.remove("period_$it") }
+        oldWidgetIds.forEach { editor.remove("currency_$it"); editor.remove("period_$it"); editor.remove("days_$it") }
         newWidgetIds.forEachIndexed { index, id ->
             currencies.getOrNull(index)?.let { editor.putString("currency_$id", it.name) }
             periods.getOrNull(index)?.let { editor.putString("period_$id", it.name) }
+            days.getOrNull(index)?.let { editor.putInt("days_$id", it) }
         }
         editor.apply()
     }
@@ -52,9 +54,17 @@ class ExchangeRateWidgetProvider : AppWidgetProvider() {
             return ExchangeChartPeriod.entries.firstOrNull { it.name == code } ?: ExchangeChartPeriod.ALL
         }
 
-        fun saveSettings(context: Context, appWidgetId: Int, currency: ExchangeCurrency, period: ExchangeChartPeriod) {
+        fun selectedDays(context: Context, appWidgetId: Int): Int =
+            context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).getInt("days_$appWidgetId", 1)
+
+        fun periodLabel(period: ExchangeChartPeriod, days: Int): String =
+            if (period == ExchangeChartPeriod.TODAY && days > 1) "최근 ${days}일" else period.label
+
+        fun saveSettings(context: Context, appWidgetId: Int, currency: ExchangeCurrency, period: ExchangeChartPeriod, days: Int) {
+            require(days > 0) { "환율 위젯 $appWidgetId 조회 일수는 1일 이상이어야 합니다: days=$days" }
             check(context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).edit()
                 .putString("currency_$appWidgetId", currency.name)
+                .putInt("days_$appWidgetId", days)
                 .putString("period_$appWidgetId", period.name).commit()) {
                 "환율 위젯 $appWidgetId 설정을 저장하지 못했습니다."
             }

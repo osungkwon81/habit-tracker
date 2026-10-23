@@ -81,8 +81,6 @@ fun StockAutomationScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "🛡",
-                eyebrow = "STOCK · AUTOMATION",
                 title = "자동 매매·알림",
                 description = "정규장과 NXT 애프터마켓에서 켜진 규칙을 감시하며, 전역 스위치가 켜져야 자동 주문합니다.",
             )

@@ -139,6 +139,14 @@ class DiaryViewModel(
         message.value = null
     }
 
+    private var menuEntryInitialized = false
+
+    fun initializeNewEntry() {
+        if (menuEntryInitialized) return
+        menuEntryInitialized = true
+        startNewDiary()
+    }
+
     fun startNewDiary() {
         selectedDate.value = LocalDate.now()
         reloadToken.value += 1

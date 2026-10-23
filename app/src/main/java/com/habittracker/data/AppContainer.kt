@@ -51,6 +51,14 @@ class AppContainer(context: Context) {
                 exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao(), applicationContext)
                 _readiness.value = Result.success(Unit)
                 try {
+                    withContext(Dispatchers.IO) {
+                        com.habittracker.data.lotto.LotteryProduct.entries.forEach { product ->
+                            com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueIfEnabled(applicationContext, product)
+                        }
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { Log.e("AppContainer", "복권 자동 개선 예약 복구 실패", error) }
+                try {
                     exchangeCollectionSettings.restore()
                 } catch (cancelled: CancellationException) {
                     throw cancelled

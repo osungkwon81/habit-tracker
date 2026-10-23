@@ -41,6 +41,12 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -69,10 +75,10 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 
-private val CardSeriesColors = listOf(Color(0xFF285A4B), Color(0xFFDA8B45), Color(0xFF4F7CAC))
+private val CardSeriesColors = listOf(Color(0xFF087F6B), Color(0xFF477DB3), Color(0xFF7E8792))
 
 @Composable
-fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
+fun CardHistoryScreen(viewModel: CardHistoryViewModel, onOpenCharts: () -> Unit) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     com.habittracker.ui.components.AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     var editingHistoryId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -99,20 +105,14 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
     AppScreen {
         item {
             AppHeroCard(
-                title = "카드 이력",
-                description = "카드 사용 내역과 월별 결제 예정액을 관리합니다.",
-                iconRes = R.drawable.ic_category_card,
-                eyebrow = "MONEY · CARD",
+                title = "카드",
                 action = {
                     CardTopSummaryContent(summary = topSummary)
                 },
             )
         }
         item {
-            CardPaymentSettingsCard(
-                paymentDay = uiState.paymentDay,
-                onSave = viewModel::updatePaymentDay,
-            )
+            com.habittracker.ui.components.AppNavigationRow(title = "카드 그래프", onClick = onOpenCharts)
         }
         item {
             CardHistoryInputCard(
@@ -146,30 +146,6 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             )
         }
         item {
-            val chartScrollState = rememberScrollState()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(chartScrollState),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box(modifier = Modifier.width(336.dp).height(420.dp)) {
-                    CardLineChartCard(
-                        title = "최근 3개월 흐름",
-                        subtitle = "전월 ${uiState.paymentDay + 1}일 ~ 당월 ${uiState.paymentDay}일",
-                        series = uiState.threeMonthSeries,
-                    )
-                }
-                Box(modifier = Modifier.width(336.dp).height(420.dp)) {
-                    CardLineChartCard(
-                        title = "작년 동일월 비교",
-                        subtitle = "선택 월과 전년도 동일 월 비교",
-                        series = uiState.yearComparisonSeries,
-                    )
-                }
-            }
-        }
-        item {
             CardHistoryListCard(
                 histories = uiState.recentHistories,
                 selectedMonthLabel = "${uiState.selectedMonth.year}년 ${uiState.selectedMonth.monthValue}월",
@@ -182,7 +158,47 @@ fun CardHistoryScreen(viewModel: CardHistoryViewModel) {
             )
         }
         item {
+            CardPaymentSettingsCard(paymentDay = uiState.paymentDay, onSave = viewModel::updatePaymentDay)
+        }
+        item {
             uiState.statusMessage?.let { AppStatusText(it) }
+        }
+    }
+}
+
+@Composable
+fun CardChartsScreen(viewModel: CardHistoryViewModel) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val chartWidth = (336 * LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
+    AppScreen {
+        item { AppHeroCard(title = "카드 그래프") }
+        item {
+            MonthSelectorCard(
+                selectedMonthLabel = "${uiState.selectedMonth.year}년 ${uiState.selectedMonth.monthValue}월",
+                onPrevious = viewModel::goToPreviousMonth,
+                onNext = viewModel::goToNextMonth,
+            )
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Box(Modifier.width(chartWidth)) {
+                    CardLineChartCard(
+                        title = "최근 3개월 흐름",
+                        subtitle = "전월 ${uiState.paymentDay + 1}일 ~ 당월 ${uiState.paymentDay}일",
+                        series = uiState.threeMonthSeries,
+                    )
+                }
+                Box(Modifier.width(chartWidth)) {
+                    CardLineChartCard(
+                        title = "작년 동일월 비교",
+                        subtitle = "선택 월과 전년도 동일 월 비교",
+                        series = uiState.yearComparisonSeries,
+                    )
+                }
+            }
         }
     }
 }
@@ -239,7 +255,7 @@ private fun CardTopSummaryContent(summary: CardTopSummary) {
         }
         Text(
             text = formatWon(summary.currentAmount),
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -295,14 +311,10 @@ private fun CardPaymentSettingsCard(paymentDay: Int, onSave: (String) -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AppSectionHeader(
-                title = "설정",
-                subtitle = "그래프 기준 결제일",
+                title = "결제일 ${paymentDay}일",
                 modifier = Modifier.weight(1f),
             )
-            AppSecondaryButton(
-                text = if (expanded) "접기" else "펼치기",
-                onClick = { expanded = !expanded },
-            )
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "닫기" else "변경") }
         }
         if (expanded) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -479,6 +491,8 @@ private fun CardMonthNavigationButton(
 @Composable
 private fun CardLineChartCard(title: String, subtitle: String, series: List<CardMonthSeries>) {
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     val legendVertical = title == "최근 3개월 흐름"
     AppSectionCard {
         AppSectionHeader(title = title, subtitle = subtitle)
@@ -534,11 +548,21 @@ private fun CardLineChartCard(title: String, subtitle: String, series: List<Card
                     }
                 }
             }
-            Canvas(modifier = Modifier.fillMaxWidth().height(240.dp)) {
+            Canvas(modifier = Modifier.fillMaxWidth().height((220 * fontScale).dp).semantics {
+                contentDescription = "$title. " + series.joinToString(". ") { item ->
+                    "${item.label}, 최대 ${formatWon(item.points.maxOfOrNull(CardChartPoint::amount) ?: 0L)}"
+                }
+            }) {
             val allPoints = series.flatMap(CardMonthSeries::points)
             val maxX = series.maxOfOrNull(CardMonthSeries::cycleLength)?.coerceAtLeast(1) ?: 1
             val maxY = allPoints.maxOfOrNull(CardChartPoint::amount)?.coerceAtLeast(1L) ?: 1L
-            val leftPadding = 52.dp.toPx()
+            val paint = android.graphics.Paint().apply {
+                color = axisColor.toArgb()
+                textAlign = android.graphics.Paint.Align.CENTER
+                textSize = 11.sp.toPx()
+                isAntiAlias = true
+            }
+            val leftPadding = paint.measureText(formatWon(maxY)) + 12.dp.toPx()
             val rightPadding = 20.dp.toPx()
             val topPadding = 24.dp.toPx()
             val bottomPadding = 34.dp.toPx()
@@ -571,35 +595,19 @@ private fun CardLineChartCard(title: String, subtitle: String, series: List<Card
                     )
                 }
                 if (points.isNotEmpty()) {
-                    val fillPath = Path().apply {
-                        moveTo(points.first().x, size.height - bottomPadding)
-                        points.forEachIndexed { pointIndex, point ->
-                            if (pointIndex == 0) lineTo(point.x, point.y) else lineTo(point.x, point.y)
-                        }
-                        lineTo(points.last().x, size.height - bottomPadding)
-                        close()
-                    }
                     val path = Path().apply {
                         points.forEachIndexed { pointIndex, point ->
                             if (pointIndex == 0) moveTo(point.x, point.y) else lineTo(point.x, point.y)
                         }
                     }
-                    drawPath(
-                        path = fillPath,
-                        color = CardSeriesColors[index % CardSeriesColors.size].copy(alpha = 0.12f),
-                        style = Fill,
-                    )
-                    drawPath(path = path, color = CardSeriesColors[index % CardSeriesColors.size], style = Stroke(width = 4f))
-                    points.forEach { drawCircle(color = CardSeriesColors[index % CardSeriesColors.size], radius = 5f, center = it) }
+                    drawPath(path = path, color = CardSeriesColors[index % CardSeriesColors.size], style = Stroke(
+                        width = 2.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    ))
+                    drawCircle(color = CardSeriesColors[index % CardSeriesColors.size], radius = 3.dp.toPx(), center = points.last())
                 }
             }
 
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.DKGRAY
-                textAlign = android.graphics.Paint.Align.CENTER
-                textSize = 24f
-                isAntiAlias = true
-            }
             val leftPaint = android.graphics.Paint(paint).apply {
                 textAlign = android.graphics.Paint.Align.RIGHT
             }
@@ -640,27 +648,8 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(text = "일", modifier = Modifier.width(44.dp), style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        text = "사용 금액",
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp),
-                        textAlign = TextAlign.Start,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Text(text = "관리", modifier = Modifier.width(52.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium)
-                }
                 histories.forEachIndexed { index, history ->
                     val dailyAmount = histories.getOrNull(index + 1)?.let { nextHistory ->
                         history.amount - nextHistory.amount
@@ -669,33 +658,35 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(start = 12.dp, end = 4.dp),
+                                .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
                                 text = "${history.useDate.dayOfMonth}일",
-                                modifier = Modifier.width(44.dp),
+                                modifier = Modifier.weight(0.3f),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                             )
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(start = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                horizontalAlignment = Alignment.End,
                             ) {
                                 Text(
                                     text = formatWon(history.amount),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = TextAlign.End,
                                 )
                                 dailyAmount?.let { amount ->
                                     Text(
-                                        text = "(${formatNumber(amount)})",
+                                        text = "직전 기록 대비 ${formatWon(amount)}",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
+                                        textAlign = TextAlign.End,
                                     )
                                 }
                             }
@@ -709,9 +700,7 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
                         history.memo?.takeIf(String::isNotBlank)?.let { memo ->
                             Text(
                                 text = memo,
-                                modifier = Modifier.padding(start = 56.dp, end = 56.dp, bottom = 10.dp),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(bottom = 12.dp),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

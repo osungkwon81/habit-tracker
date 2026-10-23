@@ -101,6 +101,14 @@ class PlantViewModel(
         initialValue = PlantUiState(),
     )
 
+    private var menuEntryInitialized = false
+
+    fun initializeNewEntry() {
+        if (menuEntryInitialized) return
+        menuEntryInitialized = true
+        startNewPlant()
+    }
+
     fun startNewPlant() {
         resetEditor()
         statusMessage.value = null

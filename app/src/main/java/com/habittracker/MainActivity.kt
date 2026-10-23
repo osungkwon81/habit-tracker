@@ -47,6 +47,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -65,6 +73,7 @@ import com.habittracker.ui.AppViewModelFactory
 import com.habittracker.ui.admin.AdminScreen
 import com.habittracker.ui.admin.AdminViewModel
 import com.habittracker.ui.card.CardHistoryScreen
+import com.habittracker.ui.card.CardChartsScreen
 import com.habittracker.ui.card.CardHistoryViewModel
 import com.habittracker.ui.diary.DiaryScreen
 import com.habittracker.ui.diary.DiaryViewModel
@@ -73,6 +82,8 @@ import com.habittracker.ui.entry.DailyEntryViewModel
 import com.habittracker.ui.home.HomeScreen
 import com.habittracker.ui.home.HomeViewModel
 import com.habittracker.ui.lotto.LottoScreen
+import com.habittracker.ui.lotto.LottoTab
+import com.habittracker.ui.lotto.PensionLotteryTab
 import com.habittracker.ui.lotto.LottoViewModel
 import com.habittracker.ui.lotto.LotteryHomeScreen
 import com.habittracker.ui.lotto.PensionLotteryScreen
@@ -138,6 +149,16 @@ private fun HabitTrackerApp() {
     val activity = LocalContext.current as? ComponentActivity
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
+    val applicationContext = LocalContext.current.applicationContext
+    androidx.compose.runtime.LaunchedEffect(route) {
+        val destination = AppDestination.entries.firstOrNull { it.route == route }
+            ?: AppDestination.ENTRY.takeIf { it.matches(route) }
+        if (destination != null) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.habittracker.ui.home.HomeMenuUsageStore.recordVisit(applicationContext, destination)
+            }
+        }
+    }
     val isTopLevel = AppDestination.bottomNavigation.any { it.route == route }
     BackHandler(enabled = guard.hasUnsavedChanges) {
         guard.navigate { if (!navController.popBackStack()) activity?.finish() }
@@ -182,13 +203,16 @@ private fun HabitTrackerApp() {
         ) {
             composable(AppDestination.MORE.route) {
                 AppScreen {
-                    item { AppHeroCard(title = "전체", description = "생활 기록과 자산 관리를 한곳에서") }
-                    items(listOf(AppDestination.EXCHANGE, AppDestination.MEMO, AppDestination.PLANT, AppDestination.REMINDER, AppDestination.NOTIFICATION_ASSISTANT, AppDestination.ENTRY, AppDestination.DIARY, AppDestination.SETTINGS)) { destination ->
-                        ListItem(
-                            headlineContent = { Text(destination.label) },
-                            trailingContent = { Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            modifier = Modifier.clickable { navController.navigate(destination.route) { launchSingleTop = true } },
-                        )
+                    item { AppHeroCard(title = "전체") }
+                    AppDestination.menuGroups.forEach { (title, destinations) ->
+                        item(key = title) { com.habittracker.ui.components.AppSectionHeader(title = title) }
+                        items(destinations, key = { it.route }) { destination ->
+                            MenuTreeNode(destination = destination, onOpen = { target ->
+                                guard.navigate {
+                                    navController.navigate(target.route) { launchSingleTop = true }
+                                }
+                            })
+                        }
                     }
                 }
             }
@@ -197,13 +221,7 @@ private fun HabitTrackerApp() {
                 HomeScreen(
                     viewModel = viewModel,
                     onOpenRecord = { date -> navController.navigate("${AppDestination.ENTRY.route}/${date}") },
-                    onOpenMemo = { navController.navigate(AppDestination.MEMO.route) },
-                    onOpenStock = { navController.navigate(AppDestination.STOCK.route) },
-                    onOpenLotto = { navController.navigate(AppDestination.LOTTO.route) },
-                    onOpenPlant = { navController.navigate(AppDestination.PLANT.route) },
-                    onOpenReminder = { navController.navigate(AppDestination.REMINDER.route) },
-                    onOpenNotificationAssistant = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT.route) },
-                    onOpenCard = { navController.navigate(AppDestination.CARD.route) },
+                    onOpenDestination = { destination -> navController.navigate(destination.route) },
                 )
             }
             composable(AppDestination.ENTRY.route) {
@@ -224,13 +242,31 @@ private fun HabitTrackerApp() {
                     onOpenStats = { navController.navigate(AppDestination.STATS.route) },
                 )
             }
+            composable(AppDestination.ENTRY_EXERCISE.route) {
+                val viewModel: DailyEntryViewModel = viewModel(factory = viewModelFactory)
+                DailyEntryScreen(
+                    viewModel = viewModel,
+                    initialDate = LocalDate.now().toString(),
+                    initialCategory = "운동",
+                    onOpenAdmin = { navController.navigate(AppDestination.ADMIN.route) },
+                    onOpenStats = { navController.navigate(AppDestination.STATS.route) },
+                )
+            }
             composable(AppDestination.DIARY.route) {
                 val viewModel: DiaryViewModel = viewModel(factory = viewModelFactory)
                 DiaryScreen(viewModel = viewModel)
             }
+            composable(AppDestination.DIARY_NEW.route) {
+                val viewModel: DiaryViewModel = viewModel(factory = viewModelFactory)
+                DiaryScreen(viewModel = viewModel, startNew = true)
+            }
             composable(AppDestination.MEMO.route) {
                 val viewModel: MemoViewModel = viewModel(factory = viewModelFactory)
                 MemoScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.MEMO_NEW.route) {
+                val viewModel: MemoViewModel = viewModel(factory = viewModelFactory)
+                MemoScreen(viewModel = viewModel, startNew = true)
             }
             composable(AppDestination.STATS.route) {
                 val viewModel: MonthlyStatsViewModel = viewModel(factory = viewModelFactory)
@@ -288,39 +324,87 @@ private fun HabitTrackerApp() {
                     onOpenPensionLottery = { navController.navigate(AppDestination.PENSION_LOTTO.route) },
                 )
             }
-            composable(AppDestination.LOTTO_645.route) {
-                val viewModel: LottoViewModel = viewModel(factory = viewModelFactory)
-                LottoScreen(
-                    viewModel = viewModel,
-                    onBackToLotteryHome = { navController.popBackStack() },
-                )
+            listOf(
+                AppDestination.LOTTO_645 to null,
+                AppDestination.LOTTO_GENERATOR to LottoTab.GENERATOR,
+                AppDestination.LOTTO_SAVED to LottoTab.SAVED,
+                AppDestination.LOTTO_QR to LottoTab.PHYSICAL_QR,
+                AppDestination.LOTTO_PURCHASE to LottoTab.PURCHASE,
+                AppDestination.LOTTO_WINNING to LottoTab.WINNING,
+                AppDestination.LOTTO_DRAW to LottoTab.DRAW,
+                AppDestination.LOTTO_STATS to LottoTab.STATS,
+                AppDestination.LOTTO_IMPROVEMENT to LottoTab.EXPERIMENT,
+            ).forEach { (destination, initialTab) ->
+                composable(destination.route) {
+                    val viewModel: LottoViewModel = viewModel(factory = viewModelFactory)
+                    LottoScreen(
+                        viewModel = viewModel,
+                        onBackToLotteryHome = { navController.popBackStack() },
+                        initialTab = initialTab,
+                    )
+                }
             }
-            composable(AppDestination.PENSION_LOTTO.route) {
-                val viewModel: PensionLotteryViewModel = viewModel(factory = viewModelFactory)
-                PensionLotteryScreen(
-                    viewModel = viewModel,
-                    onBackToLotteryHome = { navController.popBackStack() },
-                    onOpenGenerator = { navController.navigate(AppDestination.PENSION_LOTTO_GENERATOR.route) },
-                )
+            listOf(
+                AppDestination.PENSION_LOTTO to null,
+                AppDestination.PENSION_LOTTO_PURCHASE to PensionLotteryTab.PURCHASE,
+                AppDestination.PENSION_LOTTO_WINNING to PensionLotteryTab.WINNING,
+                AppDestination.PENSION_LOTTO_DRAW to PensionLotteryTab.INPUT,
+                AppDestination.PENSION_LOTTO_MATCH to PensionLotteryTab.MATCH,
+                AppDestination.PENSION_LOTTO_PATTERN to PensionLotteryTab.STATS,
+                AppDestination.PENSION_LOTTO_STATS to PensionLotteryTab.ACCOUNTING_STATS,
+            ).forEach { (destination, initialTab) ->
+                composable(destination.route) {
+                    val viewModel: PensionLotteryViewModel = viewModel(factory = viewModelFactory)
+                    PensionLotteryScreen(
+                        viewModel = viewModel,
+                        onBackToLotteryHome = { navController.popBackStack() },
+                        onOpenGenerator = { navController.navigate(AppDestination.PENSION_LOTTO_GENERATOR.route) },
+                        initialTab = initialTab,
+                    )
+                }
             }
-            composable(AppDestination.PENSION_LOTTO_GENERATOR.route) {
-                val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = viewModelFactory)
-                PensionLotteryGeneratorScreen(
-                    viewModel = viewModel,
-                    onBack = { navController.popBackStack() },
-                )
+            listOf(
+                AppDestination.PENSION_LOTTO_GENERATOR to "NUMBERS",
+                AppDestination.PENSION_LOTTO_SAVED to "HISTORY",
+                AppDestination.PENSION_LOTTO_IMPROVEMENT to "IMPROVEMENT",
+            ).forEach { (destination, initialSection) ->
+                composable(destination.route) {
+                    val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = viewModelFactory)
+                    PensionLotteryGeneratorScreen(
+                        viewModel = viewModel,
+                        onBack = { navController.navigate(AppDestination.PENSION_LOTTO.route) { launchSingleTop = true } },
+                        initialSection = initialSection,
+                    )
+                }
             }
             composable(AppDestination.CARD.route) {
                 val viewModel: CardHistoryViewModel = viewModel(factory = viewModelFactory)
-                CardHistoryScreen(viewModel = viewModel)
+                CardHistoryScreen(
+                    viewModel = viewModel,
+                    onOpenCharts = {
+                        guard.navigate { navController.navigate(AppDestination.CARD_CHARTS.route) { launchSingleTop = true } }
+                    },
+                )
+            }
+            composable(AppDestination.CARD_CHARTS.route) {
+                val viewModel: CardHistoryViewModel = viewModel(factory = viewModelFactory)
+                CardChartsScreen(viewModel = viewModel)
             }
             composable(AppDestination.PLANT.route) {
                 val viewModel: PlantViewModel = viewModel(factory = viewModelFactory)
                 PlantScreen(viewModel = viewModel)
             }
+            composable(AppDestination.PLANT_NEW.route) {
+                val viewModel: PlantViewModel = viewModel(factory = viewModelFactory)
+                PlantScreen(viewModel = viewModel, startNew = true)
+            }
             composable(AppDestination.REMINDER.route) {
                 val viewModel: ReminderViewModel = viewModel(factory = viewModelFactory)
                 ReminderScreen(viewModel = viewModel)
+            }
+            composable(AppDestination.REMINDER_NEW.route) {
+                val viewModel: ReminderViewModel = viewModel(factory = viewModelFactory)
+                ReminderScreen(viewModel = viewModel, startNew = true)
             }
             composable(
                 AppDestination.EXCHANGE.route,
@@ -339,21 +423,37 @@ private fun HabitTrackerApp() {
                 )
             }
             composable(AppDestination.EXCHANGE_COLLECTION_SETTINGS.route) { backStackEntry ->
-                val parentEntry = remember(backStackEntry) { navController.getBackStackEntry(AppDestination.EXCHANGE.route) }
+                val parentEntry = remember(backStackEntry) {
+                    navController.previousBackStackEntry?.takeIf { it.destination.route == AppDestination.EXCHANGE.route }
+                        ?: backStackEntry
+                }
                 val viewModel: ExchangeViewModel = viewModel(viewModelStoreOwner = parentEntry, factory = viewModelFactory)
                 ExchangeScreen(
                     viewModel = viewModel,
                     page = ExchangePage.COLLECTION_SETTINGS,
                 )
             }
-            composable(AppDestination.EXCHANGE_RECORDS.route) { backStackEntry ->
-                val parentEntry = remember(backStackEntry) { navController.getBackStackEntry(AppDestination.EXCHANGE.route) }
-                val viewModel: ExchangeViewModel = viewModel(viewModelStoreOwner = parentEntry, factory = viewModelFactory)
-                ExchangeScreen(
-                    viewModel = viewModel,
-                    page = ExchangePage.RECORDS,
-                    onOpenRates = { navController.popBackStack(AppDestination.EXCHANGE.route, false) },
-                )
+            listOf(
+                AppDestination.EXCHANGE_RECORDS to com.habittracker.ui.exchange.ExchangeEntryType.EXCHANGE,
+                AppDestination.EXCHANGE_EXPENSES to com.habittracker.ui.exchange.ExchangeEntryType.EXPENSE,
+            ).forEach { (destination, initialEntryType) ->
+                composable(destination.route) { backStackEntry ->
+                    val parentEntry = remember(backStackEntry) {
+                        navController.previousBackStackEntry?.takeIf { it.destination.route == AppDestination.EXCHANGE.route }
+                            ?: backStackEntry
+                    }
+                    val viewModel: ExchangeViewModel = viewModel(viewModelStoreOwner = parentEntry, factory = viewModelFactory)
+                    ExchangeScreen(
+                        viewModel = viewModel,
+                        page = ExchangePage.RECORDS,
+                        initialEntryType = initialEntryType,
+                        onOpenRates = {
+                            if (!navController.popBackStack(AppDestination.EXCHANGE.route, false)) {
+                                navController.navigate(AppDestination.EXCHANGE.route) { launchSingleTop = true }
+                            }
+                        },
+                    )
+                }
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT.route) {
                 val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
@@ -382,12 +482,83 @@ private fun HabitTrackerApp() {
 }
 
 @Composable
+private fun MenuTreeNode(
+    destination: AppDestination,
+    onOpen: (AppDestination) -> Unit,
+    showIcon: Boolean = true,
+) {
+    val children = remember(destination) { destination.children }
+    var expanded by rememberSaveable(destination.route) { mutableStateOf(false) }
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
+                .background(MaterialTheme.colorScheme.surface),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f)
+                    .clickable(role = Role.Button, onClickLabel = "${destination.label} 열기") { onOpen(destination) }
+                    .sizeIn(minHeight = if (showIcon) 64.dp else 52.dp)
+                    .padding(horizontal = AppSpacing.sm, vertical = AppSpacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                if (showIcon) {
+                    com.habittracker.ui.components.AppFeatureIcon(destination.route, destination.iconRes, Modifier.size(40.dp))
+                }
+                Text(
+                    destination.label,
+                    style = if (showIcon) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (showIcon) FontWeight.SemiBold else FontWeight.Normal,
+                )
+            }
+            if (children.isNotEmpty()) {
+                androidx.compose.material3.IconButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics {
+                        contentDescription = "${destination.label} 하위 메뉴 ${if (expanded) "접기" else "펼치기"}"
+                        stateDescription = if (expanded) "펼쳐짐" else "접힘"
+                    },
+                ) {
+                    val iconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    Canvas(Modifier.size(20.dp)) {
+                        val unit = size.width / 20f
+                        drawPath(Path().apply {
+                            if (expanded) {
+                                moveTo(5 * unit, 12 * unit); lineTo(10 * unit, 7 * unit); lineTo(15 * unit, 12 * unit)
+                            } else {
+                                moveTo(5 * unit, 7 * unit); lineTo(10 * unit, 12 * unit); lineTo(15 * unit, 7 * unit)
+                            }
+                        }, iconColor, style = Stroke(1.8f * unit))
+                    }
+                }
+            }
+        }
+        if (children.isNotEmpty() && expanded) {
+            Column(
+                modifier = Modifier.padding(start = AppSpacing.md, top = AppSpacing.xs, bottom = AppSpacing.sm).drawBehind {
+                    drawLine(lineColor, Offset.Zero, Offset(0f, size.height), strokeWidth = 1.dp.toPx())
+                }.padding(start = AppSpacing.xs),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+            ) {
+                children.forEach { child ->
+                    androidx.compose.runtime.key(child.route) {
+                        MenuTreeNode(destination = child, onOpen = onOpen, showIcon = false)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun AppBottomNavigation(navController: NavHostController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
     val guard = LocalAppNavigationGuard.current
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         AppDestination.bottomNavigation.forEach { destination ->
             val selected = if (destination == AppDestination.MORE) {
                 currentDestination != null && AppDestination.bottomNavigation
@@ -397,7 +568,14 @@ private fun AppBottomNavigation(navController: NavHostController) {
                 destination.matches(current.route)
             } == true
             NavigationBarItem(
-                label = { Text(destination.label, maxLines = 1) },
+                label = { Text(destination.label, style = MaterialTheme.typography.labelSmall) },
+                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.surface,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
                 icon = { NavigationIcon(destination) },
                 selected = selected,
                 onClick = {

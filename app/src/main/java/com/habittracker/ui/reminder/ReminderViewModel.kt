@@ -46,6 +46,14 @@ class ReminderViewModel(
         ReminderUiState(reminders, busy, saving, statusMessage, mode)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReminderUiState())
 
+    private var menuEntryInitialized = false
+
+    fun initializeNewEntry() {
+        if (menuEntryInitialized) return
+        menuEntryInitialized = true
+        startEditor()
+    }
+
     fun startEditor() {
         resetEditor()
         screenMode.value = ReminderScreenMode.EDITOR

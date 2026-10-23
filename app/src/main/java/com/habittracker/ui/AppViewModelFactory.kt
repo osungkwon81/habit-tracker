@@ -34,7 +34,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
         // Factory API가 제네릭 T를 요구하므로, 실제 타입을 확인한 분기 안에서만 제한적으로 캐스팅한다.
         @Suppress("UNCHECKED_CAST")
         return when {
-            modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(repository) as T
+            modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(repository, application.appContainer.reminderRepository) as T
             modelClass.isAssignableFrom(DailyEntryViewModel::class.java) -> DailyEntryViewModel(repository, extras.createSavedStateHandle()) as T
             modelClass.isAssignableFrom(MonthlyStatsViewModel::class.java) -> MonthlyStatsViewModel(repository) as T
             modelClass.isAssignableFrom(AdminViewModel::class.java) -> AdminViewModel(repository) as T

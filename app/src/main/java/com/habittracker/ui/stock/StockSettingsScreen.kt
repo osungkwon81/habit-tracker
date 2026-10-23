@@ -30,8 +30,6 @@ fun StockSettingsScreen(viewModel: StockViewModel) {
     AppScreen {
         item {
             StockHeroCard(
-                icon = "⚙",
-                eyebrow = "STOCK · SETTINGS",
                 title = "KIS·안전 설정",
                 description = "KIS 실전 계좌와 주문·자동화 안전 한도를 관리합니다.",
             )

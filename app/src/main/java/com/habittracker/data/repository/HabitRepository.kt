@@ -135,6 +135,18 @@ class HabitRepository(
 ) {
     val lottoExperiments = com.habittracker.data.lotto.LottoExperimentStore(context)
     internal val pensionExperiments = com.habittracker.data.lotto.PensionExperimentStore(context)
+    private val lotteryContext = context.applicationContext
+    internal val autoImprovement = com.habittracker.data.lotto.LotteryAutoImprovement(lotteryContext, this)
+
+    internal suspend fun getLotteryResearchInput(product: LotteryProduct) = when (product) {
+        LotteryProduct.LOTTO_645 -> com.habittracker.data.lotto.LotteryResearchInput(product, lotto = habitDao.getAllLottoDrawsDesc())
+        LotteryProduct.PENSION_720 -> com.habittracker.data.lotto.LotteryResearchInput(product, pension = habitDao.getAllPensionLotteryDraws())
+    }
+
+    private fun enqueueLotteryImprovement(product: LotteryProduct) {
+        try { com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueIfEnabled(lotteryContext, product) }
+        catch (error: Exception) { Log.e("LotteryAutoImprovement", "product=$product phase=schedule failed", error) }
+    }
 
     internal suspend fun getPensionExperimentInput() = com.habittracker.data.lotto.PensionExperimentInput(
         habitDao.getAllPensionLotteryDraws(),
@@ -255,7 +267,7 @@ class HabitRepository(
         when (product) {
             LotteryProduct.LOTTO_645 -> syncOfficialLottoDraws(expectedDrawDate)
             LotteryProduct.PENSION_720 -> syncOfficialPensionLotteryDraws(expectedDrawDate)
-        }
+        }.also { enqueueLotteryImprovement(product) }
     }
 
     suspend fun savePensionLotteryDraw(roundNo: Int, groupNo: Int, winningNumber: String) {
@@ -275,6 +287,7 @@ class HabitRepository(
             if (existing == null) habitDao.upsertPensionLotteryDraw(newDraw)
             evaluatePensionLotteryNumbers(newDraw)
         }
+        enqueueLotteryImprovement(LotteryProduct.PENSION_720)
     }
 
     private suspend fun syncOfficialLottoDraws(expectedDrawDate: LocalDate): LotteryOfficialSyncResult {
@@ -502,7 +515,8 @@ class HabitRepository(
                     numbers.map { it.generationType }.distinct().size == numbers.size) {
                     "${first.generationId} 배치에 중복 번호 또는 생성 유형이 있습니다."
                 }
-                if (!first.generationId.startsWith("backup:")) {
+                val isBackup = first.generationId.startsWith("backup:")
+                if (!isBackup) {
                     val recommendedTypes = setOf("APPEARED", "APPEARED_SECOND", "COLD_MIX", "COLD_MIX_SECOND")
                     require(numbers.filterNot { it.isControl }.map { it.generationType }.toSet() == recommendedTypes &&
                         numbers.count { it.isControl } == 4 && numbers.size == 8) {
@@ -512,11 +526,26 @@ class HabitRepository(
                     require(numbers.size == 1 && !first.isControl && !first.isEvaluationTarget) {
                         "${first.generationId} 예비 번호는 사전 평가 표본으로 등록할 수 없습니다."
                     }
+                    val parentId = first.generationId.removePrefix("backup:").substringBeforeLast(':', missingDelimiterValue = "")
+                    val parent = habitDao.getPensionLotteryGeneration(parentId).filterNot { it.isControl }
+                    require(parent.size == 4 && parent.none { it.isHidden } && parent.any { it.generationType == first.generationType } && parent.all {
+                        it.targetRoundNo == targetRound && it.analysisThroughRound == analysisThroughRound &&
+                            it.inputDataHash == first.inputDataHash && it.generationVersion == first.generationVersion &&
+                            it.generationConfigHash == configHash && it.generationConfigJson == configJson
+                    }) { "${first.generationId} 예비 번호의 고정 번호가 없거나 생성 당시 회차·입력·설정이 다릅니다." }
+                    require(habitDao.getVisiblePensionLotteryBackups("backup:$parentId:").none { it.generationType == first.generationType }) {
+                        "${first.generationId} 유형의 예비 번호가 이미 저장되어 있습니다."
+                    }
                 }
                 val draws = habitDao.getAllPensionLotteryDraws()
-                require(draws.firstOrNull()?.roundNo == analysisThroughRound &&
-                    pensionGenerationInputHash(draws) == first.inputDataHash) {
-                    "${targetRound}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
+                val generationDraws = if (isBackup) draws.filter { it.roundNo <= analysisThroughRound } else draws
+                require(generationDraws.firstOrNull()?.roundNo == analysisThroughRound &&
+                    pensionGenerationInputHash(generationDraws) == first.inputDataHash) {
+                    if (isBackup) {
+                        "${targetRound}회차 생성 당시 입력을 확인할 수 없어 예비 번호 저장을 중단했습니다. 고정 번호는 유지됩니다."
+                    } else {
+                        "${targetRound}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
+                    }
                 }
                 val savedAt = lotteryEvaluationNow()
                 val eligible = savedAt.isBefore(lotteryEvaluationDeadline(LotteryProduct.PENSION_720, targetRound)) &&
@@ -2560,14 +2589,6 @@ class HabitRepository(
     suspend fun getAllVocabularyWords(): List<VocabularyWordEntity> =
         habitDao.getAllVocabularyWords()
 
-    suspend fun verifyMemoPassword(memoId: Long, password: String): MemoNoteEntity {
-        val memoNote = habitDao.getMemoNoteById(memoId) ?: throw IllegalArgumentException("메모를 찾을 수 없습니다.")
-        require(memoNote.isLocked) { "잠금 메모가 아닙니다." }
-        require(password.matches(Regex("\\d{4,10}"))) { "비밀번호는 4~10자리 숫자로 입력해 주세요." }
-        require(memoNote.passwordHash == hashPin(password)) { "비밀번호가 올바르지 않습니다." }
-        return memoNote
-    }
-
     suspend fun searchDiaries(query: String, limit: Int = 20): List<DiarySearchRow> =
         habitDao.searchDiaries(query.trim(), limit)
 
@@ -2755,7 +2776,7 @@ class HabitRepository(
                 updateLottoWinningStatsForRound(roundNo = safeRoundNo, draw = drawToSave)
             }
             safeRoundNo
-        }
+        }.also { enqueueLotteryImprovement(LotteryProduct.LOTTO_645) }
     }
 
     suspend fun saveLottoTicket(numbers: List<Int>, sourceLabel: String, note: String? = null) {
@@ -3213,18 +3234,10 @@ class HabitRepository(
         }
     }
 
-    suspend fun saveMemoNote(memoId: Long?, title: String, content: String, isLocked: Boolean, password: String?) {
+    suspend fun saveMemoNote(memoId: Long?, title: String, content: String, isLocked: Boolean) {
         val sanitizedTitle = title.trim()
         val sanitizedContent = content.trim()
         require(sanitizedTitle.isNotEmpty() || sanitizedContent.isNotEmpty()) { "제목 또는 내용을 입력해 주세요." }
-
-        val passwordHash = if (isLocked) {
-            require(!password.isNullOrBlank()) { "잠금 메모는 4~10자리 비밀번호를 입력해 주세요." }
-            require(password.matches(Regex("\\d{4,10}"))) { "비밀번호는 4~10자리 숫자로 입력해 주세요." }
-            hashPin(password)
-        } else {
-            null
-        }
 
         val now = LocalDateTime.now()
         val existingMemo = if (memoId != null) {
@@ -3239,7 +3252,7 @@ class HabitRepository(
                         title = sanitizedTitle.ifEmpty { "제목 없음" },
                         content = sanitizedContent,
                         isLocked = isLocked,
-                        passwordHash = passwordHash,
+                        passwordHash = null,
                         createdAt = now,
                         updatedAt = now,
                     ),
@@ -3250,7 +3263,7 @@ class HabitRepository(
                         title = sanitizedTitle.ifEmpty { "제목 없음" },
                         content = sanitizedContent,
                         isLocked = isLocked,
-                        passwordHash = passwordHash,
+                        passwordHash = null,
                         updatedAt = now,
                     ),
                 )
@@ -3644,11 +3657,6 @@ class HabitRepository(
         return List(itemCount) { index ->
             baseSeconds + if (index < remainder) 1 else 0
         }
-    }
-
-    private fun hashPin(pin: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(pin.toByteArray()).joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 
     private fun buildLottoRoundNote(roundNo: Int): String = "$lottoRoundNotePrefix$roundNo"

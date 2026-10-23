@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -67,7 +68,10 @@ import java.util.UUID
 import kotlin.math.ceil
 
 @Composable
-fun PlantScreen(viewModel: PlantViewModel) {
+fun PlantScreen(viewModel: PlantViewModel, startNew: Boolean = false) {
+    androidx.compose.runtime.LaunchedEffect(viewModel, startNew) {
+        if (startNew) viewModel.initializeNewEntry()
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     when (uiState.screenMode) {
@@ -93,20 +97,12 @@ private fun PlantListScreen(viewModel: PlantViewModel, uiState: PlantUiState) {
         )
     }
 
-    AppScreen {
+    AppScreen(bottomBar = {
+        AppPrimaryButton(text = "할 일 등록", onClick = viewModel::startNewPlant, modifier = Modifier.fillMaxWidth())
+    }) {
         item {
             AppHeroCard(
                 title = "반복 할 일",
-                description = "주기적으로 해야 할 일을 관리합니다.",
-                iconRes = R.drawable.ic_category_repeat,
-                eyebrow = "LIFE · ROUTINE",
-                action = {
-                    AppPrimaryButton(
-                        text = "할 일 등록",
-                        onClick = viewModel::startNewPlant,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item {
@@ -213,20 +209,18 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
         }
     }
 
-    AppScreen {
+    AppScreen(bottomBar = {
+        com.habittracker.ui.components.AppButtonRow(
+            primaryText = "저장",
+            onPrimaryClick = viewModel::savePlant,
+            secondaryText = "목록",
+            onSecondaryClick = viewModel::showList,
+        )
+    }) {
         item {
             AppHeroCard(
                 title = if (uiState.selectedPlantId == null) "반복 할 일 등록" else "반복 할 일 수정",
                 description = "1개월은 30일 기준으로 다음 예정일을 계산합니다.",
-                iconRes = R.drawable.ic_category_repeat,
-                eyebrow = "LIFE · ROUTINE",
-                action = {
-                    AppSecondaryButton(
-                        text = "목록으로",
-                        onClick = viewModel::showList,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
             )
         }
         item {
@@ -293,7 +287,7 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                     label = "다음 예정일",
                     readOnly = true,
                 )
-                AppPrimaryButton(
+                AppSecondaryButton(
                     text = "할 일 이미지 선택",
                     onClick = { imagePicker.launch(arrayOf("image/*")) },
                     modifier = Modifier.fillMaxWidth(),
@@ -312,11 +306,6 @@ private fun PlantEditorScreen(viewModel: PlantViewModel, uiState: PlantUiState) 
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                AppSaveButton(
-                    text = "할 일 저장",
-                    onClick = viewModel::savePlant,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 uiState.statusMessage?.let { message ->
                     AppStatusText(message)
                 }
@@ -334,7 +323,6 @@ private fun DuePlantRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.medium)
             .padding(com.habittracker.ui.components.AppSpacing.xs),
         horizontalArrangement = Arrangement.spacedBy(com.habittracker.ui.components.AppSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
@@ -355,7 +343,7 @@ private fun DuePlantRow(
         }
         Surface(
             onClick = onIncreaseInterval,
-            modifier = Modifier.height(40.dp),
+            modifier = Modifier.heightIn(min = 48.dp),
             shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.primary,
@@ -420,8 +408,8 @@ private fun PlantCard(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(com.habittracker.ui.components.AppSpacing.xs),
         ) {
-            AppEditButton(onClick = onEdit, modifier = Modifier.weight(1f))
-            AppSecondaryButton(text = "삭제", onClick = onDelete, modifier = Modifier.weight(1f))
+            androidx.compose.material3.TextButton(onClick = onEdit) { Text("수정") }
+            androidx.compose.material3.TextButton(onClick = onDelete) { Text("삭제", color = MaterialTheme.colorScheme.error) }
         }
     }
 }

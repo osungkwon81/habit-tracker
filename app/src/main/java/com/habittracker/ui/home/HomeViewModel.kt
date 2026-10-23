@@ -6,6 +6,10 @@ import com.habittracker.data.local.model.DiarySummaryRow
 import com.habittracker.data.local.model.RecordDetailRow
 import com.habittracker.data.local.model.RecordSummaryRow
 import com.habittracker.data.repository.HabitRepository
+import com.habittracker.data.reminder.ReminderRepository
+import com.habittracker.data.local.entity.ReminderEntity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,9 +26,18 @@ import java.time.YearMonth
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val repository: HabitRepository,
+    reminderRepository: ReminderRepository,
 ) : ViewModel() {
     private val currentMonth = MutableStateFlow(YearMonth.now())
     private val selectedDate = MutableStateFlow<LocalDate?>(null)
+    private val today = MutableStateFlow(LocalDate.now())
+    private val reminders = combine(reminderRepository.observeReminders(), today) { reminders, date ->
+        HomeReminderState(items = reminders.filter { it.completedAt == null && it.remindAt.toLocalDate() == date }, isLoading = false)
+    }.catch { error ->
+        if (error is CancellationException) throw error
+        android.util.Log.e("HomeViewModel", "오늘 리마인더 조회 실패", error)
+        emit(HomeReminderState(isLoading = false, error = "오늘 할 일을 불러오지 못했습니다."))
+    }
 
     private val monthlyState = currentMonth.flatMapLatest { month ->
             combine(
@@ -42,9 +55,16 @@ class HomeViewModel(
         if (date == null) flow { emit(null to emptyList<RecordDetailRow>()) }
         else repository.observeRecordDetails(date).map { date to it }
     }
-    val uiState: StateFlow<HomeUiState> = combine(monthlyState, selectedDetails) { month, (date, details) ->
+    val uiState: StateFlow<HomeUiState> = combine(monthlyState, selectedDetails, reminders) { month, selected, reminders ->
+        val (date, details) = selected
         val visibleDate = date?.takeIf { YearMonth.from(it) == month.currentMonth }
-        month.copy(selectedDate = visibleDate, selectedRecordDetails = if (visibleDate != null) details else emptyList())
+        month.copy(
+            selectedDate = visibleDate,
+            selectedRecordDetails = if (visibleDate != null) details else emptyList(),
+            reminders = reminders.items,
+            remindersLoading = reminders.isLoading,
+            remindersError = reminders.error,
+        )
     }
         .stateIn(
             scope = viewModelScope,
@@ -69,7 +89,17 @@ class HomeViewModel(
     fun selectDate(date: LocalDate?) {
         selectedDate.value = date
     }
+
+    fun refreshToday() {
+        today.value = LocalDate.now()
+    }
 }
+
+private data class HomeReminderState(
+    val items: List<ReminderEntity> = emptyList(),
+    val isLoading: Boolean = true,
+    val error: String? = null,
+)
 
 data class HomeUiState(
     val currentMonth: YearMonth = YearMonth.now(),
@@ -77,4 +107,7 @@ data class HomeUiState(
     val summaries: Map<LocalDate, RecordSummaryRow> = emptyMap(),
     val diarySummaries: Map<LocalDate, DiarySummaryRow> = emptyMap(),
     val selectedRecordDetails: List<RecordDetailRow> = emptyList(),
+    val reminders: List<ReminderEntity> = emptyList(),
+    val remindersLoading: Boolean = true,
+    val remindersError: String? = null,
 )

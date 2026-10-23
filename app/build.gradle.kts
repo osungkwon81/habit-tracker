@@ -65,6 +65,46 @@ kotlin {
     }
 }
 
+// 실험 등록에 필요한 실제 소스를 같은 빌드의 자산으로 묶어 사용자의 JSON 준비를 없앤다.
+val lotteryEvidencePaths = listOf(
+    "app/build.gradle.kts", "build.gradle.kts", "gradle/libs.versions.toml",
+    "app/src/main/java/com/habittracker/data/AppContainer.kt",
+    "app/src/main/java/com/habittracker/data/repository/HabitRepository.kt",
+    "app/src/main/java/com/habittracker/ui/components/DesignSystem.kt",
+) + listOf(
+    "LottoNumberGenerator", "LottoPriorDesignComparison", "LottoDesignRunStore", "LottoDesignRecordJson",
+    "LottoExperimentStore", "LottoExperimentPolicy", "PensionExperimentStore", "PensionExperimentComparison",
+    "LotteryAutoImprovement", "LotteryAutoImprovementWorker", "LotteryHistoryAudit", "LotteryDrawSyncModels",
+    "LotteryAutomaticRegistration",
+).map { "app/src/main/java/com/habittracker/data/lotto/$it.kt" } + listOf(
+    "LottoViewModel", "LottoScreen", "LottoExperimentSection", "PensionLotteryGeneratorViewModel",
+    "PensionLotteryGeneratorScreen", "PensionLotteryPerformanceAnalyzer", "PensionLotteryPerformanceSection",
+    "PensionExperimentSection", "LotteryAutoImprovementSection",
+).map { "app/src/main/java/com/habittracker/ui/lotto/$it.kt" }
+val lotteryEvidenceAssets = layout.buildDirectory.dir("generated/lotteryExperimentAssets")
+val evidenceKotlinVersion = libs.versions.kotlin.get()
+val evidenceCoroutinesVersion = libs.versions.coroutines.get()
+val prepareLotteryEvidence by tasks.registering(Sync::class) {
+    into(lotteryEvidenceAssets.map { it.dir("lottery-experiment-source") })
+    lotteryEvidencePaths.forEach { path ->
+        from(rootProject.file(path)) { into(path.substringBeforeLast('/')) }
+    }
+    inputs.property("kotlinVersion", evidenceKotlinVersion)
+    inputs.property("coroutinesVersion", evidenceCoroutinesVersion)
+    doFirst {
+        lotteryEvidencePaths.forEach { path ->
+            require(rootProject.file(path).isFile) { "복권 실험 소스가 없습니다: $path" }
+        }
+    }
+    doLast {
+        destinationDir.resolve("dependencies.properties").writeText(
+            "kotlin=$evidenceKotlinVersion\ncoroutines=$evidenceCoroutinesVersion\n",
+        )
+    }
+}
+android.sourceSets.getByName("main").assets.srcDir(lotteryEvidenceAssets)
+tasks.named("preBuild") { dependsOn(prepareLotteryEvidence) }
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

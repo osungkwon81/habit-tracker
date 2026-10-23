@@ -1,12 +1,15 @@
 package com.habittracker.ui.stats
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,11 +19,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
 import com.habittracker.ui.components.AppEmptyCard
@@ -57,9 +66,6 @@ fun MonthlyStatsScreen(
         item {
             AppHeroCard(
                 title = "통계",
-                description = "기간별 완료 기록과 운동 수치를 비교합니다.",
-                iconRes = R.drawable.ic_category_record,
-                eyebrow = "HABIT · INSIGHTS",
                 action = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -135,13 +141,15 @@ private fun TaskLineChartCard(
 ) {
     val lineColor = colorFromHex(chart.colorHex)
     val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
     AppSectionCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = chart.taskName,
                     style = MaterialTheme.typography.titleMedium,
@@ -170,10 +178,15 @@ private fun TaskLineChartCard(
                 Text("기록이 없습니다.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            Canvas(modifier = Modifier.fillMaxWidth().height(180.dp)) {
+            Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+            Canvas(modifier = Modifier.width((maxOf(320, chart.points.size * 72) * fontScale).dp).height((200 * fontScale).dp).semantics {
+                contentDescription = chart.taskName + ". " + chart.points.joinToString(". ") { point ->
+                    "${formatPointLabel(point, chart.periodMode)} ${formatSeriesValue(point.value, chart.valueType, chart.unit)}"
+                }
+            }) {
                 val maxValue = chart.points.maxOfOrNull { it.value }?.coerceAtLeast(1.0) ?: 1.0
-                val leftPadding = 20.dp.toPx()
-                val rightPadding = 20.dp.toPx()
+                val leftPadding = (36 * fontScale).dp.toPx()
+                val rightPadding = (36 * fontScale).dp.toPx()
                 val topPadding = 28.dp.toPx()
                 val bottomPadding = 28.dp.toPx()
                 val chartWidth = (size.width - leftPadding - rightPadding).coerceAtLeast(0f)
@@ -197,13 +210,13 @@ private fun TaskLineChartCard(
                         if (index == 0) moveTo(point.x, point.y) else lineTo(point.x, point.y)
                     }
                 }
-                drawPath(path = path, color = lineColor, style = Stroke(width = 6f))
+                drawPath(path = path, color = lineColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
                 points.forEach { point ->
-                    drawCircle(color = lineColor, radius = 8f, center = point)
+                    drawCircle(color = lineColor, radius = 3.dp.toPx(), center = point)
                 }
                 val textPaint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.DKGRAY
-                    textSize = 28f
+                    color = axisColor.toArgb()
+                    textSize = 11.sp.toPx()
                     textAlign = android.graphics.Paint.Align.CENTER
                     isAntiAlias = true
                 }
@@ -212,7 +225,7 @@ private fun TaskLineChartCard(
                         canvas.nativeCanvas.drawText(
                             formatSeriesValue(chart.points[index].value, chart.valueType, chart.unit),
                             point.x,
-                            (point.y - 14f).coerceAtLeast(24f),
+                            (point.y - 8.dp.toPx()).coerceAtLeast(textPaint.textSize),
                             textPaint,
                         )
                         canvas.nativeCanvas.drawText(
@@ -223,6 +236,7 @@ private fun TaskLineChartCard(
                         )
                     }
                 }
+            }
             }
         }
     }

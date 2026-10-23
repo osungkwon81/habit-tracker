@@ -30,12 +30,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,9 +109,7 @@ fun StockScreen(
     AppScreen {
         item {
             StockHeroCard(
-                icon = "📈",
-                eyebrow = "KIS · REAL TRADING",
-                title = "주식 관리",
+                title = "주식",
                 description = if (uiState.isConfigSaved) {
                     uiState.accessTokenExpiredAt.toTokenStatusText()
                 } else {
@@ -137,26 +144,26 @@ fun StockScreen(
                 )
             }
         }
-        item { StockSectionTitle("거래·보유") }
         item {
-            StockMenuCard("↕", "매수·매도", "KIS 실전 계좌로 주문하고 체결 상태를 확인합니다.", onOpenOrder)
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                StockSectionTitle("거래·보유")
+                StockMenuCard("매수·매도", "실전 주문과 체결 상태", onOpenOrder)
+                StockMenuCard("보유·매수 내역", "종목별 보유와 매수 건별 수익률", onOpenPortfolio)
+            }
         }
         item {
-            StockMenuCard("▦", "보유·매수 내역", "매수 주문별 수량·단가·잔여수량·수익률을 표시합니다.", onOpenPortfolio)
-        }
-        item { StockSectionTitle("자동화·전략") }
-        item {
-            StockMenuCard("🛡", "자동 매매·알림", "손절·익절·당일 상승 조건으로 알림 또는 분할 매매를 실행합니다.", onOpenAutomation)
-        }
-        item {
-            StockMenuCard("⚖", "목표 비중 리밸런싱", "현재 비중과 목표 비중을 비교해 종목별 주문 수량을 계산합니다.", onOpenRebalance)
-        }
-        item { StockSectionTitle("기록·설정") }
-        item {
-            StockMenuCard("✎", "매매일지", "주문·체결·실현손익과 자동화 이력을 한곳에서 분석합니다.", onOpenJournal)
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                StockSectionTitle("자동화·전략")
+                StockMenuCard("자동 매매·알림", "손절·익절·분할 매매 설정", onOpenAutomation)
+                StockMenuCard("목표 비중 리밸런싱", "현재 비중과 목표 비중 비교", onOpenRebalance)
+            }
         }
         item {
-            StockMenuCard("⚙", "KIS·안전 설정", "실전 계좌와 주문 한도·급락 차단·감시 주기를 설정합니다.", onOpenSettings)
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+                StockSectionTitle("기록·설정")
+                StockMenuCard("매매일지", "주문·체결·실현손익 기록", onOpenJournal)
+                StockMenuCard("KIS·안전 설정", "계좌 연결과 주문 안전 한도", onOpenSettings)
+            }
         }
     }
 }
@@ -174,6 +181,11 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
     }
     val periodDays = ChronoUnit.DAYS.between(first.snapshotDate, latest.snapshotDate).coerceAtLeast(1L)
     val middleDate = first.snapshotDate.plusDays(periodDays / 2L)
+    var selectedSnapshotDate by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedIndex = orderedSnapshots.indexOfFirst { it.snapshotDate.toString() == selectedSnapshotDate }
+        .takeIf { it >= 0 } ?: orderedSnapshots.lastIndex
+    val selectedSnapshot = orderedSnapshots[selectedIndex]
+    val chartHeight = (160 * androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f)).dp
     AppSectionCard {
         Text(
             text = "일별 주식 자산 흐름",
@@ -181,18 +193,23 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
             fontWeight = FontWeight.Bold,
         )
         Text(
-            text = "${latest.snapshotDate} · 평가 ${latest.valuationAmount.toWon()} · " +
-                "손익 ${latest.evaluationProfitLoss.toSignedWon()}",
+            text = "${first.snapshotDate} ~ ${latest.snapshotDate}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = latest.valuationAmount.toWon(),
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
         )
 
         if (orderedSnapshots.size < 2) {
             AppSupportText("잔고를 다른 날짜에 다시 조회하면 일별 변화 차트가 표시됩니다.")
         } else {
             val valuationColor = MaterialTheme.colorScheme.primary
-            val purchaseColor = MaterialTheme.colorScheme.tertiary
+            val purchaseColor = MaterialTheme.colorScheme.onSurfaceVariant
             val gridColor = MaterialTheme.colorScheme.outlineVariant
+            val markerSurface = MaterialTheme.colorScheme.surface
             val minimum = orderedSnapshots.minOf { snapshot ->
                 minOf(snapshot.purchaseAmount, snapshot.valuationAmount)
             }.toDouble()
@@ -206,16 +223,34 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
             val chartRange = (chartMaximum - chartMinimum).coerceAtLeast(1.0)
             val chartMiddle = (chartMinimum + chartMaximum) / 2.0
 
-            Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
                 StockAssetChartLegendItem(color = valuationColor, label = "평가금액")
-                StockAssetChartLegendItem(color = purchaseColor, label = "매입금액")
+                StockAssetChartLegendItem(color = purchaseColor, label = "매입금액", dashed = true)
             }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.TextButton(
+                    onClick = { selectedSnapshotDate = orderedSnapshots[selectedIndex - 1].snapshotDate.toString() },
+                    enabled = selectedIndex > 0,
+                ) { Text("이전 기록") }
+                Text(selectedSnapshot.snapshotDate.toString(), modifier = Modifier.weight(1f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = MaterialTheme.typography.labelLarge)
+                androidx.compose.material3.TextButton(
+                    onClick = { selectedSnapshotDate = orderedSnapshots[selectedIndex + 1].snapshotDate.toString() },
+                    enabled = selectedIndex < orderedSnapshots.lastIndex,
+                ) { Text("다음 기록") }
+            }
+            Text(
+                "평가 ${selectedSnapshot.valuationAmount.toWon()} · 매입 ${selectedSnapshot.purchaseAmount.toWon()}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
             ) {
                 Column(
-                    modifier = Modifier.width(62.dp).height(160.dp),
+                    modifier = Modifier.width(androidx.compose.foundation.layout.IntrinsicSize.Max).height(chartHeight),
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
@@ -223,9 +258,26 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
                     Text(chartMiddle.roundToLong().toCompactWon(), style = MaterialTheme.typography.labelSmall)
                     Text(chartMinimum.roundToLong().toCompactWon(), style = MaterialTheme.typography.labelSmall)
                 }
-                Canvas(modifier = Modifier.weight(1f).height(160.dp)) {
+                Canvas(modifier = Modifier.weight(1f).height(chartHeight)
+                    .semantics {
+                        contentDescription = "주식 자산 추이. ${selectedSnapshot.snapshotDate}, 평가 ${selectedSnapshot.valuationAmount.toWon()}, 매입 ${selectedSnapshot.purchaseAmount.toWon()}. 이전 기록과 다음 기록 버튼으로 날짜를 선택할 수 있습니다."
+                    }
+                    .pointerInput(orderedSnapshots) {
+                        detectTapGestures { touch ->
+                            val inset = 6.dp.toPx()
+                            val plotWidth = (size.width - inset * 2).coerceAtLeast(1f)
+                            val fraction = ((touch.x - inset) / plotWidth).coerceIn(0f, 1f)
+                            val nearest = orderedSnapshots.minByOrNull {
+                                abs(ChronoUnit.DAYS.between(first.snapshotDate, it.snapshotDate).toDouble() / periodDays - fraction)
+                            }
+                            selectedSnapshotDate = nearest?.snapshotDate?.toString()
+                        }
+                    }) {
+                    val inset = 6.dp.toPx()
+                    val plotWidth = (size.width - inset * 2).coerceAtLeast(1f)
+                    val plotHeight = (size.height - inset * 2).coerceAtLeast(1f)
                     listOf(0f, 0.5f, 1f).forEach { ratio ->
-                        val y = size.height * ratio
+                        val y = inset + plotHeight * ratio
                         drawLine(
                             color = gridColor,
                             start = Offset(0f, y),
@@ -241,31 +293,36 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
                             orderedSnapshots[index].snapshotDate,
                         )
                         return Offset(
-                            x = size.width * (elapsedDays.toFloat() / periodDays.toFloat()),
-                            y = size.height - (normalized * size.height),
+                            x = inset + plotWidth * (elapsedDays.toFloat() / periodDays.toFloat()),
+                            y = inset + plotHeight - (normalized * plotHeight),
                         )
                     }
-                    (0 until orderedSnapshots.lastIndex).forEach { index ->
-                        drawLine(
-                            color = purchaseColor,
-                            start = point(index, orderedSnapshots[index].purchaseAmount),
-                            end = point(index + 1, orderedSnapshots[index + 1].purchaseAmount),
-                            strokeWidth = 2.dp.toPx(),
-                        )
-                        drawLine(
-                            color = valuationColor,
-                            start = point(index, orderedSnapshots[index].valuationAmount),
-                            end = point(index + 1, orderedSnapshots[index + 1].valuationAmount),
-                            strokeWidth = 3.dp.toPx(),
-                        )
+                    val purchasePath = Path()
+                    val valuationPath = Path()
+                    orderedSnapshots.forEachIndexed { index, snapshot ->
+                        val purchasePoint = point(index, snapshot.purchaseAmount)
+                        val valuationPoint = point(index, snapshot.valuationAmount)
+                        if (index == 0) {
+                            purchasePath.moveTo(purchasePoint.x, purchasePoint.y)
+                            valuationPath.moveTo(valuationPoint.x, valuationPoint.y)
+                        } else {
+                            purchasePath.lineTo(purchasePoint.x, purchasePoint.y)
+                            valuationPath.lineTo(valuationPoint.x, valuationPoint.y)
+                        }
                     }
-                    val markerIndexes = if (orderedSnapshots.size <= 20) {
-                        orderedSnapshots.indices.toList()
-                    } else {
-                        listOf(0, orderedSnapshots.lastIndex / 2, orderedSnapshots.lastIndex)
-                    }
-                    markerIndexes.distinct().forEach { index ->
-                        val radius = if (index == orderedSnapshots.lastIndex) 4.dp.toPx() else 2.5.dp.toPx()
+                    drawPath(purchasePath, purchaseColor, style = Stroke(width = 2.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))))
+                    drawPath(valuationPath, valuationColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
+                    val selection = point(selectedIndex, selectedSnapshot.valuationAmount)
+                    drawLine(gridColor, Offset(selection.x, inset), Offset(selection.x, inset + plotHeight),
+                        strokeWidth = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx())))
+                    listOf(0, orderedSnapshots.lastIndex, selectedIndex).distinct().forEach { index ->
+                        val radius = if (index == selectedIndex) 4.dp.toPx() else 2.5.dp.toPx()
+                        drawCircle(
+                            color = markerSurface,
+                            radius = radius + 2.dp.toPx(),
+                            center = point(index, orderedSnapshots[index].valuationAmount),
+                        )
                         drawCircle(
                             color = purchaseColor,
                             radius = radius,
@@ -280,7 +337,7 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
                 }
             }
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 70.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(first.snapshotDate.toStockChartDate(), style = MaterialTheme.typography.labelSmall)
@@ -300,6 +357,7 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
             )
+            AppSupportText("그래프를 누르거나 이전·다음 기록으로 날짜별 금액을 확인하세요.")
             Text(
                 text = "현재 평가손익 ${latest.evaluationProfitLoss.toSignedWon()} · " +
                     "누적 실현손익 ${latest.realizedProfitLoss.toSignedWon()}",
@@ -312,12 +370,16 @@ private fun StockAssetHistoryCard(snapshots: List<StockAssetSnapshotEntity>) {
 }
 
 @Composable
-private fun StockAssetChartLegendItem(color: Color, label: String) {
+private fun StockAssetChartLegendItem(color: Color, label: String, dashed: Boolean = false) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.size(8.dp).background(color, CircleShape))
+        Canvas(modifier = Modifier.width(24.dp).height(10.dp)) {
+            drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2),
+                strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round,
+                pathEffect = if (dashed) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null)
+        }
         Text(label, style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -328,23 +390,21 @@ private fun StockPortfolioDashboardCard(
     summary: StockHomeDashboardSummary,
     onRefresh: () -> Unit,
 ) {
-    AppSectionCard {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = AppSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StockDashboardSectionIcon(
-                iconRes = R.drawable.ic_category_stock,
-                contentDescription = "보유 주식 요약",
-                accent = MaterialTheme.colorScheme.primary,
-            )
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "보유 주식 요약",
+                    text = "내 주식 자산",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -391,7 +451,7 @@ private fun StockPortfolioDashboardCard(
                     )
                     Text(
                         text = summary.totalValuationAmount.toWon(),
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.displaySmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -407,23 +467,12 @@ private fun StockPortfolioDashboardCard(
                     summary.estimatedProfit < 0L -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.onSurface
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    StockDashboardMetric(
-                        label = "평가손익",
-                        value = summary.estimatedProfit.toSignedWon(),
-                        valueColor = profitColor,
-                        modifier = Modifier.weight(1f),
-                    )
-                    StockDashboardMetric(
-                        label = "수익률",
-                        value = summary.returnPercent?.toPercent() ?: "-",
-                        valueColor = profitColor,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                Text(
+                    text = "평가손익 ${summary.estimatedProfit.toSignedWon()} (${summary.returnPercent?.toPercent() ?: "-"})",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = profitColor,
+                )
+                androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 AppSupportText("현재가 기준 추정치이며 세금과 수수료는 반영하지 않습니다.")
             }
         }
@@ -878,45 +927,14 @@ private fun StockSafetyIndicator(
 
 @Composable
 private fun StockMenuCard(
-    icon: String,
     title: String,
     description: String,
     onClick: () -> Unit,
 ) {
-    androidx.compose.material3.ListItem(
-        headlineContent = {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        },
-        supportingContent = {
-            Text(
-                description,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(icon, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
-            }
-        },
-        trailingContent = {
-            Text("›", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
-        },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick),
+    com.habittracker.ui.components.AppNavigationRow(
+        title = title,
+        subtitle = description,
+        onClick = onClick,
     )
 }
 
@@ -924,15 +942,11 @@ private fun StockMenuCard(
 internal fun StockHeroCard(
     title: String,
     description: String,
-    icon: String,
-    eyebrow: String,
     status: String? = null,
 ) {
     AppHeroCard(
         title = title,
         description = description,
-        icon = icon,
-        eyebrow = eyebrow,
         status = status,
     )
 }

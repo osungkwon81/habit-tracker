@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +54,8 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
+import com.habittracker.ui.components.AppMenuGroup
+import com.habittracker.ui.components.AppSectionNavigation
 import com.habittracker.ui.components.AppStatusText
 import java.time.Instant
 import java.time.LocalDate
@@ -69,19 +72,23 @@ fun PensionLotteryScreen(
     viewModel: PensionLotteryViewModel,
     onBackToLotteryHome: () -> Unit,
     onOpenGenerator: () -> Unit,
+    initialTab: PensionLotteryTab? = null,
 ) {
+    androidx.compose.runtime.LaunchedEffect(viewModel, initialTab) {
+        initialTab?.let(viewModel::initializeMenuTab)
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val officialSyncStatus by viewModel.officialSyncStatus.collectAsStateWithLifecycle()
     val isOfficialSyncing by viewModel.isOfficialSyncing.collectAsStateWithLifecycle()
+    var showManualDraw by rememberSaveable { mutableStateOf(false) }
+    var showPositionScores by rememberSaveable { mutableStateOf(false) }
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
 
     AppScreen {
         item {
             AppHeroCard(
-                title = "연금복권 720+ 관리",
+                title = "연금복권 720+",
                 description = "번호 분석과 구입·당첨 이력, 손익 통계를 관리합니다.",
-                icon = "🎟️",
-                eyebrow = "PENSION LOTTERY · 720+",
                 status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
             )
         }
@@ -104,6 +111,10 @@ fun PensionLotteryScreen(
                     )
                 }
                 item {
+                    AppSecondaryButton(text = if (showManualDraw) "당첨번호 직접 입력 접기" else "당첨번호 직접 입력",
+                        onClick = { showManualDraw = !showManualDraw })
+                }
+                if (showManualDraw) item {
                     PensionLotteryInputCard(
                         roundInput = uiState.roundInput,
                         groupInput = uiState.groupInput,
@@ -118,36 +129,14 @@ fun PensionLotteryScreen(
                 item {
                     AppSectionHeader(
                         title = "최근 당첨번호",
-                        subtitle = "숫자 아래 점수는 각 회차의 직전 ${uiState.selectedRange.label} 가중 점수입니다.",
                     )
-                }
-                item {
-                    PensionLotteryRangeCard(uiState.selectedRange, viewModel::selectRange)
                 }
                 if (uiState.recentDraws.isEmpty()) {
                     item { AppEmptyCard("저장된 연금복권 당첨번호가 없습니다.") }
                 } else {
-                    item {
-                        PensionLotteryScoreBandStatsCard(
-                            stats = uiState.sixteenWeekScoreBandStats,
-                            totalDrawCount = uiState.sixteenWeekScoreBandDrawCount,
-                        )
-                    }
-                    item {
-                        PensionLotteryZeroScoreCountStatsCard(
-                            stats = uiState.sixteenWeekZeroScoreCountStats,
-                            totalDrawCount = uiState.sixteenWeekScoreBandDrawCount,
-                        )
-                    }
                     items(uiState.recentDraws, key = { draw -> draw.roundNo }) { draw ->
                         PensionLotteryDrawCard(
                             draw = draw,
-                            digitScores = uiState.recentDigitScores[draw.roundNo].orEmpty(),
-                            scoreBandLabel = if (uiState.selectedRange == PensionLotteryRange.SIXTEEN) {
-                                uiState.sixteenWeekScoreBandsByRound[draw.roundNo]
-                            } else {
-                                null
-                            },
                         )
                     }
                     if (uiState.hasMoreRecentDraws) {
@@ -197,16 +186,23 @@ fun PensionLotteryScreen(
                 }
             }
 
-            PensionLotteryTab.STATS -> {
+            PensionLotteryTab.STATS, PensionLotteryTab.SCORE -> {
                 item { PensionLotteryRangeCard(uiState.selectedRange, viewModel::selectRange) }
                 item { PensionLotteryDuplicateStatsCard(uiState.duplicateStats) }
-                items(uiState.positionStats, key = { stat -> stat.position }) { stat ->
+                item {
+                    PensionLotteryScoreBandStatsCard(uiState.sixteenWeekScoreBandStats, uiState.sixteenWeekScoreBandDrawCount)
+                }
+                item {
+                    PensionLotteryZeroScoreCountStatsCard(uiState.sixteenWeekZeroScoreCountStats, uiState.sixteenWeekScoreBandDrawCount)
+                }
+                items(uiState.positionStats, key = { stat -> "frequency-${stat.position}" }) { stat ->
                     PensionLotteryPositionStatsCard(stat)
                 }
-            }
-
-            PensionLotteryTab.SCORE -> {
-                item { PensionLotteryRangeCard(uiState.selectedRange, viewModel::selectRange) }
+                item {
+                    AppSecondaryButton(text = if (showPositionScores) "자리별 점수 접기" else "자리별 점수 상세",
+                        onClick = { showPositionScores = !showPositionScores })
+                }
+                if (showPositionScores) {
                 item {
                     AppSectionCard {
                         AppSectionHeader(
@@ -215,8 +211,9 @@ fun PensionLotteryScreen(
                         )
                     }
                 }
-                items(uiState.positionScores, key = { score -> score.position }) { score ->
+                items(uiState.positionScores, key = { score -> "score-${score.position}" }) { score ->
                     PensionLotteryPositionScoreCard(score)
+                }
                 }
             }
 
@@ -285,48 +282,16 @@ private fun PensionLotteryTabSelector(
     onSelect: (PensionLotteryTab) -> Unit,
     onOpenGenerator: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(PensionLotteryTab.INPUT, PensionLotteryTab.MATCH).forEach { tab ->
-                AppSelectableChip(
-                    label = tab.label,
-                    selected = selectedTab == tab,
-                    onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            AppSelectableChip(
-                label = "번호 생성",
-                selected = false,
-                onClick = onOpenGenerator,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(PensionLotteryTab.STATS, PensionLotteryTab.SCORE).forEach { tab ->
-                AppSelectableChip(
-                    label = tab.label,
-                    selected = selectedTab == tab,
-                    onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(
-                PensionLotteryTab.PURCHASE,
-                PensionLotteryTab.WINNING,
-                PensionLotteryTab.ACCOUNTING_STATS,
-            ).forEach { tab ->
-                AppSelectableChip(
-                    label = tab.label,
-                    selected = selectedTab == tab,
-                    onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
+    AppSectionNavigation(
+        title = "연금복권",
+        groups = listOf(
+            AppMenuGroup("추천 번호", listOf("GENERATOR" to "생성·저장·자동 개선")),
+            AppMenuGroup("내 복권", listOf(PensionLotteryTab.PURCHASE.name to "구입 이력", PensionLotteryTab.WINNING.name to "당첨 이력", PensionLotteryTab.ACCOUNTING_STATS.name to "손익")),
+            AppMenuGroup("추첨·분석", listOf(PensionLotteryTab.INPUT.name to "추첨 결과", PensionLotteryTab.MATCH.name to "번호 조회", PensionLotteryTab.STATS.name to "패턴 통계")),
+        ),
+        selectedKey = if (selectedTab == PensionLotteryTab.SCORE) PensionLotteryTab.STATS.name else selectedTab.name,
+        onSelect = { key -> if (key == "GENERATOR") onOpenGenerator() else onSelect(PensionLotteryTab.valueOf(key)) },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -740,8 +705,6 @@ private fun PensionLotteryMatchScoreCard(
 @Composable
 private fun PensionLotteryDrawCard(
     draw: PensionLotteryDrawEntity,
-    digitScores: List<Int>,
-    scoreBandLabel: String?,
 ) {
     AppSectionCard {
         Row(
@@ -752,17 +715,7 @@ private fun PensionLotteryDrawCard(
             Text("${draw.roundNo}회", fontWeight = FontWeight.Bold)
             Text("${draw.groupNo}조", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
         }
-        PensionLotteryNumberRow(draw.winningNumber, scores = digitScores)
-        Text(
-            text = buildString {
-                append("합계 ${digitScores.sum()}점")
-                scoreBandLabel?.let { label -> append(" · $label 구간") }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.End,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        PensionLotteryNumberRow(draw.winningNumber)
     }
 }
 

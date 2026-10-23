@@ -2,8 +2,13 @@ package com.habittracker.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -16,9 +21,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.TextStyle
@@ -30,6 +40,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,10 +60,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -63,7 +78,30 @@ object AppSpacing {
     val lg = 32.dp
 }
 
-private val ButtonShape = RoundedCornerShape(16.dp)
+@Composable
+fun AppFeatureIcon(key: String, @DrawableRes iconRes: Int, modifier: Modifier = Modifier) {
+    val baseColor = when (key.substringBefore('/')) {
+        "stock", "exchange" -> androidx.compose.ui.graphics.Color(0xFF3980C6)
+        "card" -> androidx.compose.ui.graphics.Color(0xFF8664BF)
+        "lottery", "lotto" -> androidx.compose.ui.graphics.Color(0xFFAA7424)
+        "memo", "diary" -> androidx.compose.ui.graphics.Color(0xFFB35F7D)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    val tone = baseColor
+    Box(
+        modifier = modifier.clip(MaterialTheme.shapes.medium).background(tone.copy(alpha = 0.12f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Icon(
+            painter = androidx.compose.ui.res.painterResource(iconRes),
+            contentDescription = null,
+            tint = tone,
+            modifier = Modifier.padding(8.dp).fillMaxSize(),
+        )
+    }
+}
+
+private val ButtonShape = RoundedCornerShape(12.dp)
 val LocalAppSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("Snackbar host is missing") }
 
 class AppNavigationGuard {
@@ -98,13 +136,13 @@ fun AppScreen(
     ) {
         LazyColumn(
             modifier = Modifier.weight(1f).widthIn(max = 840.dp).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = AppSpacing.sm, vertical = AppSpacing.md),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = AppSpacing.md),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.md),
             content = content,
         )
         bottomBar?.let {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Box(Modifier.widthIn(max = 840.dp).fillMaxWidth().padding(AppSpacing.sm)) { it() }
+            Box(Modifier.widthIn(max = 840.dp).fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 20.dp, vertical = 12.dp)) { it() }
         }
     }
 }
@@ -127,12 +165,11 @@ fun AppHeroCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.background),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(AppSpacing.md),
+            modifier = Modifier.fillMaxWidth().padding(vertical = AppSpacing.xs),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
         ) {
             Row(
@@ -143,16 +180,16 @@ fun AppHeroCard(
                 if (iconRes != null || !icon.isNullOrBlank()) {
                     Box(
                         modifier = Modifier
-                            .size(52.dp)
+                            .size(36.dp)
                             .clip(MaterialTheme.shapes.medium)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.68f)),
+                            .background(MaterialTheme.colorScheme.surface),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (iconRes != null) {
                             androidx.compose.foundation.Image(
                                 painter = androidx.compose.ui.res.painterResource(iconRes),
                                 contentDescription = null,
-                                modifier = Modifier.size(42.dp),
+                                modifier = Modifier.size(32.dp),
                                 contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                             )
                         } else {
@@ -162,13 +199,13 @@ fun AppHeroCard(
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (!eyebrow.isNullOrBlank()) {
-                        Text(eyebrow, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text(
                         title,
                         modifier = Modifier.semantics { heading() },
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                     if (!description.isNullOrBlank()) {
                         Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -176,14 +213,7 @@ fun AppHeroCard(
                 }
             }
             if (!status.isNullOrBlank()) {
-                Box(
-                    modifier = Modifier
-                        .clip(MaterialTheme.shapes.small)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.62f))
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                ) {
-                    Text(status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                }
+                Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             action?.let {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) { it() }
@@ -197,20 +227,15 @@ fun AppSectionCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
+    Column(modifier = modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(AppSpacing.sm),
+                .padding(vertical = AppSpacing.sm),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.sm),
             content = content,
         )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -285,12 +310,11 @@ fun AppSecondaryButton(
         shape = ButtonShape,
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = MaterialTheme.colorScheme.onSurface,
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
@@ -362,14 +386,110 @@ fun AppOutlinedTextField(
         shape = MaterialTheme.shapes.medium,
         colors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant,
             focusedContainerColor = MaterialTheme.colorScheme.surface,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            errorContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             focusedTextColor = MaterialTheme.colorScheme.onSurface,
             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
         ),
     )
+}
+
+data class AppMenuGroup(val title: String, val items: List<Pair<String, String>>)
+
+@Composable
+fun AppSectionNavigation(
+    title: String,
+    groups: List<AppMenuGroup>,
+    selectedKey: String,
+    onSelect: (String) -> Unit,
+) {
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+    val group = groups.first { section -> section.items.any { it.first == selectedKey } }
+    val selectedLabel = group.items.first { it.first == selectedKey }.second
+    Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("$title › ${group.title}", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(selectedLabel, style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+            }
+            TextButton(onClick = { menuOpen = true }) { Text("전체 메뉴 ▾") }
+        }
+        if (group.items.size > 1) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).selectableGroup()) {
+                group.items.forEach { (key, label) ->
+                    val selected = selectedKey == key
+                    Column(
+                        modifier = Modifier.width(IntrinsicSize.Max).selectable(selected = selected, role = Role.Tab, onClick = { onSelect(key) })
+                            .sizeIn(minHeight = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(label, modifier = Modifier.padding(horizontal = AppSpacing.sm, vertical = 12.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Box(Modifier.fillMaxWidth().height(3.dp).background(
+                            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant))
+                    }
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+    if (menuOpen) {
+        AlertDialog(
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            shape = MaterialTheme.shapes.large,
+            title = {
+                Text("$title 메뉴", style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(AppSpacing.md),
+                ) {
+                    groups.forEach { section ->
+                        Column(
+                            modifier = Modifier.selectableGroup(),
+                            verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
+                        ) {
+                            Text(section.title,
+                                modifier = Modifier.padding(horizontal = AppSpacing.sm).semantics { heading() },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            section.items.forEach { (key, label) ->
+                                val selected = key == selectedKey
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
+                                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
+                                        .selectable(selected = selected, role = Role.RadioButton, onClick = {
+                                            menuOpen = false
+                                            onSelect(key)
+                                        })
+                                        .sizeIn(minHeight = 52.dp)
+                                        .padding(horizontal = AppSpacing.sm, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(label, modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { menuOpen = false }) { Text("닫기") } },
+        )
+    }
 }
 
 @Composable
@@ -383,11 +503,11 @@ fun AppSelectableChip(
         modifier = modifier
             .border(
                 width = 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                 shape = MaterialTheme.shapes.small,
             )
             .background(
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                 shape = MaterialTheme.shapes.small,
             )
             .clip(MaterialTheme.shapes.small)
@@ -403,7 +523,8 @@ fun AppSelectableChip(
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
         )
     }
 }
@@ -412,7 +533,7 @@ fun AppSelectableChip(
 fun AppStatusText(message: String, modifier: Modifier = Modifier) {
     Text(
         text = message,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
         style = MaterialTheme.typography.bodyMedium,
         color = if (message.contains("실패")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -420,12 +541,51 @@ fun AppStatusText(message: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun AppEmptyCard(message: String, modifier: Modifier = Modifier) {
-    AppSectionCard(modifier = modifier) {
+    Box(modifier = modifier.fillMaxWidth().padding(vertical = AppSpacing.lg), contentAlignment = Alignment.Center) {
         Text(
             text = message,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+fun AppNavigationRow(
+    title: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    @DrawableRes iconRes: Int? = null,
+    featureKey: String = "",
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .sizeIn(minHeight = 64.dp).padding(vertical = 12.dp, horizontal = AppSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+    ) {
+        if (iconRes != null) AppFeatureIcon(featureKey, iconRes, Modifier.size(44.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!subtitle.isNullOrBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AppChevron()
+    }
+}
+
+@Composable
+fun AppChevron(modifier: Modifier = Modifier) {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Canvas(modifier.size(18.dp)) {
+        drawLine(color, Offset(size.width * 0.35f, size.height * 0.2f), Offset(size.width * 0.65f, size.height * 0.5f), 1.5.dp.toPx(), StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.65f, size.height * 0.5f), Offset(size.width * 0.35f, size.height * 0.8f), 1.5.dp.toPx(), StrokeCap.Round)
     }
 }
 

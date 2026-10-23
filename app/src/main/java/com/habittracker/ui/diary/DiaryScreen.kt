@@ -73,13 +73,18 @@ private data class WeatherOption(
     val label: String,
 )
 
-private val DiaryTextStrongColor = Color(0xFF171C19)
-private val DiaryTextMutedColor = Color(0xFF5C6661)
+private val DiaryTextStrongColor: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurface
+private val DiaryTextMutedColor: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 private const val DiaryImageTokenPrefix = "![image]("
 private const val DiaryImageTokenSuffix = ")"
 
 @Composable
-fun DiaryScreen(viewModel: DiaryViewModel) {
+fun DiaryScreen(viewModel: DiaryViewModel, startNew: Boolean = false) {
+    LaunchedEffect(viewModel, startNew) {
+        if (startNew) viewModel.initializeNewEntry()
+    }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     AppActionNotice(uiState.statusMessage, viewModel::clearStatusMessage)
     when (uiState.screenMode) {
@@ -91,16 +96,12 @@ fun DiaryScreen(viewModel: DiaryViewModel) {
 
 @Composable
 private fun DiaryListScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) {
-    AppScreen {
+    AppScreen(bottomBar = {
+        AppPrimaryButton(text = "새 일기", onClick = viewModel::startNewDiary, modifier = Modifier.fillMaxWidth())
+    }) {
         item {
             AppHeroCard(
                 title = "일기",
-                description = "날짜별 일기와 사진을 찾아봅니다.",
-                iconRes = R.drawable.ic_category_diary,
-                eyebrow = "LIFE · DIARY",
-                action = {
-                    AppPrimaryButton(text = "새 일기", onClick = viewModel::startNewDiary, modifier = Modifier.fillMaxWidth())
-                },
             )
         }
         item {
@@ -204,16 +205,17 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         }
     }
 
-    AppScreen {
+    AppScreen(bottomBar = {
+        com.habittracker.ui.components.AppButtonRow(
+            primaryText = "저장",
+            onPrimaryClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) },
+            secondaryText = "목록",
+            onSecondaryClick = viewModel::showList,
+        )
+    }) {
         item {
             AppHeroCard(
                 title = "일기 작성",
-                description = "날씨와 사진을 함께 기록합니다.",
-                iconRes = R.drawable.ic_category_diary,
-                eyebrow = "LIFE · DIARY",
-                action = {
-                    AppSecondaryButton(text = "목록으로", onClick = viewModel::showList, modifier = Modifier.fillMaxWidth())
-                },
             )
         }
         item {
@@ -268,7 +270,6 @@ private fun DiaryEditorScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
             )
         }
         item { AppSecondaryButton(text = "사진 첨부", onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.fillMaxWidth()) }
-        item { AppSaveButton(text = "일기 저장", onClick = { viewModel.saveDiary(dateInput.text, title.text, body.text, selectedWeather, imageUris.distinct()) }, modifier = Modifier.fillMaxWidth()) }
         item { uiState.statusMessage?.let { message -> AppStatusText(message) } }
         if (imageUris.isNotEmpty()) {
             item { Text(text = "첨부 이미지", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -303,9 +304,6 @@ private fun DiaryDetailScreen(viewModel: DiaryViewModel, uiState: DiaryUiState) 
         item {
             AppHeroCard(
                 title = "일기 상세",
-                description = "저장한 하루 기록을 확인합니다.",
-                iconRes = R.drawable.ic_category_diary,
-                eyebrow = "LIFE · DIARY",
             )
         }
         item {

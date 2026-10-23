@@ -30,6 +30,34 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
+internal fun LottoAutomaticHistory(viewModel: LottoViewModel) {
+    val state by viewModel.experimentUiState.collectAsStateWithLifecycle()
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AppSectionHeader(title = "자동 평가 이력")
+        Text(when (state.operating?.priorDraws) {
+            32.0 -> "현재 생성 방식: 기본 설정"
+            64.0 -> "현재 생성 방식: 검증 후 최근 빈도 반영을 완화한 설정"
+            else -> "현재 설정 확인 중"
+        })
+        state.issue?.let { Text("기록 확인 필요: $it") }
+        if (state.busy) Text("평가 이력을 읽고 있습니다.")
+        if (!state.busy && state.experiments.isEmpty() && state.issue == null) Text("아직 평가 이력이 없습니다. 자동 개선을 켜면 앱이 준비합니다.")
+        state.experiments.forEach { entry ->
+            AppSectionHeader(title = entry.targetRounds.let { "${it.firstOrNull() ?: "-"}~${it.lastOrNull() ?: "-"}회 평가" })
+            Text(when {
+                entry.issue != null -> "보류 · ${entry.issue}"
+                entry.run == null -> "추첨 전 자료 수집 ${entry.capturedInputRounds.size}/${entry.targetRounds.size}회"
+                entry.judgment.decision == LottoExperimentDecision.ADOPTION_CANDIDATE -> "개선 기준 통과 · 적용 조건 확인 대상"
+                else -> "기존 설정 유지 · ${entry.judgment.decision.label}"
+            })
+            entry.run?.takeIf { it.state == com.habittracker.data.lotto.LottoDesignRunState.SUCCESS && entry.issue == null }?.let { run ->
+                run.baselineRate?.let { Text("기존 ${percent(it)} · 변경 후보 ${run.candidateRate?.let(::percent) ?: "-"}") }
+            }
+        }
+    }
+}
+
+@Composable
 fun LottoExperimentSection(viewModel: LottoViewModel) {
     val state by viewModel.experimentUiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
