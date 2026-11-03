@@ -153,6 +153,7 @@ class LottoViewModel(
             statusMessage.value = error.message ?: "과거 비교 예약 실패"
         }
     }
+    fun rollbackAutoImprovement() = viewModelScope.launch { repository.autoImprovement.rollback(com.habittracker.data.lotto.LotteryProduct.LOTTO_645) }
 
     private val experimentState = MutableStateFlow(LottoExperimentUiState())
     val experimentUiState: StateFlow<LottoExperimentUiState> = experimentState
@@ -602,9 +603,6 @@ class LottoViewModel(
         }
     }
 
-    fun updateGenerationMode(mode: LottoGenerationMode) {
-        generationMode.value = mode
-    }
 
     fun updateBonusNumberInput(value: String) {
         bonusNumberInput.value = value.digitsOnly().take(2)
@@ -692,7 +690,7 @@ class LottoViewModel(
                     }
                 }.onSuccess { tickets ->
                     generatedChatGpt.value = tickets
-                    statusMessage.value = "균형형 번호를 ${mode.label} 모드로 생성했습니다."
+                    statusMessage.value = "균형형 번호를 생성했습니다."
                 }.onFailure { error ->
                     if (error is CancellationException) throw error
                     android.util.Log.e("LottoGeneration", "source=$sourceChatGpt mode=$mode phase=generate failed", error)
@@ -721,7 +719,7 @@ class LottoViewModel(
                     }
                 }.onSuccess { tickets ->
                     generatedGemini.value = tickets
-                    statusMessage.value = "분산형 번호를 ${mode.label} 모드로 생성했습니다."
+                    statusMessage.value = "분산형 번호를 생성했습니다."
                 }.onFailure { error ->
                     if (error is CancellationException) throw error
                     android.util.Log.e("LottoGeneration", "source=$sourceGemini mode=$mode phase=generate failed", error)

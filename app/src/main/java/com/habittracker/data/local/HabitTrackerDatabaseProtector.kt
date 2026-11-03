@@ -22,6 +22,8 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONObject
+import java.security.MessageDigest
 
 class HabitTrackerDatabaseProtector(
     context: Context,
@@ -124,6 +126,20 @@ class HabitTrackerDatabaseProtector(
                 return@withLock false
             }
 
+            // 부가 기록 충돌은 DB를 교체하기 전에 확인한다.
+            val recordFiles = snapshotRecords(latestDirectory)
+            recordFiles.forEach { (source, target) ->
+                require(!target.exists() || source.readBytes().contentEquals(target.readBytes())) { "기존 복권 기록과 백업 충돌: ${target.name}" }
+            }
+            val alerts = File(latestDirectory, "personal-alerts.json")
+            if (alerts.exists()) JSONObject(alerts.readText())
+            recordFiles.forEach { (source, target) ->
+                if (!target.exists()) {
+                    require(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs())
+                    source.copyTo(target, overwrite = false)
+                }
+            }
+            com.habittracker.data.PersonalAlerts.get(appContext).restoreIfMissing(alerts)
             quarantineLiveDatabaseFiles()
             copySnapshotFiles(latestDirectory, liveDatabaseDirectory())
             copyTaskColorPreferences(latestDirectory, liveSharedPreferencesDirectory())
@@ -144,6 +160,10 @@ class HabitTrackerDatabaseProtector(
 
             copySnapshotFiles(liveDatabaseDirectory(), temporaryDirectory)
             copyTaskColorPreferences(liveSharedPreferencesDirectory(), temporaryDirectory)
+            com.habittracker.data.PersonalAlerts.get(appContext).backupTo(File(temporaryDirectory, "personal-alerts.json"))
+            com.habittracker.data.lotto.LotteryAutoImprovement.withRecordLock {
+                backupRecordManifest(temporaryDirectory)
+            }
 
             if (!isSnapshotHealthy(temporaryDirectory)) {
                 temporaryDirectory.deleteRecursively()
@@ -151,8 +171,13 @@ class HabitTrackerDatabaseProtector(
             }
 
             val latestDirectory = latestBackupDirectory()
-            latestDirectory.deleteRecursively()
-            temporaryDirectory.renameTo(latestDirectory)
+            val previousDirectory = File(backupRootDirectory(), "previous")
+            previousDirectory.deleteRecursively()
+            require(latestDirectory.renameTo(previousDirectory)) { "기존 백업 이동 실패" }
+            if (!temporaryDirectory.renameTo(latestDirectory)) {
+                check(previousDirectory.renameTo(latestDirectory)) { "이전 백업 복원 실패" }
+                throw IOException("새 백업 교체 실패")
+            }
 
             val archiveDirectory = File(historyDirectory(), timestampFormatter.format(Date()))
             archiveDirectory.parentFile?.mkdirs()
@@ -239,15 +264,82 @@ class HabitTrackerDatabaseProtector(
         target.deleteRecursively()
         target.mkdirs()
         source.listFiles().orEmpty().forEach { child ->
-            child.copyTo(File(target, child.name), overwrite = true)
+            if (child.isDirectory) copyDirectory(child, File(target, child.name))
+            else child.copyTo(File(target, child.name), overwrite = true)
         }
     }
+
+    private fun recordHash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+
+    // 불변 파일은 한 번만 보관하고 각 DB 스냅샷은 파일 목록·해시만 가진다.
+    private fun backupRecordManifest(snapshot: File) {
+        val blobs = File(backupRootDirectory(), "record-blobs")
+        require(blobs.isDirectory || blobs.mkdirs())
+        val manifest = JSONObject()
+        fun visit(source: File, relative: String) {
+            require(source.canonicalFile == source.absoluteFile) { "복권 백업 경로 오류: $relative" }
+            if (source.isDirectory) requireNotNull(source.listFiles()).forEach { child ->
+                if (child.name != ".lock") visit(child, "$relative/${child.name}")
+            } else {
+                require(source.isFile)
+                val bytes = source.readBytes()
+                val hash = recordHash(bytes)
+                val blob = File(blobs, hash)
+                if (blob.exists()) require(recordHash(blob.readBytes()) == hash) { "복권 백업 해시 오류: $relative" }
+                else {
+                    val atomic = android.util.AtomicFile(blob)
+                    val stream = atomic.startWrite()
+                    try { stream.write(bytes); atomic.finishWrite(stream) }
+                    catch (error: Exception) { atomic.failWrite(stream); throw error }
+                }
+                manifest.put(relative, hash)
+            }
+        }
+        LOTTERY_RECORD_DIRECTORIES.forEach { name ->
+            val source = File(appContext.filesDir, name)
+            if (source.exists()) visit(source, name)
+        }
+        File(snapshot, "lottery-records.json").writeText(manifest.toString())
+    }
+
+    private fun snapshotRecords(snapshot: File): List<Pair<File, File>> {
+        val manifestFile = File(snapshot, "lottery-records.json")
+        if (!manifestFile.exists()) {
+            val legacy = mutableListOf<Pair<File, File>>()
+            fun visit(source: File, target: File) {
+                require(source.canonicalFile == source.absoluteFile && target.canonicalFile == target.absoluteFile)
+                if (source.isDirectory) requireNotNull(source.listFiles()).forEach { child ->
+                    if (child.name != ".lock") visit(child, File(target, child.name))
+                } else { require(source.isFile); legacy += source to target }
+            }
+            LOTTERY_RECORD_DIRECTORIES.forEach { name -> File(snapshot, name).takeIf { it.exists() }?.let { visit(it, File(appContext.filesDir, name)) } }
+            return legacy
+        }
+        val manifest = JSONObject(manifestFile.readText())
+        return manifest.keys().asSequence().map { path ->
+            require(path.substringBefore('/') in LOTTERY_RECORD_DIRECTORIES && path.split('/').all { it.isNotEmpty() && it != "." && it != ".." })
+            val hash = manifest.getString(path)
+            require(hash.matches(Regex("[0-9a-f]{64}")))
+            val source = File(File(backupRootDirectory(), "record-blobs"), hash)
+            val target = File(appContext.filesDir, path)
+            require(target.canonicalFile == target.absoluteFile && source.canonicalFile == source.absoluteFile)
+            require(recordHash(source.readBytes()) == hash) { "복권 백업 내용 오류: $path" }
+            source to target
+        }.toList()
+    }
+
+    private val LOTTERY_RECORD_DIRECTORIES = listOf("lottery-candidates", "lottery-adaptive-settings", "lottery-auto-improvement")
 
     private fun backupRootDirectory(): File =
         File(appContext.noBackupFilesDir, "database-protection").apply { mkdirs() }
 
     private fun latestBackupDirectory(): File =
-        File(backupRootDirectory(), "latest").apply { mkdirs() }
+        File(backupRootDirectory(), "latest").apply {
+            val previous = File(backupRootDirectory(), "previous")
+            if (!exists() && previous.exists()) check(previous.renameTo(this)) { "이전 백업 복구 실패" }
+            if (!exists()) check(mkdirs()) { "백업 폴더 생성 실패" }
+        }
 
     private fun historyDirectory(): File =
         File(backupRootDirectory(), "history").apply { mkdirs() }

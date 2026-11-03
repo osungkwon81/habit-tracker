@@ -180,6 +180,7 @@ internal class PensionExperimentStore(context: Context, private val now: () -> I
     suspend fun approve(id: String, input: PensionExperimentInput, reason: String,
         automaticAuthorization: (() -> Boolean)? = null,
     ) = locked {
+        require(!File(app.filesDir, "lottery-adaptive-settings/${LotteryProduct.PENSION_720.name}").exists()) { "새 가중치 판단 이력이 있어 이전 3/4 후보 정책을 덮어쓸 수 없습니다." }
         require(reason.isNotBlank()) { "승인 이유가 필요합니다." }
         val recovered = recover(directory(id)); val spec = requireNotNull(recovered.specification)
         require(recovered.judgment.decision == LottoExperimentDecision.ADOPTION_CANDIDATE) { recovered.judgment.reason }

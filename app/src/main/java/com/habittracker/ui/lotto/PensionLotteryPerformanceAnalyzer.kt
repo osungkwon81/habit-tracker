@@ -25,6 +25,7 @@ data class PensionLotterySettingPerformance(
     val batchCount: Int,
     val recommendation: PensionLotteryPerformanceMetrics,
     val control: PensionLotteryPerformanceMetrics,
+    val recommendationsPerBatch: Int = 4,
 )
 
 data class PensionLotteryPerformanceMetrics(
@@ -57,13 +58,21 @@ internal fun buildPensionLotteryPerformance(
         val first = batch.first()
         val round = first.targetRoundNo
         val config = first.generationConfigJson
+        val individual = first.generationId.startsWith("single:")
+        val recommendations = batch.filterNot { it.isControl }
+        val controls = batch.filter { it.isControl }
+        val expectedCount = if (individual) 1 else 4
+        val hasExpectedTypes = if (individual) {
+            recommendations.size == 1 && recommendations.single().generationType in setOf("APPEARED", "COLD_MIX") &&
+                controls.size == 1 && controls.single().generationType == "CONTROL_1"
+        } else recommendations.map { it.generationType }.toSet() == RECOMMENDATION_TYPES &&
+            controls.map { it.generationType }.toSet() == CONTROL_TYPES
         val reason = when {
             round == null || round <= 0 || first.analysisThroughRound != round - 1 ||
                 config.isNullOrBlank() || first.generationConfigHash.isNullOrBlank() || first.inputDataHash.isNullOrBlank() ->
                 "생성 당시 회차·입력·설정 정보 부족"
-            batch.size != 8 || batch.filterNot { it.isControl }.map { it.generationType }.toSet() != RECOMMENDATION_TYPES ||
-                batch.filter { it.isControl }.map { it.generationType }.toSet() != CONTROL_TYPES ->
-                "추천 4개·대조군 4개 구성 불완전"
+            batch.size != expectedCount * 2 || !hasExpectedTypes ->
+                "추천 ${expectedCount}개·대조군 ${expectedCount}개 구성 불완전"
             batch.any { it.targetRoundNo != round || it.analysisThroughRound != first.analysisThroughRound ||
                 it.generationVersion != first.generationVersion || it.generationConfigHash != first.generationConfigHash ||
                 it.generationConfigJson != config || it.inputDataHash != first.inputDataHash } ->
@@ -71,6 +80,14 @@ internal fun buildPensionLotteryPerformance(
             else -> null
         }
         if (reason != null) { recordIssue(reason); continue }
+        if (individual) {
+            val parsed = try { org.json.JSONObject(requireNotNull(config)) } catch (_: org.json.JSONException) {
+                recordIssue("개별 생성 설정 원문 오류"); continue
+            }
+            if (parsed.optString("implementationId") !in setOf("pension-individual-v1", "pension-individual-all-groups-v2", "pension-individual-soft-last-digit-v3") || parsed.optInt("controlCount") != 1) {
+                recordIssue("개별 생성 설정·구성 불일치"); continue
+            }
+        }
         val targetRound = requireNotNull(round)
         val configHash = MessageDigest.getInstance("SHA-256").digest(requireNotNull(config).toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
@@ -90,8 +107,8 @@ internal fun buildPensionLotteryPerformance(
                     row.matchedSuffixLength != row.winningNumber.reversed().zip(draw.winningNumber.reversed()).takeWhile { it.first == it.second }.size ||
                     row.positionMatchCount != row.winningNumber.zip(draw.winningNumber).count { it.first == it.second } ||
                     row.isBonusMatch != (row.winningNumber == draw.bonusNumber)
-            } || batch.filterNot { it.isControl }.map { it.winningNumber }.distinct().size != 4 ||
-            batch.filter { it.isControl }.map { it.winningNumber }.distinct().size != 4
+            } || recommendations.map { it.winningNumber }.distinct().size != expectedCount ||
+            controls.map { it.winningNumber }.distinct().size != expectedCount
         ) {
             recordIssue("저장 결과와 현재 당첨 원본 불일치·번호 오류"); continue
         }
@@ -119,7 +136,8 @@ internal fun buildPensionLotteryPerformance(
                 perRound.map { it.suffix3Rate }.average(), perRound.map { it.bonusRate }.average(),
                 perRound.map { it.lastDigitCoverage }.average(), perRound.map { it.lastTwoDigitsCoverage }.average())
         }
-        settings += PensionLotterySettingPerformance(key.first, key.second, rounds.size, rounds.values.sumOf { it.size }, metrics(false), metrics(true))
+        settings += PensionLotterySettingPerformance(key.first, key.second, rounds.size, rounds.values.sumOf { it.size }, metrics(false), metrics(true),
+            settingBatches.first().count { !it.isControl })
     }
     return PensionLotteryPerformanceSummary(
         recordedRoundCount = mainRows.mapNotNull { it.targetRoundNo?.takeIf { round -> round > 0 } }.distinct().size,

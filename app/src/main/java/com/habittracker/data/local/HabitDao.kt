@@ -129,6 +129,15 @@ interface HabitDao {
     @Query("SELECT * FROM pension_lottery_generated_number WHERE generation_id = :generationId")
     suspend fun getPensionLotteryGeneration(generationId: String): List<PensionLotteryGeneratedNumberEntity>
 
+    @Query("SELECT * FROM pension_lottery_generated_number WHERE id = :id")
+    suspend fun getPensionLotteryGeneratedNumber(id: Long): PensionLotteryGeneratedNumberEntity?
+
+    @Query("UPDATE pension_lottery_generated_number SET is_hidden = 1 WHERE id = :id AND is_control = 0 AND is_hidden = 0")
+    suspend fun hidePensionLotteryRecommendation(id: Long): Int
+
+    @Query("SELECT EXISTS(SELECT 1 FROM pension_lottery_generated_number WHERE winning_number = :winningNumber AND is_control = 0)")
+    suspend fun hasPensionLotteryRecommendation(winningNumber: String): Boolean
+
     @Query("SELECT * FROM pension_lottery_generated_number WHERE substr(generation_id, 1, length(:prefix)) = :prefix AND is_hidden = 0")
     suspend fun getVisiblePensionLotteryBackups(prefix: String): List<PensionLotteryGeneratedNumberEntity>
 

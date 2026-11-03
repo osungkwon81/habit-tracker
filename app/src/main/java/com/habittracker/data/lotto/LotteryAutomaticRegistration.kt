@@ -11,6 +11,11 @@ internal class LotteryAutomaticRegistration(context: Context, private val reposi
     private val app = context.applicationContext
 
     suspend fun update(input: LotteryResearchInput, registerIfNeeded: Boolean): String {
+        return "보유 이력 비교 · 미래 회차 대기 없음 · 설정 적용은 별도 판단"
+    }
+
+    // 이전 등록과 정책의 형식을 보존한다. 신규 자동 등록에서는 사용하지 않는다.
+    private suspend fun legacyUpdate(input: LotteryResearchInput, registerIfNeeded: Boolean): String {
         val product = input.product
         val latest = input.rounds().maxOrNull() ?: return "당첨 이력을 수집하고 있습니다."
         val records: List<Entry>

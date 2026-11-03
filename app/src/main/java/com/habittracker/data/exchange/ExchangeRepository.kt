@@ -47,9 +47,25 @@ enum class ExchangeRateSource(val label: String) {
 }
 
 data class ExchangeQuote(val quotedAt: LocalDateTime, val round: Int, val rate: BigDecimal, val source: ExchangeRateSource = ExchangeRateSource.SHINHAN)
-data class ExchangeRecord(val id: Long, val wonAmount: BigDecimal, val appliedRate: BigDecimal)
-data class ExchangeExpense(val id: Long, val foreignAmount: BigDecimal, val description: String, val expenseDate: LocalDate? = null)
-data class ExchangeBalance(val currency: ExchangeCurrency, val exchangedAmount: BigDecimal, val spentAmount: BigDecimal) {
+data class ExchangeRecord(
+    val id: Long, val wonAmount: BigDecimal, val appliedRate: BigDecimal,
+    val exchangeDate: LocalDate? = null, val exchangeTime: LocalTime? = null,
+)
+enum class ExchangePaymentMethod(val label: String) {
+    // 이전 기록의 결제수단과 잔액 차감 의미를 보존한다. 새 지출은 FOREIGN_CARD만 사용한다.
+    CASH("현금"), FOREIGN_CARD("신한 트래블카드"), KRW_CARD("원화 청구 카드");
+}
+data class ExchangeExpense(
+    val id: Long, val foreignAmount: BigDecimal, val description: String, val expenseDate: LocalDate? = null,
+    val expenseTime: LocalTime? = null, val paymentMethod: ExchangePaymentMethod? = null,
+    val cardWonAmount: BigDecimal? = null,
+) {
+    val usesForeignBalance: Boolean get() = paymentMethod != ExchangePaymentMethod.KRW_CARD
+}
+data class ExchangeBalance(
+    val currency: ExchangeCurrency, val exchangedAmount: BigDecimal, val spentAmount: BigDecimal,
+    val cardSpentAmount: BigDecimal = BigDecimal.ZERO,
+) {
     val remainingAmount: BigDecimal get() = exchangedAmount.subtract(spentAmount)
 }
 
@@ -153,7 +169,7 @@ class ExchangeRepository(
             }
             insertedIds.any { it != -1L }
         }
-        if (changed) notifyRatesChanged()
+        if (changed) notifyRatesChanged() else enqueueWidgetUpdate()
     }
 
     suspend fun backfillMissingRates(): Int = refreshMutex.withLock {
@@ -220,18 +236,26 @@ class ExchangeRepository(
 
     private suspend fun notifyRatesChanged() {
         protector.requestBackup(database)
+        enqueueWidgetUpdate()
+    }
+
+    private fun enqueueWidgetUpdate() {
         try {
             ExchangeRateWidgetProvider.enqueueUpdate(applicationContext)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            Log.e("ExchangeWidget", "환율 저장 후 위젯 갱신 예약 실패", error)
+            Log.e("ExchangeWidget", "환율 위젯 갱신 예약 실패", error)
         }
     }
 
-    suspend fun save(id: Long?, currency: ExchangeCurrency, wonAmount: BigDecimal, appliedRate: BigDecimal) {
+    suspend fun save(
+        id: Long?, currency: ExchangeCurrency, wonAmount: BigDecimal, appliedRate: BigDecimal,
+        exchangeDate: LocalDate? = null, exchangeTime: LocalTime? = null,
+    ) {
         require(wonAmount.signum() > 0 && appliedRate.signum() > 0) { "금액과 당시 환율은 0보다 커야 합니다." }
-        val record = ExchangeRecordEntity(id ?: 0, currency.name, wonAmount.toPlainString(), appliedRate.toPlainString())
+        require(exchangeTime == null || exchangeDate != null) { "환전 시각을 저장하려면 날짜도 선택해 주세요." }
+        val record = ExchangeRecordEntity(id ?: 0, currency.name, wonAmount.toPlainString(), appliedRate.toPlainString(), exchangeDate, exchangeTime)
         if (id == null) dao.insertExchangeRecord(record)
         else require(dao.updateExchangeRecord(record) == 1) { "환전 기록 $id 수정 실패: 기록을 찾을 수 없습니다." }
         protector.requestBackup(database)
@@ -242,11 +266,21 @@ class ExchangeRepository(
         protector.requestBackup(database)
     }
 
-    suspend fun saveExpense(id: Long?, currency: ExchangeCurrency, foreignAmount: BigDecimal, description: String, expenseDate: LocalDate? = null) {
+    suspend fun saveExpense(
+        id: Long?, currency: ExchangeCurrency, foreignAmount: BigDecimal, description: String,
+        expenseDate: LocalDate? = null, expenseTime: LocalTime? = null,
+        paymentMethod: ExchangePaymentMethod? = ExchangePaymentMethod.FOREIGN_CARD, cardWonAmount: BigDecimal? = null,
+    ) {
         require(foreignAmount.signum() > 0) { "지출 금액은 0보다 커야 합니다." }
         val content = description.trim()
         require(content.isNotEmpty()) { "지출 내용을 입력해 주세요." }
-        val expense = ExchangeExpenseEntity(id ?: 0, currency.name, foreignAmount.toPlainString(), content, expenseDate)
+        require(expenseTime == null || expenseDate != null) { "지출 시각을 저장하려면 날짜도 선택해 주세요." }
+        require(id != null || (paymentMethod == ExchangePaymentMethod.FOREIGN_CARD && cardWonAmount != null)) {
+            "신한 트래블카드의 원화 환산액을 입력해 주세요."
+        }
+        require(cardWonAmount == null || cardWonAmount.signum() > 0) { "카드 표시 원화 환산액은 0보다 커야 합니다." }
+        val expense = ExchangeExpenseEntity(id ?: 0, currency.name, foreignAmount.toPlainString(), content, expenseDate,
+            expenseTime, paymentMethod?.name, cardWonAmount?.toPlainString())
         if (id == null) dao.insertExchangeExpense(expense)
         else require(dao.updateExchangeExpense(expense) == 1) { "지출 기록 $id 수정 실패: 기록을 찾을 수 없습니다." }
         protector.requestBackup(database)

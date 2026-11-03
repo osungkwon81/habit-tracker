@@ -1034,6 +1034,39 @@ object HabitTrackerMigrations {
         }
     }
 
+    private val MIGRATION_43_44 = object : Migration(43, 44) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE `exchange_record` ADD COLUMN `exchange_date` TEXT")
+            database.execSQL("ALTER TABLE `exchange_record` ADD COLUMN `exchange_time` TEXT")
+            database.execSQL("ALTER TABLE `exchange_expense` ADD COLUMN `expense_time` TEXT")
+            database.execSQL("ALTER TABLE `exchange_expense` ADD COLUMN `payment_method` TEXT")
+            database.execSQL("ALTER TABLE `exchange_expense` ADD COLUMN `card_won_amount` TEXT")
+        }
+    }
+
+    private val MIGRATION_44_45 = object : Migration(44, 45) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS household_product (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, unit TEXT NOT NULL, defaultSize TEXT NOT NULL, defaultCount INTEGER NOT NULL)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS household_purchase (id TEXT NOT NULL PRIMARY KEY, productId TEXT NOT NULL, date TEXT NOT NULL, size TEXT NOT NULL, count INTEGER NOT NULL, unit TEXT NOT NULL, amount INTEGER NOT NULL, shop TEXT NOT NULL, note TEXT NOT NULL, FOREIGN KEY(productId) REFERENCES household_product(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_household_purchase_productId ON household_purchase(productId)")
+        }
+    }
+
+    private val MIGRATION_45_46 = object : Migration(45, 46) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE household_purchase ADD COLUMN recordedOrder INTEGER NOT NULL DEFAULT 0")
+            // 과거 기록의 실제 입력 시각은 추정하지 않는다. 기존 행 순서로 동률만 고정한다.
+            db.execSQL("UPDATE household_purchase SET recordedOrder = rowid")
+        }
+    }
+
+    private val MIGRATION_46_47 = object : Migration(46, 47) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("UPDATE household_product SET unit = '개' WHERE unit IN ('ML', 'G', 'M', 'EACH')")
+            db.execSQL("UPDATE household_purchase SET unit = '개' WHERE unit IN ('ML', 'G', 'M', 'EACH')")
+        }
+    }
+
     val all = arrayOf(
         MIGRATION_2_3,
         MIGRATION_3_5,
@@ -1073,6 +1106,10 @@ object HabitTrackerMigrations {
         MIGRATION_40_41,
         MIGRATION_41_42,
         MIGRATION_42_43,
+        MIGRATION_43_44,
+        MIGRATION_44_45,
+        MIGRATION_45_46,
+        MIGRATION_46_47,
     )
 }
 

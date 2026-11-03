@@ -147,6 +147,33 @@ fun AppScreen(
     }
 }
 
+/** 텍스트가 길면 줄바꿈하는 공통 표 행. 작업 버튼은 오른쪽에 둔다. */
+@Composable
+fun AppTableRow(
+    values: List<String>,
+    modifier: Modifier = Modifier,
+    header: Boolean = false,
+    trailingContent: (@Composable () -> Unit)? = null,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().then(if (header) Modifier.background(MaterialTheme.colorScheme.surfaceVariant) else Modifier)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            values.forEachIndexed { index, value ->
+                Text(value, modifier = Modifier.weight(1f),
+                    style = if (header) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
+                    color = if (header) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    textAlign = if (index == 0) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.End)
+            }
+            if (trailingContent != null) Box(Modifier.width(88.dp), contentAlignment = Alignment.CenterEnd) { trailingContent() }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
 /**
  * 제목 영역의 공통 레이아웃이다.
  * nullable 매개변수와 Composable 슬롯을 사용해 화면마다 필요한 내용만 선택적으로 끼운다.
@@ -301,14 +328,16 @@ fun AppSecondaryButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    compact: Boolean = false,
 ) {
     Button(
         onClick = onClick,
         modifier = modifier
-            .sizeIn(minHeight = 52.dp),
+            .sizeIn(minHeight = if (compact) 48.dp else 52.dp),
         enabled = enabled,
         shape = ButtonShape,
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+        contentPadding = if (compact) PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            else PaddingValues(horizontal = 20.dp, vertical = 14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -317,7 +346,7 @@ fun AppSecondaryButton(
         ),
         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
     ) {
-        Text(text = text, style = MaterialTheme.typography.labelLarge)
+        Text(text = text, style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
     }
 }
 

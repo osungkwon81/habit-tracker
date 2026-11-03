@@ -9,14 +9,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
-import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.habittracker.HabitTrackerApplication
-import com.habittracker.MainActivity
 import com.habittracker.R
 import com.habittracker.data.exchange.ExchangeCurrency
 import com.habittracker.data.exchange.ExchangeRateSource
@@ -110,23 +108,24 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
     }
 
     private fun createViews(widgetId: Int, currency: ExchangeCurrency?, period: ExchangeChartPeriod, days: Int) = RemoteViews(applicationContext.packageName, R.layout.exchange_rate_widget).apply {
-        val openRates = if (currency == null) {
-            Intent(applicationContext, ExchangeRateWidgetConfigureActivity::class.java)
-                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
-        } else {
+        // 런처가 기존 View를 재사용하므로 각 상태의 표시 여부를 명시적으로 초기화한다.
+        setViewVisibility(R.id.widget_rate, View.GONE)
+        setViewVisibility(R.id.widget_notice, View.VISIBLE)
+        setViewVisibility(R.id.widget_graph, View.GONE)
+        setTextViewText(R.id.widget_country, applicationContext.getString(R.string.exchange_widget_heading))
+        setTextViewText(R.id.widget_currency, "")
+        if (currency != null) {
             setTextViewText(R.id.widget_country, when (currency) {
                 ExchangeCurrency.USD -> "미국"
                 ExchangeCurrency.JPY -> "일본"
             })
             setTextViewText(R.id.widget_currency, "${currency.unit}${currency.amountUnitLabel} · ${ExchangeRateWidgetProvider.periodLabel(period, days)}")
-            Intent(applicationContext, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                data = Uri.parse("habittracker://exchange/rates?widgetCurrency=${currency.name}")
-            }
         }
+        val openSettings = Intent(applicationContext, ExchangeRateWidgetConfigureActivity::class.java)
+            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
         setOnClickPendingIntent(
             R.id.exchange_widget_root,
-            PendingIntent.getActivity(applicationContext, widgetId, openRates, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE),
+            PendingIntent.getActivity(applicationContext, widgetId, openSettings, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE),
         )
     }
 
@@ -139,6 +138,7 @@ class ExchangeRateWidgetWorker(context: Context, params: WorkerParameters) : Cor
         }
         val format = NumberFormat.getNumberInstance(Locale.KOREA).apply { maximumFractionDigits = 2 }
         val rateText = "${format.format(latest.rate.toBigDecimal())}원"
+        views.setViewVisibility(R.id.widget_rate, View.VISIBLE)
         views.setTextViewText(R.id.widget_rate, rateText)
         views.setContentDescription(R.id.widget_rate, "${currency.rateLabel} $rateText. 저장된 고시 ${latest.quotedAt.format(quoteFormat)} · ${latest.quoteRound}회차")
         if (rows.isEmpty()) {

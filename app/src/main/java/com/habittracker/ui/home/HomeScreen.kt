@@ -209,20 +209,20 @@ private fun WorkspaceSection(
     val defaultOrder = remember {
         val preferred = listOf(AppDestination.STOCK, AppDestination.CARD, AppDestination.LOTTO, AppDestination.PLANT, AppDestination.MEMO)
         preferred + AppDestination.entries.filter {
-            it !in preferred && it != AppDestination.HOME && it != AppDestination.MORE &&
+            it.parent == null && it !in preferred && it != AppDestination.HOME && it != AppDestination.MORE &&
                 !AppDestination.NOTIFICATION_ASSISTANT.matches(it.route)
         }
     }
-    var menuOrder by remember { mutableStateOf(defaultOrder.take(5)) }
+    var menuOrder by remember { mutableStateOf(defaultOrder.take(6)) }
     LaunchedEffect(context, refresh) {
-        menuOrder = withContext(Dispatchers.IO) { HomeMenuUsageStore.currentOrder(context, defaultOrder).take(5) }
+        menuOrder = withContext(Dispatchers.IO) { HomeMenuUsageStore.currentOrder(context, defaultOrder).take(6) }
     }
     Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
         val actions = menuOrder.map { destination ->
             HomeQuickAction(
                 id = destination.route,
                 iconRes = destination.iconRes,
-                title = destination.homeLabel,
+                title = destination.label,
                 onClick = { onOpenDestination(destination) },
             )
         }
@@ -252,9 +252,16 @@ internal object HomeMenuUsageStore {
     fun currentOrder(context: Context, defaultOrder: List<AppDestination>): List<AppDestination> {
         val values = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE).all
         val today = LocalDate.now()
+        val groupedDestinations = AppDestination.entries.groupBy { destination ->
+            var main = destination
+            while (main.parent != null) main = requireNotNull(main.parent)
+            main
+        }
         val counts = defaultOrder.associateWith { destination ->
             (0L..6L).sumOf { offset ->
-                (values["$dayPrefix${today.minusDays(offset)}|${destination.route}"] as? Int ?: 0).toLong()
+                groupedDestinations[destination].orEmpty().sumOf { child ->
+                    (values["$dayPrefix${today.minusDays(offset)}|${child.route}"] as? Int ?: 0).toLong()
+                }
             }
         }
         return defaultOrder.sortedByDescending { counts.getValue(it) }

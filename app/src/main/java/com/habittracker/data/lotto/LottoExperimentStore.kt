@@ -209,6 +209,7 @@ class LottoExperimentStore(context: Context, private val now: () -> Instant = { 
     suspend fun approve(id: String, draws: List<LottoPriorDesignDraw>, approvalReason: String,
         automaticAuthorization: (() -> Boolean)? = null,
     ) = locked {
+        require(LotteryAdaptiveSettings(app).value(LotteryProduct.LOTTO_645) == null) { "새 시험 적용 이력이 있어 이전 FINAL 설정을 덮어쓸 수 없습니다. 정책 호환성을 확인해 주세요." }
         require(approvalReason.isNotBlank()) { "승인 이유가 필요합니다." }
         val directory = experimentDirectory(id)
         val spec = readRegistration(directory)

@@ -152,6 +152,7 @@ fun LottoScreen(
                         state = autoImprovement,
                         onRefresh = { viewModel.refreshAutoImprovement() },
                         onEnabledChange = { viewModel.setAutoImprovementEnabled(it) },
+                        onRollback = { viewModel.rollbackAutoImprovement() },
                     )
                 }
                 item {
@@ -168,11 +169,9 @@ fun LottoScreen(
             LottoTab.GENERATOR -> {
                 item {
                     GeneratorSection(
-                        selectedMode = uiState.generationMode,
                         lastGeneratedSource = uiState.lastGeneratedSource,
                         isGenerating = uiState.isGenerating,
                         isSaving = isSavingGenerated,
-                        onModeSelected = viewModel::updateGenerationMode,
                         onGenerateChatGpt = viewModel::generateChatGpt,
                         onGenerateGemini = viewModel::generateGemini,
                     )
@@ -393,11 +392,9 @@ private fun LottoNavigation(selected: LottoTab, viewModel: LottoViewModel) {
 
 @Composable
 private fun GeneratorSection(
-    selectedMode: LottoGenerationMode,
     lastGeneratedSource: String?,
     isGenerating: Boolean,
     isSaving: Boolean,
-    onModeSelected: (LottoGenerationMode) -> Unit,
     onGenerateChatGpt: () -> Unit,
     onGenerateGemini: () -> Unit,
 ) {
@@ -405,15 +402,10 @@ private fun GeneratorSection(
         Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(text = "번호 생성", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
-                text = "점수는 과거 패턴 적합도이며 당첨 확률이 아닙니다. 기본값은 정밀 모드입니다.",
+                text = "12,000개 후보에서 점수와 번호 분산을 고려해 선택합니다.",
                 color = LottoTextMutedColor,
                 style = MaterialTheme.typography.bodySmall,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                LottoGenerationMode.entries.forEach { mode ->
-                    AppSelectableChip(label = mode.label, selected = selectedMode == mode, onClick = { onModeSelected(mode) })
-                }
-            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 LottoSourceButton(
                     text = "균형형 생성",
@@ -1226,7 +1218,7 @@ private fun ControlComparisonSummary(comparisons: List<LottoControlComparison>) 
             val difference = "%+.2f".format(comparison.averageMatchDifference)
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
-                    text = "${comparison.sourceLabel} · ${comparison.generationVersion}",
+                    text = comparison.sourceLabel,
                     color = LottoTextStrongColor,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -1281,7 +1273,7 @@ private fun ScorePerformanceSummary(performances: List<LottoScorePerformance>) {
         performances.forEach { performance ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "${performance.sourceLabel} · ${performance.generationVersion}",
+                    text = performance.sourceLabel,
                     color = LottoTextStrongColor,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -1385,9 +1377,6 @@ private fun WinningTypeTable(winningTypeStats: List<LottoWinningTypeStat>) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(modifier = Modifier.weight(1.2f)) {
                     Text(text = stat.sourceLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                    if (stat.sourceLabel != "QR 코드") {
-                        Text(text = stat.generationVersion, color = LottoTextMutedColor, style = MaterialTheme.typography.labelSmall)
-                    }
                 }
                 ranks.forEach { rank ->
                     Text(text = "${stat.counts[rank] ?: 0}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
@@ -1406,8 +1395,7 @@ private fun purchaseWinningRate(stat: LottoWinningTypeStat): String =
 private fun totalWinningCount(stat: LottoWinningTypeStat): Int =
     stat.counts.values.sum()
 
-private fun statDisplayLabel(stat: LottoWinningTypeStat): String =
-    if (stat.sourceLabel == "QR 코드") stat.sourceLabel else "${stat.sourceLabel} · ${stat.generationVersion}"
+private fun statDisplayLabel(stat: LottoWinningTypeStat): String = stat.sourceLabel
 
 @Composable
 internal fun StatMiniCard(title: String, value: String, modifier: Modifier = Modifier) {

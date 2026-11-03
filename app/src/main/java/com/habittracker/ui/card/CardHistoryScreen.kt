@@ -683,7 +683,7 @@ private fun CardHistoryListCard(histories: List<CardHistoryEntity>, selectedMont
                                 )
                                 dailyAmount?.let { amount ->
                                     Text(
-                                        text = "직전 기록 대비 ${formatWon(amount)}",
+                                        text = formatWon(amount),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         textAlign = TextAlign.End,

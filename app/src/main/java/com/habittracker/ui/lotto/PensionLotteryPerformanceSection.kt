@@ -33,7 +33,7 @@ internal fun PensionLotteryPerformanceOverview(summary: PensionLotteryPerformanc
             AppSectionHeader("집계 보류·제외 사유", "각 배치의 첫 확인 사유를 표시합니다.")
             summary.issues.forEach { (reason, count) -> Text("$reason · ${count}배치") }
         }
-        if (summary.settings.isEmpty()) Text("추천 4개와 대조군 4개의 평가가 모두 완료된 비교 회차가 없습니다.")
+        if (summary.settings.isEmpty()) Text("추천과 같은 개수의 대조군 평가가 모두 완료된 비교 회차가 없습니다.")
         AppSupportText("아래 수치는 완료 자료의 관찰값입니다. 누락·제외가 있으면 해석에 주의해야 하며, 무작위 대비 우위나 설정 채택을 판정하지 않습니다.")
     }
 }
@@ -42,7 +42,7 @@ internal fun PensionLotteryPerformanceOverview(summary: PensionLotteryPerformanc
 internal fun PensionLotterySettingPerformanceSection(performance: PensionLotterySettingPerformance) {
     var showDetails by rememberSaveable(performance.configHash) { mutableStateOf(false) }
     AppSectionCard {
-        AppSectionHeader("설정별 관찰 성과", "${performance.roundCount}회차 · ${performance.batchCount}배치 · 배치마다 추천 4개·대조군 4개")
+        AppSectionHeader("설정별 관찰 성과", "${performance.roundCount}회차 · ${performance.batchCount}배치 · 배치마다 추천 ${performance.recommendationsPerBatch}개·대조군 ${performance.recommendationsPerBatch}개")
         PerformanceRow("지표", "추천", "대조군")
         val recommended = performance.recommendation
         val control = performance.control
@@ -54,9 +54,10 @@ internal fun PensionLotterySettingPerformanceSection(performance: PensionLottery
         PerformanceRow("끝 1자리 이상", percent(recommended.suffix1Rate), percent(control.suffix1Rate))
         PerformanceRow("끝 3자리 이상", percent(recommended.suffix3Rate), percent(control.suffix3Rate))
         PerformanceRow("보너스 6자리", percent(recommended.bonusRate), percent(control.bonusRate))
-        AppSupportText("끝자리 종류 수는 배치 4개 번호의 평균 커버리지이며 당첨 확률 개선율이 아닙니다.")
-        PerformanceRow("끝 1자리 종류", coverage(recommended.lastDigitCoverage), coverage(control.lastDigitCoverage))
-        PerformanceRow("끝 2자리 종류", coverage(recommended.lastTwoDigitsCoverage), coverage(control.lastTwoDigitsCoverage))
+        AppSupportText("끝자리 종류 수는 배치 ${performance.recommendationsPerBatch}개 번호의 평균 커버리지이며 당첨 확률 개선율이 아닙니다.")
+        if (performance.recommendationsPerBatch == 1) AppSupportText("개별 생성은 사용자가 유형·개수·재생성을 선택한 기록입니다. 기존 4개 배치 및 자동 개선 실험과 구분합니다.")
+        PerformanceRow("끝 1자리 종류", coverage(recommended.lastDigitCoverage, performance.recommendationsPerBatch), coverage(control.lastDigitCoverage, performance.recommendationsPerBatch))
+        PerformanceRow("끝 2자리 종류", coverage(recommended.lastTwoDigitsCoverage, performance.recommendationsPerBatch), coverage(control.lastTwoDigitsCoverage, performance.recommendationsPerBatch))
         }
     }
 }
@@ -71,4 +72,4 @@ private fun PerformanceRow(label: String, recommended: String, control: String) 
 }
 
 private fun percent(value: Double) = String.format(Locale.ROOT, "%.2f%%", value * 100)
-private fun coverage(value: Double) = String.format(Locale.ROOT, "%.2f / 4", value)
+private fun coverage(value: Double, count: Int) = String.format(Locale.ROOT, "%.2f / %d", value, count)

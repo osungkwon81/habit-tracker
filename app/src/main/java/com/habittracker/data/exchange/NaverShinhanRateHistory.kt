@@ -43,7 +43,7 @@ internal class NaverShinhanRateHistory(private val client: OkHttpClient) {
             coroutineContext.ensureActive()
             try {
                 val url = "$baseUrl/${currency.name}/charts/round".toHttpUrl().newBuilder()
-                    .addQueryParameter("bankType", "shinhan").addQueryParameter("date", date.toString()).build()
+                    .addQueryParameter("bankType", "shinhan").addQueryParameter("date", date.format(DateTimeFormatter.BASIC_ISO_DATE)).build()
                 val json = read(url.toString(), "currency=${currency.name} date=$date stage=고시 조회")
                 check(json.getString("tradeBaseAt") == date.format(DateTimeFormatter.BASIC_ISO_DATE)) { "요청 날짜와 응답 날짜가 다릅니다." }
                 val comparisonDate = LocalDate.parse(json.getString("lastTradeBaseAt"), DateTimeFormatter.BASIC_ISO_DATE)

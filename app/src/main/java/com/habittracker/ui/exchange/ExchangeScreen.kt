@@ -1,20 +1,24 @@
 package com.habittracker.ui.exchange
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -30,10 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.data.exchange.ExchangeCurrency
@@ -42,6 +49,8 @@ import com.habittracker.data.exchange.ExchangeQuote
 import com.habittracker.data.exchange.ExchangeRateSource
 import com.habittracker.data.exchange.ExchangeRecord
 import com.habittracker.data.exchange.ExchangeExpense
+import com.habittracker.data.exchange.ExchangeAnalytics
+import com.habittracker.data.exchange.compareCardExpense
 import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppConfirmDialog
 import com.habittracker.ui.components.AppButtonRow
@@ -122,6 +131,7 @@ fun ExchangeScreen(
     var deleteTarget by remember { mutableStateOf<ExchangeRecord?>(null) }
     var deleteExpenseTarget by remember { mutableStateOf<ExchangeExpense?>(null) }
     var showExpenseDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showExchangeDatePicker by rememberSaveable { mutableStateOf(false) }
     var showRecollectionDatePicker by rememberSaveable { mutableStateOf(false) }
     var confirmRecollection by rememberSaveable { mutableStateOf(false) }
     SideEffect {
@@ -168,25 +178,28 @@ fun ExchangeScreen(
             onDismiss = { confirmRecollection = false },
         )
     }
-    if (isRecordsPage && isExpenseEntry && showExpenseDatePicker) {
+    if (isRecordsPage && ((isExpenseEntry && showExpenseDatePicker) || (!isExpenseEntry && showExchangeDatePicker))) {
+        val inputDate = if (isExpenseEntry) expenseEditor.expenseDate else editor.exchangeDate
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = expenseEditor.expenseDate?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
+            initialSelectedDateMillis = inputDate?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
         )
         DatePickerDialog(
-            onDismissRequest = { showExpenseDatePicker = false },
+            onDismissRequest = { showExpenseDatePicker = false; showExchangeDatePicker = false },
             confirmButton = {
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { millis ->
-                            viewModel.updateExpenseDate(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                            val date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                            if (isExpenseEntry) viewModel.updateExpenseDate(date) else viewModel.updateExchangeDate(date)
                         }
                         showExpenseDatePicker = false
+                        showExchangeDatePicker = false
                     },
                     enabled = datePickerState.selectedDateMillis != null && !state.isSaving,
                 ) { Text("선택") }
             },
             dismissButton = {
-                TextButton(onClick = { showExpenseDatePicker = false }) { Text("취소") }
+                TextButton(onClick = { showExpenseDatePicker = false; showExchangeDatePicker = false }) { Text("취소") }
             },
         ) {
             DatePicker(state = datePickerState)
@@ -204,7 +217,8 @@ fun ExchangeScreen(
     deleteExpenseTarget?.let { expense ->
         AppConfirmDialog(
             title = "지출 기록 삭제",
-            message = "${expense.description} · ${expense.foreignAmount.money()} ${selected.amountUnitLabel} 지출을 삭제할까요? 삭제하면 잔액에 다시 반영됩니다.",
+            message = "${expense.description} · ${expense.foreignAmount.money()} ${selected.amountUnitLabel} 지출을 삭제할까요? " +
+                if (expense.usesForeignBalance) "삭제하면 외화 잔액에 다시 반영됩니다." else "기존 별도 지출 집계에서 제외됩니다.",
             confirmText = "삭제",
             onConfirm = { viewModel.deleteExpense(expense.id); deleteExpenseTarget = null },
             onDismiss = { deleteExpenseTarget = null },
@@ -214,7 +228,9 @@ fun ExchangeScreen(
         AppSaveButton(
             onClick = if (isExpenseEntry) viewModel::saveExpense else viewModel::save,
             text = if (isExpenseEntry) "지출 저장" else "환전 저장",
-            enabled = !state.isSaving && (if (isExpenseEntry) expenseAmount != null && expenseEditor.description.isNotBlank() else amount != null && rate != null),
+            enabled = !state.isSaving && (if (isExpenseEntry) expenseAmount != null && expenseEditor.description.isNotBlank() &&
+                expenseEditor.hasValidTime && (positiveDecimal(expenseEditor.cardWonAmount) != null || (expenseEditor.id != null && expenseEditor.cardWonAmount.isBlank()))
+                else amount != null && rate != null && editor.hasValidTime),
             modifier = Modifier.fillMaxWidth(),
         )
     } } else null) {
@@ -227,7 +243,7 @@ fun ExchangeScreen(
                 },
                 description = when (page) {
                     ExchangePage.RATES -> "신한은행 매매기준율과 수집 이력을 확인합니다."
-                    ExchangePage.RECORDS -> "환전 기록과 외화 지출을 입력하고 남은 금액을 확인합니다."
+                    ExchangePage.RECORDS -> "보유 외화의 원가와 평가차액, 결제수단별 지출 비용을 확인합니다."
                     ExchangePage.COLLECTION_SETTINGS -> "자동 수집 주기는 달러·엔화에 공통으로 적용됩니다."
                 },
             )
@@ -274,17 +290,20 @@ fun ExchangeScreen(
             AppSectionHeader("보유 금액")
             when {
                 state.loadError != null -> Text(state.loadError.orEmpty(), color = MaterialTheme.colorScheme.error)
-                !state.isLoaded -> AppLoadingCard("${selected.label} 금액을 불러오고 있습니다.")
+                !state.isLoaded || !hasSelectedData -> AppLoadingCard("${selected.label} 금액을 불러오고 있습니다.")
                 else -> Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
                     state.balances.filter { it.currency == selected }.forEach { balance ->
                         Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.xs)) {
-                            AppSupportText("남은 금액")
-                            Text("${balance.remainingAmount.money()} ${balance.currency.amountUnitLabel}", style = MaterialTheme.typography.displaySmall)
-                            AppSupportText("환전 합계 ${balance.exchangedAmount.money()} ${balance.currency.amountUnitLabel}")
-                            AppSupportText("지출 합계 ${balance.spentAmount.money()} ${balance.currency.amountUnitLabel}")
+                            AppSupportText(balance.currency.amountUnitLabel)
+                            ExchangeSummaryTable(
+                                headers = listOf("환전 합계", "지출 합계", "남은 외화"),
+                                values = listOf(balance.exchangedAmount.money(), balance.spentAmount.money(), balance.remainingAmount.money()),
+                            )
+                            if (balance.cardSpentAmount.signum() > 0) AppSupportText("기존 별도 지출 ${balance.cardSpentAmount.money()} ${balance.currency.amountUnitLabel} · 잔액 차감 없음")
+                            if (balance.remainingAmount.signum() < 0) Text("외화 지출이 환전 합계보다 많습니다. 누락된 기록을 확인해 주세요.", color = MaterialTheme.colorScheme.error)
                         }
                     }
-                    AppSupportText("환전 합계는 당시 적용 환율로 계산한 추정 외화 수량입니다.")
+                    state.analytics?.let { ExchangePositionAnalysis(it, selected, latest, state.expenses.size) }
                 }
             }
         }
@@ -354,7 +373,7 @@ fun ExchangeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.isUpdatingCollection && (!automaticCollection || validInterval),
                 )
-                AppSupportText("자동 수집은 한국 시간 기준 평일(월~금)에만 달러·엔화를 함께 수집하며, 주말에는 건너뜁니다. 앱을 닫아도 예약은 유지됩니다. 첫 자동 수집은 설정한 간격 이후이며 절전·네트워크 상황에 따라 늦어질 수 있습니다. 화면 진입 시에는 DB에 저장된 환율만 표시합니다.")
+                AppSupportText("평일에 달러·엔화를 함께 수집합니다. 절전·네트워크 상태에 따라 수집이 늦어질 수 있습니다.")
             }
         }
         item {
@@ -406,6 +425,7 @@ fun ExchangeScreen(
         item {
             AppSectionCard {
                 if (expenseEditor.id != null) AppSupportText("지출 기록 수정 중")
+                if (expenseEditor.id == null) AppSupportText("신한 트래블카드")
                 AppSecondaryButton(
                     text = expenseEditor.expenseDate?.let { "지출 날짜: $it · 달력" } ?: "지출 날짜 선택 · 달력",
                     onClick = { showExpenseDatePicker = true },
@@ -414,11 +434,26 @@ fun ExchangeScreen(
                 )
                 AppTextField(
                     value = expenseEditor.foreignAmount, onValueChange = viewModel::updateExpenseAmount,
-                    label = "지출 금액(${selected.amountUnitLabel})", singleLine = true,
+                    label = "${selected.label} 결제액(${selected.amountUnitLabel})", singleLine = true,
                     enabled = !state.isSaving, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     isError = expenseEditor.foreignAmount.isNotBlank() && expenseAmount == null,
                     supportingText = if (expenseEditor.foreignAmount.isNotBlank() && expenseAmount == null) "0보다 큰 외화 금액을 입력해 주세요." else null,
                 )
+                AppTextField(
+                    value = expenseEditor.cardWonAmount, onValueChange = viewModel::updateCardWonAmount,
+                    label = "카드 표시 원화 환산액(원)", singleLine = true, enabled = !state.isSaving,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = expenseEditor.cardWonAmount.isNotBlank() && positiveDecimal(expenseEditor.cardWonAmount) == null,
+                    supportingText = if (expenseEditor.cardWonAmount.isNotBlank() && positiveDecimal(expenseEditor.cardWonAmount) == null)
+                        "0보다 큰 원화 금액을 입력해 주세요." else null,
+                )
+                if (expenseEditor.expenseTime.isNotBlank() || state.analytics?.basisIssue?.contains("순서") == true) {
+                    AppTextField(value = expenseEditor.expenseTime, onValueChange = viewModel::updateExpenseTime,
+                        label = "거래 시각(HH:mm)", singleLine = true, enabled = !state.isSaving,
+                        isError = !expenseEditor.hasValidTime, supportingText = "같은 날 환전·지출의 순서를 확인할 때 입력하세요.")
+                }
+                CardExpenseComparison(expenseAmount, positiveDecimal(expenseEditor.cardWonAmount),
+                    state.analytics?.takeIf { hasSelectedData }?.cumulativeAverageRate, selected)
                 AppTextField(
                     value = expenseEditor.description, onValueChange = viewModel::updateExpenseDescription,
                     label = "지출 내용(필수)", enabled = !state.isSaving,
@@ -435,6 +470,10 @@ fun ExchangeScreen(
         item {
             AppSectionCard {
                 if (editor.id != null) AppSupportText("환전 기록 수정 중")
+                AppSecondaryButton(
+                    text = editor.exchangeDate?.let { "환전 날짜: $it · 달력" } ?: "환전 날짜 선택 · 달력",
+                    onClick = { showExchangeDatePicker = true }, modifier = Modifier.fillMaxWidth(), enabled = !state.isSaving,
+                )
                 AppTextField(
                     value = editor.wonAmount, onValueChange = viewModel::updateAmount,
                     label = "환전에 쓴 원화 금액(원)", singleLine = true, enabled = !state.isSaving,
@@ -452,10 +491,14 @@ fun ExchangeScreen(
                 if (amount != null && rate != null) {
                     Comparison(amount, rate, latest?.rate, selected)
                 }
+                if (editor.exchangeTime.isNotBlank() || state.analytics?.basisIssue?.contains("순서") == true) {
+                    AppTextField(value = editor.exchangeTime, onValueChange = viewModel::updateExchangeTime,
+                        label = "거래 시각(HH:mm)", singleLine = true, enabled = !state.isSaving,
+                        isError = !editor.hasValidTime, supportingText = "같은 날 환전·지출의 순서를 확인할 때 입력하세요.")
+                }
                 if (editor.id != null) AppSecondaryButton("수정 취소", {
                     guard.navigate { discardCollectionChanges(); viewModel.clearEditor() }
                 }, enabled = !state.isSaving)
-                AppSupportText("당시 우대가 적용된 실제 환율을 입력해 주세요. 비교금액은 매매기준율 평가액이며 실제 재환전 수령액과 다를 수 있습니다.")
                 if (state.isSaving) AppSupportText("환전 기록을 저장하고 있습니다.")
             }
         }
@@ -469,7 +512,9 @@ fun ExchangeScreen(
             else -> items(state.records, key = { it.id }) { record ->
                 AppSectionCard {
                     Text("${record.wonAmount.money()}원 환전", style = MaterialTheme.typography.titleMedium)
+                    AppSupportText(record.exchangeDate?.toString() ?: "날짜 미등록")
                     AppSupportText("당시 ${record.appliedRate.money()}원 · ${selected.rateLabel}")
+                    AppSupportText("원래 환전분 전체 비교 · 사용한 외화 포함")
                     Comparison(record.wonAmount, record.appliedRate, latest?.rate, selected)
                     AppButtonRow(
                         primaryText = "수정",
@@ -495,7 +540,11 @@ fun ExchangeScreen(
                 AppSectionCard {
                     Text(expense.description, style = MaterialTheme.typography.titleMedium)
                     AppSupportText(expense.expenseDate?.toString() ?: "날짜 미등록")
+                    if (!expense.usesForeignBalance) AppSupportText("기존 기록 · 외화 잔액 차감 없음")
                     Text("${expense.foreignAmount.money()} ${selected.amountUnitLabel}")
+                    if (expense.cardWonAmount != null) CardExpenseComparison(expense.foreignAmount, expense.cardWonAmount,
+                        state.analytics?.cumulativeAverageRate, selected)
+                    else AppSupportText("카드 표시 원화 환산액 미등록 · 수정에서 입력해 주세요.")
                     AppButtonRow(
                         primaryText = "수정", onPrimaryClick = { guard.navigate { viewModel.editExpense(expense) } },
                         secondaryText = "삭제", onSecondaryClick = { deleteExpenseTarget = expense },
@@ -507,6 +556,92 @@ fun ExchangeScreen(
         }
         }
     }
+}
+
+@Composable
+private fun ExchangePositionAnalysis(analysis: ExchangeAnalytics, currency: ExchangeCurrency, latest: ExchangeQuote?, expenseCount: Int) {
+    var showDetails by rememberSaveable(currency) { mutableStateOf(false) }
+    val rateDifference = analysis.cumulativeAverageRate?.let { average -> latest?.rate?.subtract(average) }
+    AppSectionHeader("누적 환전 환율", currency.rateLabel)
+    ExchangeSummaryTable(
+        headers = listOf("누적 평균", "현재 환율", "차이"),
+        values = listOf(analysis.cumulativeAverageRate?.let { "${it.money()}원" } ?: "기록 없음",
+            latest?.rate?.let { "${it.money()}원" } ?: "고시 없음", rateDifference.signedWon()),
+        difference = rateDifference,
+    )
+    AppSectionHeader("남은 외화 평가", "보유 평균 환율 ${analysis.remainingAverageRate?.let { "${it.money()}원 · ${currency.rateLabel}" } ?: "확인 필요"}")
+    ExchangeSummaryTable(
+        headers = listOf("매입 원가", "현재 평가액", "평가차액"),
+        values = listOf(analysis.remainingCostWon?.let { "${it.money()}원" } ?: "확인 필요",
+            analysis.currentValueWon?.let { "${it.money()}원" } ?: "고시 없음", analysis.valuationDifferenceWon.signedWon()),
+        difference = analysis.valuationDifferenceWon,
+    )
+    latest?.let { AppSupportText("고시 ${it.quotedAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))}") }
+    analysis.basisIssue?.let { AppSupportText(if (it.contains("시각") || it.contains("순서"))
+        "거래 순서를 확인할 수 없어 보유 원가는 미확인입니다. 지출 비교는 현재 누적 평균으로 표시합니다." else it) }
+    AppSecondaryButton(if (showDetails) "원가·지출 요약 접기" else "원가·지출 요약 보기", { showDetails = !showDetails })
+    if (showDetails) {
+        Text("확인된 원화 지출 비용 ${analysis.knownExpenseWon.money()}원 · ${expenseCount - analysis.unknownExpenseCostCount}/${expenseCount}건")
+        if (analysis.unknownExpenseCostCount > 0) AppSupportText("원가 미확인 ${analysis.unknownExpenseCostCount}건은 합계에서 제외")
+        AppSupportText("환율 차이는 현재−누적 평균, 평가차액은 현재 평가액−매입 원가입니다.")
+        AppSupportText("평균 원가는 환전·지출 순서에 따른 이동 가중평균입니다. 최신 고시 평가액은 실제 재환전 수령액과 다릅니다.")
+    }
+}
+
+private fun BigDecimal?.signedWon(): String = this?.let {
+    "${if (it.signum() > 0) "+" else ""}${it.money()}원"
+} ?: "확인 필요"
+
+@Composable
+private fun ExchangeSummaryTable(headers: List<String>, values: List<String>, difference: BigDecimal? = null) {
+    val fontScale = LocalDensity.current.fontScale
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val tableWidth = maxOf(maxWidth, 324.dp * fontScale)
+        Column(Modifier.horizontalScroll(rememberScrollState())) {
+            Column(Modifier.width(tableWidth)) {
+                Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    headers.forEach { header ->
+                        Text(header, modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.End,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Row(Modifier.fillMaxWidth()) {
+                    values.forEachIndexed { index, value ->
+                        Text(value, modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.End,
+                            fontWeight = if (index == values.lastIndex) FontWeight.Bold else FontWeight.Medium,
+                            color = when {
+                                index != values.lastIndex || difference == null -> MaterialTheme.colorScheme.onSurface
+                                difference.signum() < 0 -> MaterialTheme.colorScheme.error
+                                difference.signum() > 0 -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            })
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardExpenseComparison(foreignAmount: BigDecimal?, cardWon: BigDecimal?, averageRate: BigDecimal?, currency: ExchangeCurrency) {
+    val comparison = remember(currency, foreignAmount, cardWon, averageRate) {
+        compareCardExpense(currency, foreignAmount, cardWon, averageRate)
+    } ?: return
+    AppSectionHeader("환율·환산액 비교", "현재 누적 환전 평균 기준 · ${currency.rateLabel}")
+    ExchangeSummaryTable(
+        headers = listOf("카드 표시 환율", "내 평균 환율", "환율 차이"),
+        values = listOf("${comparison.cardRate.money()}원", averageRate?.let { "${it.money()}원" } ?: "평균 미확인",
+            comparison.rateDifference.signedWon()),
+    )
+    ExchangeSummaryTable(
+        headers = listOf("카드 표시 환산액", "내 평균 환산액", "원화 차액"),
+        values = listOf("${requireNotNull(cardWon).money()}원", comparison.averageWonAmount?.let { "${it.money()}원" } ?: "평균 미확인",
+            comparison.wonDifference.signedWon()),
+    )
+    AppSupportText("차이 = 카드 표시−내 평균 · +는 더 높음, −는 더 낮음")
 }
 
 @Composable

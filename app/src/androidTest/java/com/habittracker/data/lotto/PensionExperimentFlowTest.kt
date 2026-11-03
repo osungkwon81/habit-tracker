@@ -6,8 +6,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.ui.lotto.PensionGenerationTrace
+import com.habittracker.ui.lotto.PensionLotteryGeneratedNumber
+import com.habittracker.ui.lotto.PensionLotteryGenerationType
 import com.habittracker.ui.lotto.generatePensionExperimentBatch
 import com.habittracker.ui.lotto.generatePensionOperatingBatch
+import com.habittracker.ui.lotto.buildPensionLotteryPerformance
+import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import java.io.File
 import java.io.IOException
 import java.lang.reflect.InvocationTargetException
@@ -26,6 +30,17 @@ class PensionExperimentFlowTest {
     private fun draws(last: Int = 60) = (last downTo 1).map { PensionLotteryDrawEntity(it, it % 5 + 1, (it * 7919 % 1_000_000).toString().padStart(6, '0')) }
     private val target get() = draws(61).first()
 
+    @Test fun regenerationClosesAtDeadlineWithoutWaitingForResultSync() {
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val check = owner.declaredMethods.single { it.name == "canRegeneratePensionRound" }.apply { isAccessible = true }
+        val deadline = lotteryEvaluationDeadline(LotteryProduct.PENSION_720, 340)
+        assertEquals(true, check.invoke(null, 340, 339, deadline.minusNanos(1)))
+        assertEquals(false, check.invoke(null, 340, 339, deadline))
+        assertEquals(false, check.invoke(null, 340, 339, deadline.plusDays(1)))
+        assertEquals(false, check.invoke(null, 340, 340, deadline.minusHours(1)))
+        assertEquals(false, check.invoke(null, null, 339, deadline.minusHours(1)))
+    }
+
     @Test fun operatingAndUninstrumentedGeneratorMatchBaseline() = runBlocking {
         val fixture = PensionRecordFixture()
         val history = draws(); val excluded = setOf("123456")
@@ -34,7 +49,7 @@ class PensionExperimentFlowTest {
         assertEquals(operating.map { it.groupNo to it.winningNumber }, baseline.map { it.groupNo to it.winningNumber })
         val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
         val analysisMethod = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }.apply { isAccessible = true }
-        val analysis = analysisMethod.invoke(null, history, 3, null)
+        val analysis = analysisMethod.invoke(null, history, 3, null, true)
         val generate = owner.declaredMethods.single { it.name == "generateCandidateSet" }.apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
         val original = generate.invoke(null, analysis, excluded, Random(42L), null) as List<com.habittracker.ui.lotto.PensionLotteryGeneratedNumber>
@@ -53,6 +68,53 @@ class PensionExperimentFlowTest {
         assertTrue(numbers.all { it["number"].toString().matches(Regex("[0-9]{6}")) && (it["groupNo"] as Int) in 1..5 })
     }
 
+    @Test fun reusedLastDigitsRemainAllowedWhenEveryCandidateDigitIsAlreadyUsed() {
+        val history = draws()
+        val numbers = generatePensionExperimentBatch(history, 3, 42L, emptySet(), PensionGenerationTrace())
+        val first = numbers.single { it.type == PensionLotteryGenerationType.APPEARED }
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val analysis = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }
+            .apply { isAccessible = true }.invoke(null, history, 3, null, true)
+        @Suppress("UNCHECKED_CAST")
+        val allowedDigits = requireNotNull(analysis).javaClass.getDeclaredField("topAppearedLastDigits")
+            .apply { isAccessible = true }.get(analysis) as List<Int>
+        val otherTypes = PensionLotteryGenerationType.entries.filterNot { it == first.type }
+        val otherNumbers = allowedDigits.mapIndexed { index, digit ->
+            first.copy(type = otherTypes[index], winningNumber = first.winningNumber.dropLast(1) + digit)
+        }
+        val trace = PensionGenerationTrace()
+        val candidate = owner.declaredMethods.single { it.name == "generateCandidate" }
+            .apply { isAccessible = true }
+            .invoke(null, analysis, first.type, null, null, emptySet<String>(), otherNumbers, 2_000, first.generationSeed, trace) as PensionLotteryGeneratedNumber?
+        assertNotNull(candidate)
+        assertEquals(first.winningNumber, candidate?.winningNumber)
+        assertEquals(first.groupNo, candidate?.groupNo)
+        assertTrue(trace.attempts in 1L..2_000L)
+    }
+
+    @Test fun diversityPreservesRequiredConditionsAndRestoresLegacySnapshots() {
+        val history = draws()
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val analyze = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }.apply { isAccessible = true }
+        val generate = owner.declaredMethods.single { it.name == "generateCandidateSet" }.apply { isAccessible = true }
+        val validate = owner.declaredMethods.single { it.name == "matchesCurrentGenerationConditions" }.apply { isAccessible = true }
+        val restore = owner.declaredMethods.single { it.name == "restoreGenerationAnalysis" }.apply { isAccessible = true }
+        val batches = listOf(false, true).map { preferDistinct ->
+            val analysis = analyze.invoke(null, history, 3, null, preferDistinct)
+            @Suppress("UNCHECKED_CAST")
+            val numbers = generate.invoke(null, analysis, emptySet<String>(), Random(42L), null) as List<PensionLotteryGeneratedNumber>
+            assertEquals(4, numbers.size)
+            assertEquals(4, numbers.map { it.winningNumber }.distinct().size)
+            assertEquals(true, validate.invoke(null, numbers, analysis))
+            val restored = restore.invoke(null, numbers, history)
+            assertNotNull(restored)
+            assertEquals(true, validate.invoke(null, numbers, restored))
+            numbers
+        }
+        assertTrue(batches[1].map { it.winningNumber.last() }.distinct().size >= batches[0].map { it.winningNumber.last() }.distinct().size)
+        assertNotEquals(batches[0].first().generationSnapshot?.configJson, batches[1].first().generationSnapshot?.configJson)
+    }
+
     @Test fun frozenInputPreventsFutureLeakAndModelExclusionsAreIndependent() = runBlocking {
         val frozen = PensionExperimentComparison.input(draws(), setOf("123456", "987654"))
         val altered = draws(62).map { if (it.roundNo >= 61) it.copy(winningNumber = "999999") else it }
@@ -64,6 +126,87 @@ class PensionExperimentFlowTest {
         assertEquals(candidate.map { it.winningNumber }, LottoDesignRecordJson.list(recorded.getValue("numbers")).map { LottoDesignRecordJson.objectValue(it)["number"] })
         assertEquals(3, models.size); assertEquals(61, result["targetRound"])
         assertEquals(frozen, PensionExperimentComparison.input(draws(), setOf("123456", "987654")))
+    }
+
+    @Test fun individualGenerationAllowsRepeatedTypesAndPreservesConditionsAndDrafts() {
+        val history = draws()
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val base = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }
+            .apply { isAccessible = true }.invoke(null, history, 3, null, true)
+        val analysis = owner.declaredMethods.single { it.name == "forIndividualGeneration" }
+            .apply { isAccessible = true }.invoke(null, base)
+        val generate = owner.declaredMethods.single { it.name == "generateCandidate" }.apply { isAccessible = true }
+        val validate = owner.declaredMethods.single { it.name == "matchesNumberConditions" }.apply { isAccessible = true }
+        val restore = owner.declaredMethods.single { it.name == "restoreGenerationAnalysis" }.apply { isAccessible = true }
+        val generated = mutableListOf<PensionLotteryGeneratedNumber>()
+        val types = listOf(PensionLotteryGenerationType.APPEARED, PensionLotteryGenerationType.COLD_MIX,
+            PensionLotteryGenerationType.APPEARED, PensionLotteryGenerationType.APPEARED,
+            PensionLotteryGenerationType.COLD_MIX, PensionLotteryGenerationType.APPEARED)
+        types.forEachIndexed { index, type ->
+            val opposite = generated.lastOrNull { it.type.pattern != type.pattern }
+            val number = requireNotNull(generate.invoke(null, analysis, type, opposite?.winningNumber, opposite?.groupNo,
+                generated.map { it.winningNumber }.toSet(), generated.toList(), 20_000, 42L + index, null) as PensionLotteryGeneratedNumber?)
+            assertEquals(true, validate.invoke(null, number, analysis))
+            assertEquals(type, number.type)
+            if (opposite != null) {
+                assertNotEquals(opposite.winningNumber.last(), number.winningNumber.last())
+                assertTrue(opposite.winningNumber.zip(number.winningNumber).count { it.first != it.second } >= 3)
+            }
+            assertNotNull(restore.invoke(null, listOf(number), history))
+            assertEquals(1, number.groupNo)
+            assertTrue(requireNotNull(number.generationSnapshot).usesAllGroups)
+            val config = org.json.JSONObject(requireNotNull(number.generationSnapshot).configJson)
+            assertFalse(config.getBoolean("pairDifferentGroup"))
+            assertFalse(config.has("groupWeights"))
+            assertEquals(5, config.getJSONArray("purchaseGroups").length())
+            generated += number
+        }
+        assertEquals(6, generated.map { it.winningNumber }.distinct().size)
+        assertEquals(4, generated.count { it.type == PensionLotteryGenerationType.APPEARED })
+        val oldConfig = owner.declaredMethods.single { it.name == "pensionLegacyIndividualConfiguration" }
+            .apply { isAccessible = true }.invoke(null, com.habittracker.ui.lotto.pensionExperimentConfiguration(3)) as String
+        val oldNumber = generated.first().let { it.copy(groupNo = 5,
+            generationSnapshot = requireNotNull(it.generationSnapshot).copy(configJson = oldConfig)) }
+        assertNotNull(restore.invoke(null, listOf(oldNumber), history))
+        val bytes = java.io.ByteArrayOutputStream().also { output ->
+            java.io.ObjectOutputStream(output).use { it.writeObject(ArrayList(generated)) }
+        }.toByteArray()
+        val restored = java.io.ObjectInputStream(java.io.ByteArrayInputStream(bytes)).use { it.readObject() }
+        assertEquals(generated, restored)
+    }
+
+    @Test fun individualPerformanceUsesOneMatchedControlAndCountsRoundsOnce() {
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val config = owner.declaredMethods.single { it.name == "pensionIndividualConfiguration" }
+            .apply { isAccessible = true }.invoke(null, com.habittracker.ui.lotto.pensionExperimentConfiguration(3)) as String
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(config.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val deadline = lotteryEvaluationDeadline(LotteryProduct.PENSION_720, 61)
+        fun row(batch: String, number: String, control: Boolean, suffix: Int, positions: Int) = PensionLotteryGeneratedNumberEntity(
+            generationId = "single:$batch", generationType = if (control) "CONTROL_1" else "APPEARED",
+            groupNo = 1, winningNumber = number, digitScores = "0,0,0,0,0,0", totalScore = 0,
+            scoreBand = "0~50", duplicateLabel = "none", coldPositions = "", coldPriorityScores = "",
+            generatedAt = deadline.minusDays(1), savedAt = deadline.minusDays(1), targetRoundNo = 61,
+            analysisThroughRound = 60, generationVersion = "pension-collection-v1", generationConfigJson = config,
+            generationConfigHash = hash, inputDataHash = "fixture", generationSeed = 42L, isControl = control,
+            isEvaluationTarget = true, evaluatedAt = deadline.plusHours(1), matchedSuffixLength = suffix,
+            positionMatchCount = positions, isBonusMatch = false,
+        )
+        val history = listOf(PensionLotteryDrawEntity(61, 1, "123456", bonusNumber = "222222"))
+        val rows = listOf(row("a", "000056", false, 2, 2), row("a", "987651", true, 0, 1),
+            row("b", "777777", false, 0, 0), row("b", "999956", true, 2, 2))
+        val result = buildPensionLotteryPerformance(history, rows)
+        assertEquals(1, result.pairedRoundCount)
+        assertEquals(2, result.recommendationCount)
+        assertTrue(result.issues.isEmpty())
+        val setting = result.settings.single()
+        assertEquals(1, setting.recommendationsPerBatch)
+        assertEquals(2, setting.batchCount)
+        assertEquals(0.5, setting.recommendation.suffix2Rate, 0.0)
+        assertEquals(0.5, setting.control.suffix2Rate, 0.0)
+        val incomplete = buildPensionLotteryPerformance(history, rows.dropLast(1))
+        assertEquals(1, incomplete.settings.single().batchCount)
+        assertEquals(1, incomplete.issues["추천 1개·대조군 1개 구성 불완전"])
     }
 
     @Test fun invalidHistoryAndNumbersAreRejectedBeforeGeneration() {
@@ -97,7 +240,7 @@ class PensionExperimentFlowTest {
         assertEquals(history.map { it.winningNumber }, PensionExperimentComparison.draws(LottoDesignRecordJson.objectValue(LottoDesignRecordJson.decode(inputFile.readBytes()).getValue("input"))).map { it.winningNumber })
         val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
         val method = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }.apply { isAccessible = true }
-        val a = method.invoke(null, history, 3, null); val b = method.invoke(null, history, 4, null)
+        val a = method.invoke(null, history, 3, null, true); val b = method.invoke(null, history, 4, null, true)
         val field = requireNotNull(a).javaClass.getDeclaredField("topAppearedLastDigits").apply { isAccessible = true }
         assertEquals(field.get(a), field.get(b))
     }

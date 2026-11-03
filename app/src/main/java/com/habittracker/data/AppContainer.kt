@@ -51,6 +51,14 @@ class AppContainer(context: Context) {
                 exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao(), applicationContext)
                 _readiness.value = Result.success(Unit)
                 try {
+                    val alerts = PersonalAlerts.get(applicationContext)
+                    alerts.load()
+                    alerts.schedule()
+                    alerts.chargeDueBills()
+                }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { Log.e("AppContainer", "개인 알림 예약 복구 실패", error) }
+                try {
                     withContext(Dispatchers.IO) {
                         com.habittracker.data.lotto.LotteryProduct.entries.forEach { product ->
                             com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueIfEnabled(applicationContext, product)

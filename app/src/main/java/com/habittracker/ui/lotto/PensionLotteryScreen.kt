@@ -2,11 +2,18 @@ package com.habittracker.ui.lotto
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
@@ -19,6 +26,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import com.habittracker.ui.components.AppOutlinedTextField as OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,6 +44,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -66,6 +78,11 @@ private val PensionStatHighBackground = Color(0xFFFFE1D6)
 private val PensionStatHighText = Color(0xFF8A2D13)
 private val PensionStatLowBackground = Color(0xFFDCEBFF)
 private val PensionStatLowText = Color(0xFF174E80)
+// 동행복권 연금720+ 추첨 결과의 왼쪽부터 자리별 테두리 색상.
+private val PensionPositionColors = listOf(
+    Color(0xFFDE4C0E), Color(0xFFF08200), Color(0xFFF3C00F),
+    Color(0xFF2A9BDB), Color(0xFFA87AD7), Color(0xFFADB0BA),
+)
 
 @Composable
 fun PensionLotteryScreen(
@@ -824,29 +841,38 @@ internal fun PensionLotteryNumberRow(
     winningNumber: String,
     highlightedPositions: Set<Int> = emptySet(),
     scores: List<Int> = emptyList(),
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
+    val ballSize = (if (compact) 30.dp else 40.dp) * LocalDensity.current.fontScale.coerceAtLeast(1f)
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = if (compact) Arrangement.spacedBy(4.dp) else Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         winningNumber.forEachIndexed { index, digit ->
             val highlighted = index in highlightedPositions
+            val positionColor = PensionPositionColors.getOrNull(index) ?: MaterialTheme.colorScheme.outlineVariant
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Surface(
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(ballSize).clearAndSetSemantics {
+                        contentDescription = "${index + 1}번째 자리 $digit${if (highlighted) ", 강조" else ""}"
+                    },
                     shape = CircleShape,
-                    color = if (highlighted) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    color = if (highlighted) positionColor.copy(alpha = 0.18f).compositeOver(MaterialTheme.colorScheme.surface)
+                        else MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
-                        2.dp,
-                        if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                        if (highlighted) 4.dp else 2.dp,
+                        positionColor,
                     ),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text(digit.toString(), fontWeight = FontWeight.Bold)
+                        Text(digit.toString(), fontWeight = FontWeight.Bold,
+                            style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 scores.getOrNull(index)?.let { score ->
@@ -894,20 +920,55 @@ private fun PensionLotteryPositionStatsCard(stat: PensionLotteryPositionStat) {
 
 @Composable
 private fun PensionLotteryDuplicateStatsCard(stats: List<PensionLotteryDuplicateStat>) {
+    val statsByLabel = remember(stats) { stats.associateBy { it.label } }
+    val fontScale = LocalDensity.current.fontScale
     AppSectionCard {
         AppSectionHeader(
             title = "동일 숫자 통계",
-            subtitle = "선택 기간 횟수(전체 횟수)이며, 2자리에는 여러 쌍도 포함합니다.",
+            subtitle = "선택 기간 횟수 · 아래는 전체 횟수",
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            stats.forEach { stat ->
-                PensionStatisticCell(
-                    label = stat.label,
-                    value = "${stat.count}회(${stat.totalCount})",
-                    modifier = Modifier.weight(1f),
-                )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val tableWidth = maxOf(maxWidth, 320.dp * fontScale.coerceAtLeast(1f))
+            Column(Modifier.horizontalScroll(rememberScrollState())) {
+                Column(Modifier.width(tableWidth)) {
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                        PensionDuplicateTableHeading("3자리 이상", Modifier.weight(1f).fillMaxHeight())
+                        Column(Modifier.weight(2f)) {
+                            PensionDuplicateTableHeading("2자리", Modifier.fillMaxWidth())
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Row(Modifier.fillMaxWidth()) {
+                                PensionDuplicateTableHeading("2쌍 이상", Modifier.weight(1f))
+                                PensionDuplicateTableHeading("1쌍", Modifier.weight(1f))
+                            }
+                        }
+                        PensionDuplicateTableHeading("중복 없음", Modifier.weight(1f).fillMaxHeight())
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(Modifier.fillMaxWidth()) {
+                        PENSION_DUPLICATE_LABELS.forEach { label ->
+                            val stat = statsByLabel[label]
+                            Column(Modifier.weight(1f).padding(horizontal = 4.dp, vertical = 12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(stat?.count?.let { "${it}회" } ?: "—", fontWeight = FontWeight.SemiBold,
+                                    style = MaterialTheme.typography.bodyMedium)
+                                Text(stat?.totalCount?.let { "전체 ${it}회" } ?: "전체 —",
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun PensionDuplicateTableHeading(text: String, modifier: Modifier = Modifier) {
+    Box(modifier.padding(horizontal = 4.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

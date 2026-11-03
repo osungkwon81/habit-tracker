@@ -17,8 +17,9 @@ internal class PensionComparisonFailure(
 ) : IllegalStateException("연금 비교 실패: 회차=$round, 모델=$model, 시드=$seed, 단계=$stage, 원인=${cause.message}", cause)
 
 internal object PensionExperimentComparison {
-    const val IMPLEMENTATION = "pension-last-digit-comparison-v1"
+    const val IMPLEMENTATION = "pension-last-digit-comparison-v2"
     fun configuration(count: Int) = LottoDesignRecordJson.decode(pensionExperimentConfiguration(count).toByteArray(), requireCanonical = false)
+    fun softConfiguration() = LottoDesignRecordJson.decode(com.habittracker.ui.lotto.pensionSoftLastDigitConfiguration().toByteArray(), requireCanonical = false)
     fun input(draws: List<PensionLotteryDrawEntity>, exclusions: Set<String>): Map<String, Any?> {
         require(draws.isNotEmpty() && draws.map { it.roundNo }.distinct().size == draws.size) { "연금 입력 회차가 없거나 중복됩니다." }
         val sorted = draws.sortedByDescending { it.roundNo }
@@ -40,6 +41,8 @@ internal object PensionExperimentComparison {
     }
     suspend fun compare(
         target: PensionLotteryDrawEntity, frozenInput: Map<String, Any?>, common: List<Long>, control: List<Long>,
+        softCandidate: Boolean = false,
+        weightComparison: Boolean = false,
         onModel: suspend (Map<String, Any?>) -> Unit,
     ): Map<String, Any?> = withContext(Dispatchers.Default) {
         var model: String? = null
@@ -57,10 +60,12 @@ internal object PensionExperimentComparison {
                 for ((role, count) in listOf("BASELINE" to 3, "CANDIDATE" to 4)) {
                     model = role; seed = commonSeed; stage = "generate"
                     trace = PensionGenerationTrace { context.ensureActive() }
-                    val numbers = generatePensionExperimentBatch(history, count, commonSeed, excluded, requireNotNull(trace))
+                    val soft = weightComparison || (softCandidate && role == "CANDIDATE")
+                    val strength = if (weightComparison && role == "CANDIDATE") 0.5 else 1.0
+                    val numbers = generatePensionExperimentBatch(history, if (softCandidate || weightComparison) 3 else count, commonSeed, excluded, requireNotNull(trace), softLastDigit = soft, lastDigitStrength = strength, individualGeneration = weightComparison)
                     require(numbers.size == 4 && numbers.map { it.type }.distinct().size == 4 && numbers.map { it.winningNumber }.distinct().size == 4) { "전체 4개 배치가 아닙니다." }
                     val batch = evaluate(numbers.map { mapOf("groupNo" to it.groupNo, "number" to it.winningNumber, "type" to it.type.name, "seed" to it.generationSeed.toString()) }, target) +
-                        mapOf("diagnostics" to requireNotNull(trace).snapshot(), "configHash" to LottoDesignRecordJson.hash(configuration(count)))
+                        mapOf("diagnostics" to requireNotNull(trace).snapshot(), "configHash" to LottoDesignRecordJson.hash(if (weightComparison) LottoDesignRecordJson.decode(com.habittracker.ui.lotto.pensionIndividualWeightConfiguration(strength).toByteArray(), requireCanonical = false) else if (soft) softConfiguration() else configuration(count)))
                     stage = "model_record"
                     onModel(mapOf("round" to target.roundNo, "model" to role, "seed" to commonSeed.toString(), "batch" to batch))
                     batches[role] = batch
@@ -74,10 +79,12 @@ internal object PensionExperimentComparison {
                 mapOf("seed" to commonSeed.toString(), "controlSeed" to control[index].toString(), "batches" to batches)
             }
             fun rate(role: String) = seeds.map { LottoDesignRecordJson.decimal(obj(obj(it.getValue("batches")).getValue(role)).getValue("suffix2Rate")) }.average()
+            fun secondary(role: String) = seeds.map { entry -> list(obj(obj(entry.getValue("batches")).getValue(role)).getValue("suffixMatches")).map { int(it).toDouble() }.average() }.average()
             mapOf("targetRound" to target.roundNo, "target" to mapOf("groupNo" to target.groupNo, "number" to target.winningNumber, "bonus" to target.bonusNumber),
                 "targetData" to input(listOf(target), emptySet()), "targetDataHash" to LottoDesignRecordJson.hash(input(listOf(target), emptySet())),
                 "inputHash" to LottoDesignRecordJson.hash(frozenInput), "seeds" to seeds,
                 "baselineRate" to rate("BASELINE"), "candidateRate" to rate("CANDIDATE"), "controlRate" to rate("CONTROL"),
+                "baselineSecondary" to secondary("BASELINE"), "candidateSecondary" to secondary("CANDIDATE"), "controlSecondary" to secondary("CONTROL"),
                 "candidateBaselineDifference" to rate("CANDIDATE") - rate("BASELINE"), "candidateControlDifference" to rate("CANDIDATE") - rate("CONTROL"))
         } catch (error: Exception) {
             val context = PensionComparisonFailure(target.roundNo, model, seed, stage, trace?.snapshot().orEmpty(), error)

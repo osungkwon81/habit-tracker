@@ -52,7 +52,9 @@ enum class AppDestination(
     EXCHANGE_RECORDS("exchange/records", "환전 기록"),
     EXCHANGE_EXPENSES("exchange/expenses", "외화 지출"),
     EXCHANGE_COLLECTION_SETTINGS("exchange/collection-settings", "환율 수집 설정"),
-    NOTIFICATION_ASSISTANT("notification-assistant", "알림 생활비서"),
+    GOOGLE_BALANCE("google-balance", "구글 잔액 관리"),
+    HOUSEHOLD_PRICES("household-prices", "생활용품 가격 기록"),
+    NOTIFICATION_ASSISTANT("notification-assistant", "뽐뿌 알림"),
     NOTIFICATION_ASSISTANT_APPS("notification-assistant/apps", "알림 체크 앱"),
     NOTIFICATION_ASSISTANT_ACTIVE("notification-assistant/active", "실제 알림 목록"),
     NOTIFICATION_ASSISTANT_TASKS("notification-assistant/tasks", "알림에서 찾은 할 일");
@@ -84,7 +86,7 @@ enum class AppDestination(
         }
 
     val children: List<AppDestination>
-        get() = entries.filter { it.parent == this }
+        get() = entries.filter { it.parent == this && it !in listOf(NOTIFICATION_ASSISTANT_APPS, NOTIFICATION_ASSISTANT_ACTIVE, NOTIFICATION_ASSISTANT_TASKS) }
 
     val homeLabel: String
         get() = parent?.let { "${it.label} · $label" } ?: label
@@ -98,7 +100,7 @@ enum class AppDestination(
             "diary" -> com.habittracker.R.drawable.ic_category_diary
             "plant" -> com.habittracker.R.drawable.ic_category_repeat
             "exchange" -> com.habittracker.R.drawable.ic_category_exchange
-            "reminder", "notification-assistant" -> com.habittracker.R.drawable.ic_category_reminder
+            "reminder", "notification-assistant", "google-balance" -> com.habittracker.R.drawable.ic_category_reminder
             "settings", "admin" -> com.habittracker.R.drawable.ic_category_settings
             else -> com.habittracker.R.drawable.ic_category_record
         }

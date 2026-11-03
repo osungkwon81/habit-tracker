@@ -121,14 +121,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             HabitTrackerTheme {
-                HabitTrackerApp()
+                HabitTrackerApp(intent.getStringExtra("googleBalanceAccount"))
             }
         }
     }
 }
 
 @Composable
-private fun HabitTrackerApp() {
+private fun HabitTrackerApp(notificationAccount: String? = null) {
     val container = (LocalContext.current.applicationContext as HabitTrackerApplication).appContainer
     val readiness by container.readiness.collectAsStateWithLifecycle()
     if (readiness?.isSuccess != true) {
@@ -146,6 +146,9 @@ private fun HabitTrackerApp() {
     val viewModelFactory = remember { AppViewModelFactory() }
     val snackbar = remember { SnackbarHostState() }
     val guard = remember { AppNavigationGuard() }
+    androidx.compose.runtime.LaunchedEffect(notificationAccount) {
+        if (!notificationAccount.isNullOrBlank()) navController.navigate(AppDestination.GOOGLE_BALANCE.route) { launchSingleTop = true }
+    }
     val activity = LocalContext.current as? ComponentActivity
     val backStackEntry by navController.currentBackStackEntryAsState()
     val route = backStackEntry?.destination?.route
@@ -456,13 +459,19 @@ private fun HabitTrackerApp() {
                 }
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT.route) {
-                val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)
-                NotificationAssistantScreen(
-                    viewModel = viewModel,
-                    onOpenApps = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_APPS.route) },
-                    onOpenActive = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_ACTIVE.route) },
-                    onOpenTasks = { navController.navigate(AppDestination.NOTIFICATION_ASSISTANT_TASKS.route) },
-                )
+                val viewModel: com.habittracker.ui.notification.PersonalAlertsViewModel = viewModel(factory = viewModelFactory)
+                com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = false)
+            }
+            composable(AppDestination.GOOGLE_BALANCE.route) {
+                val viewModel: com.habittracker.ui.notification.PersonalAlertsViewModel = viewModel(factory = viewModelFactory)
+                androidx.compose.runtime.LaunchedEffect(notificationAccount) {
+                    if (!notificationAccount.isNullOrBlank()) viewModel.select(notificationAccount)
+                }
+                com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = true)
+            }
+            composable(AppDestination.HOUSEHOLD_PRICES.route) {
+                val viewModel: com.habittracker.ui.household.HouseholdPriceViewModel = viewModel(factory = viewModelFactory)
+                com.habittracker.ui.household.HouseholdPriceScreen(viewModel)
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT_APPS.route) {
                 val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)

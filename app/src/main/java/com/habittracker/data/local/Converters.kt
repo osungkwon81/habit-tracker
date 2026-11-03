@@ -3,6 +3,7 @@ package com.habittracker.data.local
 import androidx.room.TypeConverter
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 
 /** Room이 직접 저장할 수 없는 Kotlin/Java 타입을 DB의 문자열과 상호 변환한다. */
 class Converters {
@@ -17,6 +18,12 @@ class Converters {
 
     @TypeConverter
     fun toLocalDateTime(value: String?): LocalDateTime? = value?.let(LocalDateTime::parse)
+
+    @TypeConverter
+    fun fromLocalTime(value: LocalTime?): String? = value?.toString()
+
+    @TypeConverter
+    fun toLocalTime(value: String?): LocalTime? = value?.let(LocalTime::parse)
 
     @TypeConverter
     fun fromValueType(value: ValueType?): String? = value?.name

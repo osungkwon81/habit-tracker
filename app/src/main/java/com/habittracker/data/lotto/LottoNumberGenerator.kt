@@ -91,6 +91,10 @@ object LottoNumberGenerator {
         history, gameCount, mode, seed, historyThroughRound, recentPriorDraws = recentPriorDraws,
     )
 
+    internal fun generateTracked(history: List<List<Int>>, seed: Long, through: Int, prior: Double,
+        record: (Map<String, Any?>) -> Unit): List<LottoGeneratedTicket> = generateBalancedWithPrior(
+        history, 5, LottoGenerationMode.PRECISE, seed, through, prior, true, record)
+
     internal fun generateBalancedForPriorDesign(
         history: List<List<Int>>,
         seed: Long,
@@ -114,6 +118,7 @@ object LottoNumberGenerator {
         historyThroughRound: Int,
         recentPriorDraws: Double,
         requireFullCandidatePool: Boolean = false,
+        recordStages: ((Map<String, Any?>) -> Unit)? = null,
     ): List<LottoGeneratedTicket> {
         require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0) { "지원하지 않는 로또 운영 priorDraws입니다." }
         if (history.isEmpty()) return emptyList()
@@ -138,6 +143,7 @@ object LottoNumberGenerator {
                     trendProfile = trendProfile,
                     lastDraw = lastDraw,
                     strategy = CoverageStrategy.BALANCED,
+                    captureFeatureSnapshot = false,
                 )
             },
             commentBuilder = { numbers, score ->
@@ -149,8 +155,11 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.BALANCED,
+            featureBuilder = { numbers -> scoreCandidate(numbers, trendProfile, lastDraw, CoverageStrategy.BALANCED).featureSnapshotJson },
             generationSeed = seed,
             requireFullCandidatePool = requireFullCandidatePool,
+            recordStages = recordStages,
+            narrowingStrength = if (mode == LottoGenerationMode.PRECISE && recentPriorDraws == 64.0) 0.5 else 1.0,
         )
     }
 
@@ -183,6 +192,7 @@ object LottoNumberGenerator {
                     trendProfile = trendProfile,
                     lastDraw = lastDraw,
                     strategy = CoverageStrategy.DIVERSIFIED,
+                    captureFeatureSnapshot = false,
                 )
             },
             commentBuilder = { numbers, score ->
@@ -194,6 +204,7 @@ object LottoNumberGenerator {
             },
             mode = mode,
             strategy = CoverageStrategy.DIVERSIFIED,
+            featureBuilder = { numbers -> scoreCandidate(numbers, trendProfile, lastDraw, CoverageStrategy.DIVERSIFIED).featureSnapshotJson },
             generationSeed = seed,
         )
     }
@@ -487,6 +498,9 @@ object LottoNumberGenerator {
         strategy: CoverageStrategy,
         generationSeed: Long,
         requireFullCandidatePool: Boolean = false,
+        featureBuilder: (List<Int>) -> String? = { null },
+        recordStages: ((Map<String, Any?>) -> Unit)? = null,
+        narrowingStrength: Double = 1.0,
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
         val maxAttempts = mode.candidatePoolSize * 20
@@ -508,14 +522,23 @@ object LottoNumberGenerator {
             .sortedByDescending { candidate -> candidate.score.totalScore }
             .take(mode.finalistPoolSize)
 
-        return pickDiverseTopGames(scored, gameCount, strategy).map { candidate ->
+        val selected = pickDiverseTopGames(scored, gameCount, strategy, narrowingStrength)
+        require(recordStages == null || selected.size == gameCount) { "단계 평가의 전체 게임 수를 확보하지 못했습니다." }
+        if (recordStages != null) {
+            val pool = candidates.toList()
+            val ids = pool.withIndex().associate { it.value to it.index }
+            recordStages(mapOf("pool" to pool.map { it.joinToString(",") },
+                "ranked" to scored.map { ids.getValue(it.numbers) }, "scores" to scored.map { it.score.totalScore },
+                "selected" to selected.map { ids.getValue(it.numbers) }, "attempts" to attempt))
+        }
+        return selected.map { candidate ->
             LottoGeneratedTicket(
                 numbers = candidate.numbers,
                 comment = commentBuilder(candidate.numbers, candidate.score),
                 score = candidate.score.toAnalysisScore(),
                 generationMode = mode.name,
                 generationSeed = generationSeed,
-                featureSnapshotJson = candidate.score.featureSnapshotJson,
+                featureSnapshotJson = candidate.score.featureSnapshotJson ?: featureBuilder(candidate.numbers),
             )
         }
     }
@@ -524,6 +547,7 @@ object LottoNumberGenerator {
         candidates: List<ScoredCandidate>,
         gameCount: Int,
         strategy: CoverageStrategy,
+        narrowingStrength: Double = 1.0,
     ): List<ScoredCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
@@ -571,7 +595,7 @@ object LottoNumberGenerator {
                 val newCoverage = candidate.numbers.count { it !in coverage } * strategy.newCoverageWeight
                 val spacingBonus = decadeBucketCount(candidate.numbers) * strategy.bucketBonusWeight
                 candidate.score.totalScore +
-                    newCoverage - overlapPenalty - repeatedNumberPenalty - repeatedPairPenalty + spacingBonus
+                    narrowingStrength * (newCoverage - overlapPenalty - repeatedNumberPenalty - repeatedPairPenalty + spacingBonus)
             } ?: break
             selected += next
             remaining.remove(next)

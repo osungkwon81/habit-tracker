@@ -134,8 +134,10 @@ class HabitRepository(
     private val habitDao: HabitDao,
 ) {
     val lottoExperiments = com.habittracker.data.lotto.LottoExperimentStore(context)
+    val householdPrices = com.habittracker.data.HouseholdPrices(database, databaseProtector)
     internal val pensionExperiments = com.habittracker.data.lotto.PensionExperimentStore(context)
     private val lotteryContext = context.applicationContext
+    internal val adaptiveSettings = com.habittracker.data.lotto.LotteryAdaptiveSettings(lotteryContext)
     internal val autoImprovement = com.habittracker.data.lotto.LotteryAutoImprovement(lotteryContext, this)
 
     internal suspend fun getLotteryResearchInput(product: LotteryProduct) = when (product) {
@@ -231,6 +233,8 @@ class HabitRepository(
         databaseProtector.requestBackup(database)
         result
     }
+
+    internal fun requestLotteryRecordBackup() = databaseProtector.requestBackup(database)
 
     fun observeLottoDraws(roundNo: Int?, limit: Int): Flow<List<LottoDrawEntity>> =
         habitDao.observeLottoDraws(roundNo, limit)
@@ -495,7 +499,7 @@ class HabitRepository(
     fun observePensionLotteryGeneratedNumbers(): Flow<List<PensionLotteryGeneratedNumberEntity>> =
         habitDao.observePensionLotteryGeneratedNumbers()
 
-    suspend fun savePensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>): Boolean {
+    suspend fun savePensionLotteryGeneratedNumbers(numbers: List<PensionLotteryGeneratedNumberEntity>, replacesRecommendationId: Long? = null): Boolean {
         require(numbers.isNotEmpty()) { "저장할 연금 생성번호가 없습니다." }
         return persistChange {
             database.withTransaction {
@@ -516,7 +520,28 @@ class HabitRepository(
                     "${first.generationId} 배치에 중복 번호 또는 생성 유형이 있습니다."
                 }
                 val isBackup = first.generationId.startsWith("backup:")
-                if (!isBackup) {
+                val isIndividual = first.generationId.startsWith("single:")
+                if (replacesRecommendationId != null) {
+                    val original = habitDao.getPensionLotteryGeneratedNumber(replacesRecommendationId)
+                    require(isIndividual && original != null && !original.isControl && !original.isHidden &&
+                        original.generationType.removeSuffix("_SECOND") == first.generationType) {
+                        "${first.generationId} 교체 대상 번호 id=$replacesRecommendationId 가 없거나 숨겨졌거나 생성 유형이 다릅니다."
+                    }
+                }
+                if (isIndividual) {
+                    val recommendations = numbers.filterNot { it.isControl }
+                    val controls = numbers.filter { it.isControl }
+                    val config = org.json.JSONObject(configJson)
+                    require(numbers.size == 2 && recommendations.size == 1 && controls.size == 1 &&
+                        recommendations.single().generationType in setOf("APPEARED", "COLD_MIX") &&
+                        controls.single().generationType == "CONTROL_1" &&
+                        config.optString("implementationId") in setOf("pension-individual-v1", "pension-individual-all-groups-v2", "pension-individual-soft-last-digit-v3") && config.optInt("controlCount") == 1) {
+                        "${first.generationId} 개별 저장에는 추천 1개와 대조군 1개가 필요합니다."
+                    }
+                    require(!habitDao.hasPensionLotteryRecommendation(recommendations.single().winningNumber)) {
+                        "${first.generationId} 번호는 이미 저장되어 있습니다. 다른 번호를 생성해 주세요."
+                    }
+                } else if (!isBackup) {
                     val recommendedTypes = setOf("APPEARED", "APPEARED_SECOND", "COLD_MIX", "COLD_MIX_SECOND")
                     require(numbers.filterNot { it.isControl }.map { it.generationType }.toSet() == recommendedTypes &&
                         numbers.count { it.isControl } == 4 && numbers.size == 8) {
@@ -556,6 +581,9 @@ class HabitRepository(
                 habitDao.insertPensionLotteryGeneratedNumbers(numbers.map {
                     it.copy(savedAt = savedAt, isEvaluationTarget = it.isEvaluationTarget && eligible)
                 })
+                if (replacesRecommendationId != null) require(habitDao.hidePensionLotteryRecommendation(replacesRecommendationId) == 1) {
+                    "${first.generationId} 교체 대상 번호 id=$replacesRecommendationId 상태가 변경되어 저장을 중단했습니다."
+                }
                 eligible && numbers.any { it.isEvaluationTarget }
             }
         }
@@ -2624,7 +2652,11 @@ class HabitRepository(
             "${draw.roundNo}:${draw.numbers().joinToString(",")}:${draw.bonusNumber}"
         }
         val approved = if (forBalancedGeneration && mode == com.habittracker.data.lotto.LottoGenerationMode.BASIC) lottoExperiments.approvedSetting() else null
-        val config = approved?.let { setting ->
+        val adaptiveRecord = if (forBalancedGeneration && mode == com.habittracker.data.lotto.LottoGenerationMode.PRECISE) adaptiveSettings.setting(LotteryProduct.LOTTO_645) else null
+        val adaptive = adaptiveRecord?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal)
+        val config = if (adaptive != null) JSONObject(com.habittracker.data.lotto.LotteryAdaptiveSettings.configurationFor(LotteryProduct.LOTTO_645, adaptive))
+            .put("adaptivePolicy", com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY)
+            .put("adaptiveRecordHash", requireNotNull(adaptiveRecord).getValue("recordHash")).toString() else approved?.let { setting ->
             if (setting.approval == null) setting.configJson else JSONObject(setting.configJson)
                 .put("operatingApproval", JSONObject(com.habittracker.data.lotto.LottoDesignRecordJson.encode(setting.approval))).toString()
         } ?: LottoNumberGenerator.configurationSnapshot()
@@ -2634,7 +2666,7 @@ class HabitRepository(
             inputDataHash = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { byte -> "%02x".format(byte) },
             configJson = config,
-            balancedRecentPriorDraws = approved?.priorDraws ?: 32.0,
+            balancedRecentPriorDraws = adaptive ?: approved?.priorDraws ?: 32.0,
         )
     }
 
@@ -3166,10 +3198,14 @@ class HabitRepository(
                 require(habitDao.getLottoDrawByRoundNo(roundNo) == null) {
                     "이미 추첨 결과가 저장된 회차에는 생성 번호를 저장할 수 없습니다."
                 }
-                val currentSnapshot = getLottoGenerationSnapshot()
+                val mode = limitedTickets.map { it.generationMode }.distinct().singleOrNull()
+                val usesAdaptive = sourceLabel == "균형형" && mode in listOf("BASIC", "PRECISE")
+                val currentSnapshot = getLottoGenerationSnapshot(forBalancedGeneration = usesAdaptive,
+                    mode = mode?.let { com.habittracker.data.lotto.LottoGenerationMode.valueOf(it) } ?: com.habittracker.data.lotto.LottoGenerationMode.BASIC)
                 require(currentSnapshot.inputDataHash == snapshot.inputDataHash) {
                     "${roundNo}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
                 }
+                require(!usesAdaptive || currentSnapshot.configJson == snapshot.configJson) { "생성 이후 가중치가 변경되었습니다. 번호를 다시 생성해 주세요." }
                 val savedAt = lotteryEvaluationNow()
                 val isEvaluationTarget = savedAt.isBefore(
                     lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo),

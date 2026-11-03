@@ -2,11 +2,16 @@ package com.habittracker.ui.lotto
 
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.habittracker.data.local.entity.PensionLotteryDrawEntity
 import com.habittracker.data.local.entity.PensionLotteryGeneratedNumberEntity
 import com.habittracker.data.repository.HabitRepository
 import com.habittracker.data.lotto.lotteryEvaluationNow
+import com.habittracker.data.lotto.lotteryEvaluationDeadline
+import com.habittracker.data.lotto.LotteryProduct
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +27,8 @@ import kotlinx.coroutines.ensureActive
 import com.habittracker.data.lotto.PensionOperatingSetting
 import com.habittracker.data.lotto.PensionExperimentSummary
 import java.time.LocalDateTime
+import java.time.Duration
+import java.time.temporal.TemporalAdjusters
 import java.security.MessageDigest
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -29,6 +36,7 @@ import kotlin.random.Random
 
 class PensionLotteryGeneratorViewModel(
     private val repository: HabitRepository,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
     val autoImprovementState = repository.autoImprovement.state(com.habittracker.data.lotto.LotteryProduct.PENSION_720)
 
@@ -52,16 +60,19 @@ class PensionLotteryGeneratorViewModel(
             statusMessage.value = error.message ?: "과거 비교 예약 실패"
         }
     }
+    fun rollbackAutoImprovement() = viewModelScope.launch { repository.autoImprovement.rollback(LotteryProduct.PENSION_720) }
 
     private val draws = repository.observeAllPensionLotteryDraws()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val storedGeneratedNumbers = repository.observePensionLotteryGeneratedNumbers()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    private val pendingGeneratedNumbers = MutableStateFlow<List<PensionLotteryGeneratedNumber>>(emptyList())
+    private val pendingGeneratedNumbers = savedStateHandle.getStateFlow(
+        "pension.pendingNumbers", arrayListOf<PensionLotteryGeneratedNumber>(),
+    )
     private val statusMessage = MutableStateFlow<String?>(null)
     private val isGenerating = MutableStateFlow(false)
     private val isSaving = MutableStateFlow(false)
-    private val regeneratingType = MutableStateFlow<PensionLotteryGenerationType?>(null)
+    private val regeneratingNumber = MutableStateFlow<String?>(null)
     private val generatingBackupType = MutableStateFlow<PensionLotteryGenerationType?>(null)
     private val operatingSetting = MutableStateFlow<PensionOperatingSetting?>(null)
     private val experimentState = MutableStateFlow(PensionExperimentUiState())
@@ -74,7 +85,10 @@ class PensionLotteryGeneratorViewModel(
         requireNotNull(operatingSetting.value) { "승인 설정을 확인하지 못했습니다. 기록·설정을 새로고침해 주세요." }
         val setting = repository.pensionExperiments.setting()
         operatingSetting.value = setting
-        return buildGeneratorAnalysis(savedDraws, setting.count, setting.approvalHash)
+        val adaptive = repository.adaptiveSettings.setting(LotteryProduct.PENSION_720)
+        return buildGeneratorAnalysis(savedDraws, setting.count, setting.approvalHash, softLastDigit = true,
+            lastDigitStrength = adaptive?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal) ?: 1.0)
+            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String)
     }
 
     internal fun refreshExperiments() = experimentOperation { reloadExperiments() }
@@ -122,23 +136,37 @@ class PensionLotteryGeneratorViewModel(
             } finally { experimentState.value = experimentState.value.copy(busy = false) }
         }
     }
+    private val regenerationClock = flow {
+        val firstDeadline = lotteryEvaluationDeadline(LotteryProduct.PENSION_720, 1)
+        while (true) {
+            val now = lotteryEvaluationNow()
+            emit(now)
+            val boundary = now.toLocalDate().with(TemporalAdjusters.nextOrSame(firstDeadline.dayOfWeek)).atTime(firstDeadline.toLocalTime())
+            val nextBoundary = if (boundary.isAfter(now)) boundary else boundary.plusWeeks(1)
+            delay(Duration.between(now, nextBoundary).toMillis().coerceAtLeast(1))
+        }
+    }
     private val operationState = combine(
         statusMessage,
         isGenerating,
         isSaving,
-        regeneratingType,
+        regeneratingNumber,
         generatingBackupType,
     ) { message, generating, saving, regenerating, generatingBackup ->
         PensionLotteryGeneratorOperationState(message, generating, saving, regenerating, generatingBackup)
-    }
+    }.combine(regenerationClock) { operation, now -> operation.copy(now = now) }
 
-    private val analysisState = combine(draws, operatingSetting) { saved, setting ->
-        saved to setting?.let { buildGeneratorAnalysis(saved, it.count, it.approvalHash) }
+    private val analysisState = combine(draws, operatingSetting, repository.adaptiveSettings.changes) { saved, setting, _ ->
+        val adaptive = repository.adaptiveSettings.setting(LotteryProduct.PENSION_720)
+        saved to setting?.let { buildGeneratorAnalysis(saved, it.count, it.approvalHash, softLastDigit = true,
+            lastDigitStrength = adaptive?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal) ?: 1.0)
+            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String) }
     }.flowOn(Dispatchers.Default)
     private val historyState = combine(draws, storedGeneratedNumbers) { saved, entities ->
         val history = buildGenerationHistory(entities)
         PensionLotteryStoredGenerationState(history, buildBackupNumbers(entities),
-            restoreGenerationAnalysis(history.firstOrNull()?.numbers.orEmpty(), saved))
+            restoreGenerationAnalysis(history.firstOrNull()?.numbers.orEmpty(), saved),
+            history.groupBy { it.targetRoundNo }.map { (round, generations) -> PensionLotteryRoundHistory(round, generations) })
     }.flowOn(Dispatchers.Default)
 
     val performanceUiState: StateFlow<PensionLotteryPerformanceSummary?> = combine<
@@ -156,12 +184,15 @@ class PensionLotteryGeneratorViewModel(
     ) { (savedDraws, analysis), stored, pendingNumbers, operation, experiment ->
         val generationHistory = stored.history
         val backupNumbers = stored.backups
-        val generatedNumbers = pendingNumbers.ifEmpty { generationHistory.firstOrNull()?.numbers.orEmpty() }
-        val hasLatestConditionsChanged = analysis != null &&
-            generatedNumbers.isNotEmpty() &&
-            (!matchesCurrentGenerationConditions(generatedNumbers, analysis) ||
-                generatedNumbers.any { it.generationSnapshot?.inputDataHash != analysis.generationSnapshot.inputDataHash || it.generationSnapshot?.configJson != analysis.generationSnapshot.configJson })
-        val currentGenerationId = generationHistory.firstOrNull()?.generationId
+        val generatedNumbers = pendingNumbers.toList()
+        val outdatedNumbers = if (analysis == null) emptySet() else generatedNumbers.filter { number ->
+            number.generationSnapshot != analysis.generationSnapshot
+        }.map { it.winningNumber }.toSet()
+        val hasLatestConditionsChanged = outdatedNumbers.isNotEmpty()
+        val regeneratableRounds = (stored.rounds.mapNotNull { it.targetRoundNo } +
+            pendingNumbers.mapNotNull { it.generationSnapshot?.targetRoundNo }).distinct().filter {
+            canRegeneratePensionRound(it, savedDraws.firstOrNull()?.roundNo, operation.now)
+        }.toSet()
         PensionLotteryGeneratorUiState(
             latestRoundNo = savedDraws.firstOrNull()?.roundNo,
             totalDrawCount = savedDraws.size,
@@ -175,11 +206,17 @@ class PensionLotteryGeneratorViewModel(
             coldMixLastDigitCandidates = analysis?.let(::preferredColdMixLastDigits).orEmpty(),
             generatedNumbers = generatedNumbers,
             generationHistory = generationHistory,
-            backupNumbers = backupNumbers.filter { backup -> backup.parentGenerationId == currentGenerationId },
+            roundHistory = stored.rounds,
+            currentRoundHistory = analysis?.generationSnapshot?.targetRoundNo?.let { target ->
+                stored.rounds.firstOrNull { it.targetRoundNo == target }
+            } ?: stored.rounds.firstOrNull(),
+            backupNumbers = backupNumbers,
             statusMessage = operation.statusMessage,
             isGenerating = operation.isGenerating,
             isSaving = operation.isSaving,
-            regeneratingType = operation.regeneratingType,
+            regeneratingNumber = operation.regeneratingNumber,
+            regeneratableRounds = regeneratableRounds,
+            outdatedNumbers = outdatedNumbers,
             generatingBackupType = operation.generatingBackupType,
             hasUnsavedGeneration = pendingNumbers.isNotEmpty(),
             hasGenerationConditionChanged = pendingNumbers.isNotEmpty() && hasLatestConditionsChanged,
@@ -207,87 +244,110 @@ class PensionLotteryGeneratorViewModel(
         statusMessage.value = null
     }
 
-    fun generate() {
-        if (isGenerating.value || isSaving.value || experimentState.value.busy) return
-        val savedDraws = draws.value
-        val excludedWinningNumbers = storedGeneratedNumbers.value
-            .filterNot(PensionLotteryGeneratedNumberEntity::isControl)
-            .map(PensionLotteryGeneratedNumberEntity::winningNumber)
-            .toSet()
-        isGenerating.value = true
-        viewModelScope.launch(Dispatchers.Default) {
-            statusMessage.value = null
-            runCatching {
-                requireNotNull(operatingSetting.value) { "승인 설정을 확인하지 못했습니다. 기록·설정을 새로고침해 주세요." }
-                generatePensionOperatingBatch(repository.pensionExperiments, savedDraws, excludedWinningNumbers)
-            }.onSuccess { results ->
-                pendingGeneratedNumbers.value = results
-                statusMessage.value = "출현형 2개와 미출현 혼합형 2개를 생성했습니다. 저장하면 고정됩니다."
-            }.onFailure { error ->
-                propagateCancellation(error)
-                statusMessage.value = error.message ?: "연금번호 생성에 실패했습니다."
-            }
-            isGenerating.value = false
-        }
+    fun generate(pattern: PensionLotteryNumberPattern) {
+        generateIndividual(pattern, replacingNumber = null)
     }
 
-    fun regenerate(type: PensionLotteryGenerationType) {
+    fun regenerate(winningNumber: String) {
+        val number = pendingGeneratedNumbers.value.firstOrNull { it.winningNumber == winningNumber } ?: return
+        if (!checkRegenerationRound(number.generationSnapshot?.targetRoundNo)) return
+        generateIndividual(number.type.pattern, replacingNumber = winningNumber, replacingSavedId = number.replacesSavedNumberId)
+    }
+
+    fun regenerateSavedNumber(generationId: String, winningNumber: String) {
+        if (isGenerating.value || isSaving.value || experimentState.value.busy) return
+        val saved = storedGeneratedNumbers.value.firstOrNull {
+            it.generationId == generationId && it.winningNumber == winningNumber && !it.isControl && !it.isHidden
+        }
+        val number = saved?.toGeneratedNumber()
+        if (saved == null || number == null) {
+            Log.w("PensionGenerator", "Saved regeneration rejected: generationId=$generationId reason=source_unavailable")
+            statusMessage.value = "저장 번호의 상태가 변경되었거나 생성 정보를 확인할 수 없습니다. 저장 이력을 확인해 주세요."
+            return
+        }
+        if (!checkRegenerationRound(saved.targetRoundNo)) return
+        val pending = pendingGeneratedNumbers.value.firstOrNull { it.replacesSavedNumberId == saved.id }
+        generateIndividual(number.type.pattern, replacingNumber = pending?.winningNumber, replacingSavedId = saved.id)
+    }
+
+    private fun checkRegenerationRound(roundNo: Int?): Boolean {
+        if (canRegeneratePensionRound(roundNo, draws.value.firstOrNull()?.roundNo, lotteryEvaluationNow())) return true
+        Log.i("PensionGenerator", "Regeneration rejected: targetRound=$roundNo reason=round_closed_or_unknown")
+        statusMessage.value = "추첨이 지난 회차이거나 대상 회차를 확인할 수 없어 재생성할 수 없습니다."
+        return false
+    }
+
+    fun discardGeneratedNumber(winningNumber: String) {
+        if (isGenerating.value || isSaving.value) return
+        savedStateHandle["pension.pendingNumbers"] = ArrayList(pendingGeneratedNumbers.value.filterNot { it.winningNumber == winningNumber })
+    }
+
+    private fun generateIndividual(pattern: PensionLotteryNumberPattern, replacingNumber: String?, replacingSavedId: Long? = null) {
         if (isGenerating.value || isSaving.value || experimentState.value.busy) return
         val savedDraws = draws.value
         val currentNumbers = pendingGeneratedNumbers.value
-        if (currentNumbers.isEmpty()) return
-        val comparisonTicket = currentNumbers
-            .firstOrNull { number -> number.type.isPairWith(type) }
+        val storedNumbers = storedGeneratedNumbers.value.filterNot(PensionLotteryGeneratedNumberEntity::isControl)
+        val type = when (pattern) {
+            PensionLotteryNumberPattern.APPEARED -> PensionLotteryGenerationType.APPEARED
+            PensionLotteryNumberPattern.COLD_MIX -> PensionLotteryGenerationType.COLD_MIX
+        }
         val excludedWinningNumbers = (
-            storedGeneratedNumbers.value
-                .filterNot(PensionLotteryGeneratedNumberEntity::isControl)
-                .map(PensionLotteryGeneratedNumberEntity::winningNumber) +
+            storedNumbers.map(PensionLotteryGeneratedNumberEntity::winningNumber) +
                 currentNumbers.map(PensionLotteryGeneratedNumber::winningNumber)
             ).toSet()
         isGenerating.value = true
-        viewModelScope.launch(Dispatchers.Default) {
-            regeneratingType.value = type
+        regeneratingNumber.value = replacingNumber
+        viewModelScope.launch {
             statusMessage.value = null
-            runCatching {
-                val analysis = requireNotNull(currentAnalysis(savedDraws)) {
-                    "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
+            try {
+                val generated = withContext(Dispatchers.Default) {
+                    val analysis = requireNotNull(currentAnalysis(savedDraws)) {
+                        "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
+                    }
+                    val otherNumbers = (currentNumbers.filterNot { it.winningNumber == replacingNumber } +
+                        storedNumbers.filter { !it.isHidden && it.id != replacingSavedId && it.targetRoundNo == analysis.generationSnapshot.targetRoundNo }
+                            .mapNotNull { it.toGeneratedNumber() })
+                        .filter { it.generationSnapshot?.targetRoundNo == analysis.generationSnapshot.targetRoundNo }
+                        .distinctBy { it.winningNumber }
+                    val comparisonTicket = otherNumbers.filter { it.type.pattern != pattern }.maxByOrNull { it.generatedAt }
+                    val context = kotlinx.coroutines.currentCoroutineContext()
+                    requireNotNull(
+                        generateCandidate(
+                            analysis = analysis,
+                            type = type,
+                            comparisonNumber = comparisonTicket?.winningNumber,
+                            excludedWinningNumbers = excludedWinningNumbers,
+                            otherNumbers = otherNumbers,
+                            trace = PensionGenerationTrace { context.ensureActive() },
+                        ),
+                    ) { "현재 조건을 만족하는 ${pattern.label} 번호를 찾지 못했습니다. 기존 번호는 유지됩니다." }
+                        .copy(replacesSavedNumberId = replacingSavedId)
                 }
-                require(matchesCurrentGenerationConditions(currentNumbers, analysis)) {
-                    GENERATION_CONDITION_CHANGED_MESSAGE
+                val results = if (replacingNumber == null) currentNumbers + generated else currentNumbers.map {
+                    if (it.winningNumber == replacingNumber) generated else it
                 }
-                require(currentNumbers.all { it.generationSnapshot == analysis.generationSnapshot }) {
-                    GENERATION_INPUT_CHANGED_MESSAGE
-                }
-                val regenerated = requireNotNull(
-                    generateCandidate(
-                        analysis = analysis,
-                        type = type,
-                        comparisonNumber = comparisonTicket?.winningNumber,
-                        comparisonGroupNo = comparisonTicket?.groupNo,
-                        excludedWinningNumbers = excludedWinningNumbers,
-                    ),
-                ) { "현재 조건을 만족하는 ${type.label} 번호를 찾지 못했습니다." }
-                (currentNumbers.filterNot { number -> number.type == type } + regenerated)
-                    .sortedBy { number -> number.type.ordinal }
-            }.onSuccess { results ->
-                pendingGeneratedNumbers.value = results
-                statusMessage.value = "${type.label} 번호를 다시 생성했습니다. 확인 후 저장해 주세요."
-            }.onFailure { error ->
+                savedStateHandle["pension.pendingNumbers"] = ArrayList(results)
+                statusMessage.value = if (replacingSavedId != null) "새 후보를 생성했습니다. 저장하면 원래 번호가 교체됩니다."
+                    else "${pattern.label} 번호 1개를 ${if (replacingNumber == null) "생성" else "재생성"}했습니다. 확인 후 개별 저장해 주세요."
+            } catch (error: Exception) {
                 propagateCancellation(error)
-                statusMessage.value = error.message ?: "${type.label} 번호 재생성에 실패했습니다."
+                Log.e("PensionGenerator", "Individual generation failed: pattern=$pattern throughRound=${savedDraws.firstOrNull()?.roundNo}", error)
+                statusMessage.value = error.message ?: "연금번호 생성에 실패했습니다."
+            } finally {
+                regeneratingNumber.value = null
+                isGenerating.value = false
             }
-            regeneratingType.value = null
-            isGenerating.value = false
         }
     }
 
-    fun saveGeneratedNumbers() {
+    fun saveGeneratedNumber(winningNumber: String) {
         if (isSaving.value || isGenerating.value || experimentState.value.busy) return
-        val numbers = pendingGeneratedNumbers.value
-        if (numbers.isEmpty()) {
+        val number = pendingGeneratedNumbers.value.firstOrNull { it.winningNumber == winningNumber }
+        if (number == null) {
             statusMessage.value = "저장할 연금 생성번호가 없습니다."
             return
         }
+        val numbers = listOf(number)
         isSaving.value = true
         viewModelScope.launch {
             statusMessage.value = null
@@ -296,14 +356,14 @@ class PensionLotteryGeneratorViewModel(
                 val analysis = requireNotNull(withContext(Dispatchers.Default) { currentAnalysis(savedDraws) }) {
                     "번호 생성을 위해 당첨번호가 17회 이상 필요합니다."
                 }
-                require(matchesCurrentGenerationConditions(numbers, analysis)) {
+                require(matchesNumberConditions(number, analysis)) {
                     GENERATION_CONDITION_CHANGED_MESSAGE
                 }
                 val snapshot = requireNotNull(numbers.first().generationSnapshot) { GENERATION_INPUT_CHANGED_MESSAGE }
                 require(numbers.all { it.generationSnapshot == snapshot } && snapshot == analysis.generationSnapshot) {
                     GENERATION_INPUT_CHANGED_MESSAGE
                 }
-                val generationId = "$FIXED_GENERATION_PREFIX${UUID.randomUUID()}"
+                val generationId = "single:${UUID.randomUUID()}"
                 val savedAt = lotteryEvaluationNow()
                 val analysisThroughRound = snapshot.analysisThroughRound
                 val targetRoundNo = snapshot.targetRoundNo
@@ -329,21 +389,23 @@ class PensionLotteryGeneratorViewModel(
                     inputDataHash = inputDataHash,
                     analysis = analysis,
                     excludedNumbers = numbers.map(PensionLotteryGeneratedNumber::winningNumber).toSet(),
+                    count = 1,
                 )
                 repository.savePensionLotteryGeneratedNumbers(
                     recommendationEntities + controlEntities,
+                    replacesRecommendationId = number.replacesSavedNumberId,
                 )
             }.onSuccess { isEvaluationTarget ->
-                if (pendingGeneratedNumbers.value == numbers) {
-                    pendingGeneratedNumbers.value = emptyList()
-                }
+                savedStateHandle["pension.pendingNumbers"] = ArrayList(pendingGeneratedNumbers.value.filterNot { it == number })
                 statusMessage.value = if (isEvaluationTarget) {
-                    "이번 주 고정 번호 ${numbers.size}개를 저장했습니다."
+                    if (number.replacesSavedNumberId != null) "선택한 번호를 교체했습니다."
+                    else "${number.type.pattern.label} 번호 1개를 저장했습니다. 저장 이력에서 확인할 수 있습니다."
                 } else {
                     "번호 ${numbers.size}개를 사후 등록했습니다. 사전 추천 성과에서는 제외됩니다."
                 }
             }.onFailure { error ->
                 propagateCancellation(error)
+                Log.e("PensionGenerator", "Individual save failed: pattern=${number.type.pattern} targetRound=${number.generationSnapshot?.targetRoundNo}", error)
                 statusMessage.value = error.message ?: "연금 생성번호 저장에 실패했습니다."
             }
             isSaving.value = false
@@ -359,7 +421,7 @@ class PensionLotteryGeneratorViewModel(
                     .filter { backup -> backup.parentGenerationId == generationId }
                     .forEach { backup -> repository.deletePensionLotteryGeneration(backup.generationId) }
                 repository.deletePensionLotteryGeneration(generationId)
-                statusMessage.value = "연금번호 생성 히스토리를 삭제했습니다."
+                statusMessage.value = "저장 번호를 목록에서 숨겼습니다."
             } catch (error: Exception) {
                 propagateCancellation(error)
                 statusMessage.value = error.message ?: "연금번호 생성 히스토리 삭제에 실패했습니다."
@@ -373,6 +435,11 @@ class PensionLotteryGeneratorViewModel(
         if (isGenerating.value || isSaving.value || experimentState.value.busy) return
         if (pendingGeneratedNumbers.value.isNotEmpty()) return
         val currentHistory = buildGenerationHistory(storedGeneratedNumbers.value).firstOrNull() ?: return
+        if (!checkRegenerationRound(currentHistory.targetRoundNo)) return
+        if (currentHistory.generationId.startsWith("single:")) {
+            statusMessage.value = "개별 저장 번호의 추가 추천은 유형별 생성 버튼을 이용해 주세요."
+            return
+        }
         if (buildBackupNumbers(storedGeneratedNumbers.value).any { backup ->
                 backup.parentGenerationId == currentHistory.generationId && backup.number.type == type
             }
@@ -402,6 +469,7 @@ class PensionLotteryGeneratorViewModel(
                         comparisonNumber = comparisonTicket?.winningNumber,
                         comparisonGroupNo = comparisonTicket?.groupNo,
                         excludedWinningNumbers = excludedWinningNumbers,
+                        otherNumbers = currentHistory.numbers.filterNot { it.type == type },
                     ),
                 ) { "현재 조건을 만족하는 ${type.label} 예비 번호를 찾지 못했습니다." }
                 // 삭제된 예비 번호도 보존되므로 재생성 시 배치 ID를 재사용하지 않는다.
@@ -440,7 +508,7 @@ class PensionLotteryGeneratorViewModel(
     private fun propagateCancellation(error: Throwable) {
         if (error is CancellationException) {
             isGenerating.value = false; isSaving.value = false
-            regeneratingType.value = null; generatingBackupType.value = null
+            regeneratingNumber.value = null; generatingBackupType.value = null
             throw error
         }
     }
@@ -489,9 +557,9 @@ enum class PensionLotteryGenerationType(
         pairIndex == other.pairIndex && pattern != other.pattern
 }
 
-enum class PensionLotteryNumberPattern {
-    APPEARED,
-    COLD_MIX,
+enum class PensionLotteryNumberPattern(val label: String) {
+    APPEARED("출현형"),
+    COLD_MIX("미출현 혼합형"),
 }
 
 data class PensionLotteryGeneratedNumber(
@@ -507,14 +575,17 @@ data class PensionLotteryGeneratedNumber(
     val generationSeed: Long,
     val generatedAt: LocalDateTime,
     val generationSnapshot: PensionLotteryGenerationSnapshot? = null,
-)
+    val replacesSavedNumberId: Long? = null,
+) : java.io.Serializable
 
 data class PensionLotteryGenerationSnapshot(
     val analysisThroughRound: Int,
     val inputDataHash: String,
     val configJson: String,
-) {
+) : java.io.Serializable {
     val targetRoundNo: Int get() = analysisThroughRound + 1
+    val usesAllGroups: Boolean get() = configJson.contains("\"implementationId\":\"pension-individual-all-groups-v2\"") || configJson.contains("\"implementationId\":\"pension-individual-soft-last-digit-v3\"")
+    val isIndividual: Boolean get() = usesAllGroups || configJson.contains("\"implementationId\":\"pension-individual-v1\"")
 }
 
 data class PensionLotteryGeneratorUiState(
@@ -530,11 +601,15 @@ data class PensionLotteryGeneratorUiState(
     val coldMixLastDigitCandidates: List<Int> = emptyList(),
     val generatedNumbers: List<PensionLotteryGeneratedNumber> = emptyList(),
     val generationHistory: List<PensionLotteryGenerationHistory> = emptyList(),
+    val roundHistory: List<PensionLotteryRoundHistory> = emptyList(),
+    val currentRoundHistory: PensionLotteryRoundHistory? = null,
     val backupNumbers: List<PensionLotteryBackupNumber> = emptyList(),
     val statusMessage: String? = null,
     val isGenerating: Boolean = false,
     val isSaving: Boolean = false,
-    val regeneratingType: PensionLotteryGenerationType? = null,
+    val regeneratingNumber: String? = null,
+    val regeneratableRounds: Set<Int> = emptySet(),
+    val outdatedNumbers: Set<String> = emptySet(),
     val generatingBackupType: PensionLotteryGenerationType? = null,
     val hasUnsavedGeneration: Boolean = false,
     val hasGenerationConditionChanged: Boolean = false,
@@ -557,20 +632,32 @@ private data class PensionLotteryStoredGenerationState(
     val history: List<PensionLotteryGenerationHistory>,
     val backups: List<PensionLotteryBackupNumber>,
     val analysis: PensionLotteryGeneratorAnalysis?,
+    val rounds: List<PensionLotteryRoundHistory>,
 )
 
 private data class PensionLotteryGeneratorOperationState(
     val statusMessage: String?,
     val isGenerating: Boolean,
     val isSaving: Boolean,
-    val regeneratingType: PensionLotteryGenerationType?,
+    val regeneratingNumber: String?,
     val generatingBackupType: PensionLotteryGenerationType?,
+    val now: LocalDateTime = lotteryEvaluationNow(),
 )
+
+private fun canRegeneratePensionRound(roundNo: Int?, latestResultRound: Int?, now: LocalDateTime): Boolean =
+    roundNo != null && roundNo > 0 && (latestResultRound == null || roundNo > latestResultRound) &&
+        now.isBefore(lotteryEvaluationDeadline(LotteryProduct.PENSION_720, roundNo))
 
 data class PensionLotteryGenerationHistory(
     val generationId: String,
     val generatedAt: LocalDateTime,
     val numbers: List<PensionLotteryGeneratedNumber>,
+    val targetRoundNo: Int? = null,
+)
+
+data class PensionLotteryRoundHistory(
+    val targetRoundNo: Int?,
+    val generations: List<PensionLotteryGenerationHistory>,
 )
 
 data class PensionLotteryBackupNumber(
@@ -628,6 +715,7 @@ private fun buildGenerationHistory(
                 generationId = generationId,
                 generatedAt = batchEntities.first().generatedAt,
                 numbers = numbers,
+                targetRoundNo = batchEntities.filterNot { it.isControl }.map { it.targetRoundNo }.distinct().singleOrNull(),
             )
         }
     }
@@ -647,11 +735,38 @@ private fun restoreGenerationAnalysis(
     val count = config.optInt("appearedLastDigitCandidateCount", -1)
     if (count !in 3..4) return null
     val approvalHash = if (config.has("operatingApprovalHash")) config.optString("operatingApprovalHash") else null
-    if (snapshot.configJson != pensionExperimentConfiguration(count, approvalHash)) return null
+    val individual = snapshot.isIndividual
+    val soft = config.optString("lastDigitPolicy") == "all_digits_positive_weight_v1"
+    if (soft) {
+        val original = draws.filter { it.roundNo <= snapshot.analysisThroughRound }
+        if (original.firstOrNull()?.roundNo != snapshot.analysisThroughRound || pensionInputDataHash(original) != snapshot.inputDataHash) return null
+        val strength = config.optDouble("lastDigitStrength", 1.0)
+        if (strength !in listOf(1.0, 0.5)) return null
+        val adaptiveHash = if (config.has("adaptiveRecordHash")) config.optString("adaptiveRecordHash") else null
+        if (adaptiveHash != null && !adaptiveHash.matches(Regex("[0-9a-f]{64}"))) return null
+        val base = buildGeneratorAnalysis(original, count, approvalHash, softLastDigit = true, lastDigitStrength = strength)
+            ?.forIndividualGeneration() ?: return null
+        val restored = (if (config.optBoolean("candidatePipeline", false)) base.withCandidatePipeline() else base)
+            .withAdaptiveHash(adaptiveHash, config.optString("adaptivePolicy", com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY))
+        return restored.takeIf { it.generationSnapshot == snapshot && numbers.size == 1 && matchesNumberConditions(numbers.single(), it) }
+    }
+    val preferDistinctLastDigits = when (snapshot.configJson) {
+        pensionIndividualConfiguration(pensionExperimentConfiguration(count, approvalHash)) -> true
+        pensionLegacyIndividualConfiguration(pensionExperimentConfiguration(count, approvalHash)) -> true
+        pensionExperimentConfiguration(count, approvalHash) -> true
+        pensionExperimentConfiguration(count, approvalHash, preferDistinctLastDigits = false) -> false
+        else -> return null
+    }
     val originalDraws = draws.filter { it.roundNo <= snapshot.analysisThroughRound }
     if (originalDraws.firstOrNull()?.roundNo != snapshot.analysisThroughRound || pensionInputDataHash(originalDraws) != snapshot.inputDataHash) return null
-    val analysis = buildGeneratorAnalysis(originalDraws, count, approvalHash) ?: return null
-    return analysis.takeIf { it.generationSnapshot == snapshot && matchesCurrentGenerationConditions(numbers, it) }
+    val base = buildGeneratorAnalysis(originalDraws, count, approvalHash, preferDistinctLastDigits) ?: return null
+    val analysis = if (individual) base.copy(generationSnapshot = base.generationSnapshot.copy(
+        configJson = if (snapshot.usesAllGroups) pensionIndividualConfiguration(base.generationSnapshot.configJson)
+            else pensionLegacyIndividualConfiguration(base.generationSnapshot.configJson),
+    )) else base
+    return analysis.takeIf { it.generationSnapshot == snapshot && if (individual) {
+        numbers.size == 1 && matchesNumberConditions(numbers.single(), it)
+    } else matchesCurrentGenerationConditions(numbers, it) }
 }
 
 private fun buildBackupNumbers(
@@ -708,6 +823,11 @@ private fun PensionLotteryGeneratedNumberEntity.toGeneratedNumber(): PensionLott
 
 private data class PensionLotteryGeneratorAnalysis(
     val generationSnapshot: PensionLotteryGenerationSnapshot,
+    val preferDistinctLastDigits: Boolean,
+    val softLastDigit: Boolean,
+    val lastDigitStrength: Double,
+    val appearedLastDigitWeights: IntArray,
+    val coldLastDigitWeights: IntArray,
     val latestDraws: List<PensionLotteryDrawEntity>,
     val pastWinningNumbers: Set<String>,
     val targetScoreBand: String,
@@ -762,44 +882,50 @@ private fun matchesCurrentGenerationConditions(
         }
     }
 
-    return numbers.all { number ->
-        if (number.winningNumber in analysis.pastWinningNumbers) return@all false
-        if (pensionDuplicateLabel(number.winningNumber) != analysis.targetDuplicateLabel) return@all false
-        if (number.duplicateLabel != analysis.targetDuplicateLabel) return@all false
+    return numbers.all { matchesNumberConditions(it, analysis) }
+}
 
-        val currentDigitScores = calculatePensionNumberScores(analysis.latestDraws, number.winningNumber)
-        if (pensionScoreBandLabel(currentDigitScores.sum()) != analysis.targetScoreBand) return@all false
-        if (number.scoreBand != analysis.targetScoreBand) return@all false
+private fun matchesNumberConditions(number: PensionLotteryGeneratedNumber, analysis: PensionLotteryGeneratorAnalysis): Boolean {
+    if (number.winningNumber.length != 6 || number.winningNumber.any { it !in '0'..'9' } || number.groupNo !in 1..5) return false
+    if (number.winningNumber in analysis.pastWinningNumbers) return false
+    if (pensionDuplicateLabel(number.winningNumber) != analysis.targetDuplicateLabel) return false
+    if (number.duplicateLabel != analysis.targetDuplicateLabel) return false
 
-        val digits = number.winningNumber.map { digit -> digit.digitToInt() }
-        when (number.type.pattern) {
-            PensionLotteryNumberPattern.APPEARED -> {
-                number.coldPositions.isEmpty() &&
-                    digits.indices.all { position -> digits[position] in analysis.appearedDigits[position] } &&
-                    digits.last() in analysis.topAppearedLastDigits
+    val currentDigitScores = calculatePensionNumberScores(analysis.latestDraws, number.winningNumber)
+    if (pensionScoreBandLabel(currentDigitScores.sum()) != analysis.targetScoreBand) return false
+    if (number.scoreBand != analysis.targetScoreBand) return false
+
+    val digits = number.winningNumber.map { digit -> digit.digitToInt() }
+    return when (number.type.pattern) {
+        PensionLotteryNumberPattern.APPEARED -> {
+            number.coldPositions.isEmpty() &&
+                digits.indices.all { position -> (analysis.softLastDigit && position == LAST_DIGIT_POSITION) || digits[position] in analysis.appearedDigits[position] } &&
+                digits.last() in analysis.topAppearedLastDigits
+        }
+
+        PensionLotteryNumberPattern.COLD_MIX -> {
+            val usesZeroScoreTarget = analysis.targetZeroScoreCount > 0
+            val hasExpectedColdPositionCount = if (usesZeroScoreTarget) {
+                number.coldPositions.size == analysis.targetZeroScoreCount
+            } else {
+                number.coldPositions.size in 1..2
             }
-
-            PensionLotteryNumberPattern.COLD_MIX -> {
-                val usesZeroScoreTarget = analysis.targetZeroScoreCount > 0
-                val hasExpectedColdPositionCount = if (usesZeroScoreTarget) {
-                    number.coldPositions.size == analysis.targetZeroScoreCount
-                } else {
-                    number.coldPositions.size in 1..2
+            val hasPriorityLastDigit = when {
+                analysis.softLastDigit -> true
+                usesZeroScoreTarget && analysis.zeroScoreDigits[LAST_DIGIT_POSITION].isNotEmpty() ->
+                    LAST_DIGIT_POSITION in number.coldPositions
+                !usesZeroScoreTarget -> LAST_DIGIT_POSITION in number.coldPositions
+                else -> true
+            }
+            hasExpectedColdPositionCount && hasPriorityLastDigit && digits.indices.all { position ->
+                val allowedDigits = when {
+                    position !in number.coldPositions -> analysis.appearedDigits[position]
+                    usesZeroScoreTarget -> analysis.zeroScoreDigits[position]
+                    else -> analysis.lowestPositiveScoreDigits[position]
                 }
-                val hasPriorityLastDigit = when {
-                    usesZeroScoreTarget && analysis.zeroScoreDigits[LAST_DIGIT_POSITION].isNotEmpty() ->
-                        LAST_DIGIT_POSITION in number.coldPositions
-                    !usesZeroScoreTarget -> LAST_DIGIT_POSITION in number.coldPositions
-                    else -> true
-                }
-                hasExpectedColdPositionCount && hasPriorityLastDigit && digits.indices.all { position ->
-                    val allowedDigits = when {
-                        position !in number.coldPositions -> analysis.appearedDigits[position]
-                        usesZeroScoreTarget -> analysis.zeroScoreDigits[position]
-                        else -> analysis.lowestPositiveScoreDigits[position]
-                    }
-                    digits[position] in allowedDigits
-                }
+                if (analysis.softLastDigit && position == LAST_DIGIT_POSITION) {
+                    (position in number.coldPositions) == (digits[position] in if (usesZeroScoreTarget) analysis.zeroScoreDigits[position] else analysis.lowestPositiveScoreDigits[position])
+                } else digits[position] in allowedDigits
             }
         }
     }
@@ -809,7 +935,11 @@ private fun buildGeneratorAnalysis(
     draws: List<PensionLotteryDrawEntity>,
     appearedLastDigitCandidateCount: Int = 3,
     approvalHash: String? = null,
+    preferDistinctLastDigits: Boolean = true,
+    softLastDigit: Boolean = false,
+    lastDigitStrength: Double = 1.0,
 ): PensionLotteryGeneratorAnalysis? {
+    require(lastDigitStrength in listOf(1.0, 0.5))
     require(appearedLastDigitCandidateCount in 3..4)
     if (draws.size <= GENERATOR_ANALYSIS_WEEKS) return null
 
@@ -869,8 +999,13 @@ private fun buildGeneratorAnalysis(
         generationSnapshot = PensionLotteryGenerationSnapshot(
             analysisThroughRound = draws.first().roundNo,
             inputDataHash = pensionInputDataHash(draws),
-            configJson = pensionExperimentConfiguration(appearedLastDigitCandidateCount, approvalHash),
+            configJson = if (softLastDigit) pensionSoftLastDigitConfiguration(approvalHash, lastDigitStrength) else pensionExperimentConfiguration(appearedLastDigitCandidateCount, approvalHash, preferDistinctLastDigits),
         ),
+        preferDistinctLastDigits = preferDistinctLastDigits,
+        softLastDigit = softLastDigit,
+        lastDigitStrength = lastDigitStrength,
+        appearedLastDigitWeights = IntArray(10) { lastDigitWeight(trendWeightedScores.last(), it, lastDigitStrength) },
+        coldLastDigitWeights = IntArray(10) { lastDigitWeight(allTimeCounts.last(), it, lastDigitStrength) },
         latestDraws = latestDraws,
         pastWinningNumbers = draws.map(PensionLotteryDrawEntity::winningNumber).toSet(),
         targetScoreBand = targetScoreBand,
@@ -883,7 +1018,7 @@ private fun buildGeneratorAnalysis(
         trendWeightedScores = trendWeightedScores,
         groupSelectionWeights = buildGroupSelectionWeights(latestDraws, longTermDraws),
         appearedDigits = appearedDigits,
-        topAppearedLastDigits = appearedDigits.last()
+        topAppearedLastDigits = if (softLastDigit) (0..9).toList() else appearedDigits.last()
             .sortedByDescending { digit -> trendWeightedScores.last()[digit] }
             .take(appearedLastDigitCandidateCount),
         zeroScoreDigits = zeroScoreDigits,
@@ -911,6 +1046,7 @@ private fun generateCandidateSet(
                 analysis = analysis,
                 type = appearedType,
                 excludedWinningNumbers = excludedWinningNumbers + selectedWinningNumbers,
+                otherNumbers = selectedNumbers,
                 maximumAttempts = MAX_SET_CANDIDATE_ATTEMPTS,
                 generationSeed = random.nextLong(),
                 trace = trace,
@@ -925,6 +1061,7 @@ private fun generateCandidateSet(
                 comparisonNumber = appearedCandidate.winningNumber,
                 comparisonGroupNo = appearedCandidate.groupNo,
                 excludedWinningNumbers = excludedWinningNumbers + selectedWinningNumbers + appearedCandidate.winningNumber,
+                otherNumbers = selectedNumbers + appearedCandidate,
                 maximumAttempts = MAX_SET_CANDIDATE_ATTEMPTS,
                 generationSeed = random.nextLong(),
                 trace = trace,
@@ -949,11 +1086,48 @@ private fun generateCandidate(
     comparisonNumber: String? = null,
     comparisonGroupNo: Int? = null,
     excludedWinningNumbers: Set<String> = emptySet(),
+    otherNumbers: List<PensionLotteryGeneratedNumber> = emptyList(),
     maximumAttempts: Int = MAX_GENERATION_ATTEMPTS,
     generationSeed: Long = Random.nextLong(),
     trace: PensionGenerationTrace? = null,
+    recordPool: ((Map<String, Any?>) -> Unit)? = null,
+    poolSelection: Boolean = org.json.JSONObject(analysis.generationSnapshot.configJson).optBoolean("candidatePipeline", false),
 ): PensionLotteryGeneratedNumber? {
     val random = Random(generationSeed)
+    val lastDigitUseCounts = if (analysis.preferDistinctLastDigits) {
+        otherNumbers.groupingBy { it.winningNumber.last().digitToInt() }.eachCount()
+    } else {
+        emptyMap()
+    }
+    val allowedLastDigits = when (type.pattern) {
+        PensionLotteryNumberPattern.APPEARED -> analysis.topAppearedLastDigits
+        PensionLotteryNumberPattern.COLD_MIX -> preferredColdMixLastDigits(analysis)
+    }.filter { it != comparisonNumber?.lastOrNull()?.digitToInt() }
+    val minimumLastDigitUseCount = allowedLastDigits.minOfOrNull { lastDigitUseCounts[it] ?: 0 } ?: 0
+    var bestCandidate: PensionLotteryGeneratedNumber? = null
+    val pool = linkedMapOf<String, PensionLotteryGeneratedNumber>()
+    fun selectPool(): PensionLotteryGeneratedNumber? {
+        if (pool.size < 250) return null
+        val candidates = pool.values.toList()
+        val weights = if (type.pattern == PensionLotteryNumberPattern.APPEARED) analysis.appearedLastDigitWeights else analysis.coldLastDigitWeights
+        fun score(index: Int) = if (analysis.lastDigitStrength == 0.5) candidates[index].totalScore else weights[candidates[index].winningNumber.last().digitToInt()]
+        val ordered = candidates.indices.sortedByDescending(::score)
+        // 상위 압축에서도 후보에 존재하는 끝자리별 최상위 번호를 남겨 분산 선택을 유지한다.
+        val representatives = ordered.distinctBy { candidates[it].winningNumber.last() }
+        val ranked = (representatives + ordered).distinct().take(50).sortedByDescending(::score)
+        val minimumUse = ranked.minOf { lastDigitUseCounts[candidates[it].winningNumber.last().digitToInt()] ?: 0 }
+        val digits = ranked.map { candidates[it].winningNumber.last().digitToInt() }.distinct()
+            .filter { (lastDigitUseCounts[it] ?: 0) == minimumUse }
+        val totalWeight = digits.sumOf { weights[it].toDouble().coerceAtLeast(1.0) }
+        var draw = random.nextDouble() * totalWeight
+        val digit = digits.firstOrNull { draw -= weights[it].toDouble().coerceAtLeast(1.0); draw < 0 } ?: digits.last()
+        val finalists = ranked.filter { candidates[it].winningNumber.last().digitToInt() == digit }
+        val selected = finalists[random.nextInt(finalists.size)]
+        recordPool?.invoke(mapOf("type" to type.name, "pool" to candidates.map { it.winningNumber },
+            "ranked" to ranked, "selected" to listOf(selected), "scores" to ranked.map(::score)))
+        return candidates[selected]
+    }
+    var bestLastDigitUseCount = Int.MAX_VALUE
     if (
         type.pattern == PensionLotteryNumberPattern.COLD_MIX &&
         analysis.targetZeroScoreCount > 0 &&
@@ -989,12 +1163,15 @@ private fun generateCandidate(
         val digitScores = calculatePensionNumberScores(analysis.latestDraws, selection.winningNumber)
         val totalScore = digitScores.sum()
         if (!pensionFilter(trace, "scoreBand", pensionScoreBandLabel(totalScore) == analysis.targetScoreBand)) return@repeat
-        val availableGroups = (1..5).filter { groupNo -> groupNo != comparisonGroupNo }
+        val allGroups = analysis.generationSnapshot.usesAllGroups
+        val availableGroups = if (allGroups) listOf(1) else (1..5).filter { groupNo -> groupNo != comparisonGroupNo }
         if (!pensionFilter(trace, "group", availableGroups.isNotEmpty())) return@repeat
 
-        return PensionLotteryGeneratedNumber(
+        val lastDigitUseCount = lastDigitUseCounts[selection.winningNumber.last().digitToInt()] ?: 0
+        if (!poolSelection && lastDigitUseCount >= bestLastDigitUseCount) return@repeat
+        val candidate = PensionLotteryGeneratedNumber(
             type = type,
-            groupNo = weightedGroup(
+            groupNo = if (allGroups) 1 else weightedGroup(
                 candidates = availableGroups,
                 weights = analysis.groupSelectionWeights,
                 random = random,
@@ -1010,9 +1187,22 @@ private fun generateCandidate(
             generatedAt = lotteryEvaluationNow(),
             generationSnapshot = analysis.generationSnapshot,
         )
+        if (poolSelection) {
+            pool.putIfAbsent(candidate.winningNumber, candidate)
+            if (pool.size == 250) return selectPool()
+            return@repeat
+        }
+        if (lastDigitUseCount == minimumLastDigitUseCount) return candidate
+        bestCandidate = candidate
+        bestLastDigitUseCount = lastDigitUseCount
     }
 
-    return null
+    if (poolSelection) return selectPool()
+    // 끝자리 분산 때문에 기존 필수 조건을 만족한 번호까지 버리지 않는다.
+    if (bestCandidate != null) {
+        Log.i("PensionGenerator", "Last digit fallback: throughRound=${analysis.generationSnapshot.analysisThroughRound} type=$type attempts=$maximumAttempts reuse=$bestLastDigitUseCount minimum=$minimumLastDigitUseCount")
+    }
+    return bestCandidate
 }
 
 private fun buildAppearedSelection(
@@ -1031,7 +1221,7 @@ private fun buildAppearedSelection(
     digits[LAST_DIGIT_POSITION] = weightedDigit(
         candidates = lastDigitCandidates,
         random = random,
-    ) { digit -> analysis.trendWeightedScores[LAST_DIGIT_POSITION][digit] }
+    ) { digit -> analysis.appearedLastDigitWeights[digit] }
     for (position in 0 until LAST_DIGIT_POSITION) {
         digits[position] = analysis.appearedDigits[position].random(random)
     }
@@ -1047,6 +1237,7 @@ private fun buildColdMixSelection(
     comparisonLastDigit: Int?,
     random: Random,
 ): CandidateSelection? {
+    if (analysis.softLastDigit) return buildSoftColdMixSelection(analysis, comparisonLastDigit, random)
     val zeroScorePositions = analysis.zeroScoreDigits.indices.filter { position ->
         analysis.zeroScoreDigits[position].isNotEmpty()
     }
@@ -1119,7 +1310,40 @@ private fun buildColdMixSelection(
     )
 }
 
+private fun buildSoftColdMixSelection(
+    analysis: PensionLotteryGeneratorAnalysis,
+    comparisonLastDigit: Int?,
+    random: Random,
+): CandidateSelection? {
+    val digits = MutableList(6) { 0 }
+    digits[LAST_DIGIT_POSITION] = weightedDigit((0..9).filter { it != comparisonLastDigit }, random) {
+        analysis.coldLastDigitWeights[it]
+    }
+    val usesZero = analysis.targetZeroScoreCount > 0
+    val coldDigits = if (usesZero) analysis.zeroScoreDigits else analysis.lowestPositiveScoreDigits
+    val lastIsCold = digits.last() in coldDigits.last()
+    val count = if (usesZero) analysis.targetZeroScoreCount else random.nextInt(1, 3)
+    val frontCount = count - if (lastIsCold) 1 else 0
+    val eligibleFront = (0 until LAST_DIGIT_POSITION).filter { coldDigits[it].isNotEmpty() }
+    if (frontCount !in 0..eligibleFront.size) return null
+    val positions = eligibleFront.shuffled(random).take(frontCount).toSet() + if (lastIsCold) setOf(LAST_DIGIT_POSITION) else emptySet()
+    val scores = mutableMapOf<Int, Int>()
+    for (position in digits.indices) {
+        if (position != LAST_DIGIT_POSITION) {
+            val candidates = if (position in positions) coldDigits[position] else analysis.appearedDigits[position]
+            if (candidates.isEmpty()) return null
+            digits[position] = if (position in positions) weightedDigit(candidates, random) { analysis.allTimeCounts[position][it] } else candidates.random(random)
+        }
+        if (position in positions) {
+            val maximum = analysis.allTimeCounts[position].maxOrNull()?.coerceAtLeast(1) ?: 1
+            scores[position] = (analysis.allTimeCounts[position][digits[position]].toDouble() / maximum * 100).roundToInt()
+        }
+    }
+    return CandidateSelection(digits.joinToString(""), positions, scores)
+}
+
 private fun preferredColdMixLastDigits(analysis: PensionLotteryGeneratorAnalysis): List<Int> = when {
+    analysis.softLastDigit -> (0..9).toList()
     analysis.targetZeroScoreCount > 0 && analysis.zeroScoreDigits[LAST_DIGIT_POSITION].isNotEmpty() ->
         analysis.zeroScoreDigits[LAST_DIGIT_POSITION]
     analysis.targetZeroScoreCount == 0 -> analysis.lowestPositiveScoreDigits[LAST_DIGIT_POSITION]
@@ -1135,9 +1359,10 @@ private fun buildPensionControlEntities(
     inputDataHash: String,
     analysis: PensionLotteryGeneratorAnalysis,
     excludedNumbers: Set<String>,
+    count: Int = PENSION_CONTROL_COUNT,
 ): List<PensionLotteryGeneratedNumberEntity> {
     val usedNumbers = excludedNumbers.toMutableSet()
-    return List(PENSION_CONTROL_COUNT) { index ->
+    return List(count) { index ->
         var seed: Long
         var random: Random
         var number: String
@@ -1152,7 +1377,7 @@ private fun buildPensionControlEntities(
         PensionLotteryGeneratedNumberEntity(
             generationId = generationId,
             generationType = "CONTROL_${index + 1}",
-            groupNo = random.nextInt(1, 6),
+            groupNo = if (analysis.generationSnapshot.usesAllGroups) 1 else random.nextInt(1, 6),
             winningNumber = number,
             digitScores = digitScores.joinToString(","),
             totalScore = digitScores.sum(),
@@ -1285,10 +1510,9 @@ private const val MAX_SET_GENERATION_ATTEMPTS = 10
 private const val MAX_SET_CANDIDATE_ATTEMPTS = 2_000
 private const val LAST_DIGIT_POSITION = 5
 private const val GENERATION_CONDITION_CHANGED_MESSAGE =
-    "최근 당첨번호 반영으로 번호 생성 적용 조건이 변경되었습니다. 네 번호를 다시 생성해 주세요."
+    "최근 당첨번호 반영으로 번호 생성 적용 조건이 변경되었습니다. 해당 번호를 다시 생성해 주세요."
 private const val GENERATION_INPUT_CHANGED_MESSAGE =
-    "생성 당시 분석 입력이 없거나 현재 입력과 다릅니다. 네 번호를 다시 생성해 주세요."
-private const val FIXED_GENERATION_PREFIX = "fixed:"
+    "생성 당시 분석 입력이 없거나 현재 입력과 다릅니다. 해당 번호를 다시 생성해 주세요."
 private const val BACKUP_GENERATION_PREFIX = "backup:"
 private const val PENSION_CONTROL_COUNT = 4
 private const val PENSION_GENERATION_VERSION = "pension-collection-v1"
@@ -1312,11 +1536,87 @@ private val PENSION_GENERATION_CONFIG = """
     }
 """.trimIndent()
 
-internal fun pensionExperimentConfiguration(count: Int, approvalHash: String? = null): String {
+private fun lastDigitWeight(scores: IntArray, digit: Int, strength: Double): Int =
+    if (strength == 1.0) scores[digit] else (scores[digit].coerceAtLeast(1) * strength + scores.map { it.coerceAtLeast(1) }.average() * (1.0 - strength)).roundToInt().coerceAtLeast(1)
+
+internal fun pensionSoftLastDigitConfiguration(approvalHash: String? = null, strength: Double = 1.0): String = org.json.JSONObject(pensionExperimentConfiguration(3, approvalHash))
+    .put("implementationId", "pension-soft-last-digit-v1")
+    .put("lastDigitPolicy", "all_digits_positive_weight_v1")
+    .put("lastDigitImplementationId", "pension-soft-last-digit-v1")
+    .put("appearedLastDigitWeight", "recent_0.25_long_0.75_min_1")
+    .put("coldLastDigitWeight", "all_time_position_frequency_min_1")
+    .put("coldPositionPolicy", "historical_count_selected_last_digit_then_front_positions")
+    .put("lastDigitCandidates", org.json.JSONArray((0..9).toList()))
+    .apply { if (strength != 1.0) {
+        put("lastDigitStrength", strength); put("lastDigitImplementationId", "pension-soft-last-digit-strength-v2")
+        put("lastDigitStrengthPolicy", "strength_times_positive_weight_plus_remaining_times_mean_positive_weight")
+    } }.toString()
+
+internal fun pensionExperimentConfiguration(
+    count: Int,
+    approvalHash: String? = null,
+    preferDistinctLastDigits: Boolean = true,
+): String {
     require(count in 3..4)
     val config = PENSION_GENERATION_CONFIG.replace("\"appearedLastDigitCandidateCount\": 3", "\"appearedLastDigitCandidateCount\": $count")
+    if (preferDistinctLastDigits) {
+        return org.json.JSONObject(config)
+            .put("implementationId", "pension-batch-last-digit-diversity-v1")
+            .put("batchLastDigitPolicy", "least_reused_valid_candidate_within_existing_attempt_limit")
+            .apply { if (approvalHash != null) put("operatingApprovalHash", approvalHash) }
+            .toString()
+    }
     return if (approvalHash == null) config else org.json.JSONObject(config).put("operatingApprovalHash", approvalHash).toString()
 }
+
+private fun pensionLegacyIndividualConfiguration(batchConfig: String): String = org.json.JSONObject(batchConfig)
+    .put("implementationId", "pension-individual-v1")
+    .put("types", org.json.JSONObject().put("selection", "one_at_a_time")
+        .put("allowed", org.json.JSONArray(listOf("APPEARED", "COLD_MIX"))))
+    .put("controlCount", 1)
+    .put("comparisonPolicy", "latest_opposite_pattern_in_same_round")
+    .put("lastDigitContext", "pending_and_visible_saved_recommendations_in_same_round_except_replaced")
+    .toString()
+
+private fun pensionIndividualConfiguration(batchConfig: String): String = org.json.JSONObject(pensionLegacyIndividualConfiguration(batchConfig))
+    .put("implementationId", if (org.json.JSONObject(batchConfig).has("lastDigitPolicy")) "pension-individual-soft-last-digit-v3" else "pension-individual-all-groups-v2")
+    .put("pairDifferentGroup", false)
+    .put("purchaseGroups", org.json.JSONArray((1..5).toList()))
+    .put("storedGroupNoMeaning", "compatibility_placeholder_1_not_recommendation")
+    .apply { remove("groupWeights") }
+    .toString()
+
+internal fun pensionIndividualWeightConfiguration(strength: Double): String = pensionIndividualConfiguration(pensionSoftLastDigitConfiguration(strength = strength))
+
+private fun PensionLotteryGeneratorAnalysis.withCandidatePipeline(): PensionLotteryGeneratorAnalysis = copy(
+    generationSnapshot = generationSnapshot.copy(configJson = org.json.JSONObject(generationSnapshot.configJson)
+        .put("candidatePipeline", true).put("candidatePipelineId", "pension-250-50-1-weighted-v3")
+        .put("rankingPolicy", if (lastDigitStrength == 0.5) "total_historical_score" else "last_digit_weight")
+        .put("candidatePoolPerType", 250).put("finalistsPerType", 50).toString()))
+
+internal fun generateTrackedPension(draws: List<PensionLotteryDrawEntity>, seed: Long, strength: Double,
+    checkActive: () -> Unit = {},
+    record: (Map<String, Any?>) -> Unit): List<PensionLotteryGeneratedNumber> {
+    val analysis = requireNotNull(buildGeneratorAnalysis(draws, 3, softLastDigit = true, lastDigitStrength = strength))
+        .forIndividualGeneration().withCandidatePipeline()
+    val selected = mutableListOf<PensionLotteryGeneratedNumber>()
+    val random = Random(seed)
+    for (type in PensionLotteryGenerationType.entries) {
+        selected += requireNotNull(generateCandidate(analysis, type,
+            comparisonNumber = selected.lastOrNull { it.type.pattern != type.pattern }?.winningNumber,
+            excludedWinningNumbers = selected.map { it.winningNumber }.toSet(), otherNumbers = selected,
+            generationSeed = random.nextLong(), trace = PensionGenerationTrace(checkActive), recordPool = record)) { "연금 후보 250개 확보 실패: type=$type seed=$seed" }
+    }
+    return selected
+}
+
+private fun PensionLotteryGeneratorAnalysis.forIndividualGeneration(): PensionLotteryGeneratorAnalysis = copy(
+    generationSnapshot = generationSnapshot.copy(configJson = pensionIndividualConfiguration(generationSnapshot.configJson)),
+)
+
+private fun PensionLotteryGeneratorAnalysis.withAdaptiveHash(hash: String?, policy: String = com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY): PensionLotteryGeneratorAnalysis =
+    if (hash == null) this else copy(generationSnapshot = generationSnapshot.copy(configJson = org.json.JSONObject(generationSnapshot.configJson)
+        .put("adaptivePolicy", policy).put("adaptiveRecordHash", hash).toString()))
 
 internal class PensionGenerationTrace(private val checkActive: () -> Unit = {}) {
     var attempts: Long = 0
@@ -1339,8 +1639,23 @@ private fun pensionFilter(trace: PensionGenerationTrace?, name: String, accepted
 
 internal fun generatePensionExperimentBatch(
     draws: List<PensionLotteryDrawEntity>, count: Int, seed: Long, exclusions: Set<String>, trace: PensionGenerationTrace,
+    softLastDigit: Boolean = false,
+    lastDigitStrength: Double = 1.0,
+    individualGeneration: Boolean = false,
 ): List<PensionLotteryGeneratedNumber> {
-    val analysis = requireNotNull(buildGeneratorAnalysis(draws, count)) { "연금 생성 입력은 직전 회차까지 최소 17회가 필요합니다." }
+    val analysis = requireNotNull(buildGeneratorAnalysis(draws, count, softLastDigit = softLastDigit, lastDigitStrength = lastDigitStrength)) { "연금 생성 입력은 직전 회차까지 최소 17회가 필요합니다." }
+    if (individualGeneration) {
+        val selected = mutableListOf<PensionLotteryGeneratedNumber>()
+        val random = Random(seed)
+        val individual = analysis.forIndividualGeneration()
+        for (type in PensionLotteryGenerationType.entries) {
+            val opposite = selected.lastOrNull { it.type.pattern != type.pattern }
+            selected += requireNotNull(generateCandidate(individual, type, comparisonNumber = opposite?.winningNumber,
+                excludedWinningNumbers = exclusions + selected.map { it.winningNumber }, otherNumbers = selected,
+                generationSeed = random.nextLong(), trace = trace)) { "연금 개별 생성 비교 실패: type=$type seed=$seed" }
+        }
+        return selected
+    }
     return requireNotNull(generateCandidateSet(analysis, exclusions, Random(seed), trace)) {
         "필수 조건을 만족하는 전체 4개 배치를 찾지 못했습니다. 후보 시도=${trace.attempts}"
     }

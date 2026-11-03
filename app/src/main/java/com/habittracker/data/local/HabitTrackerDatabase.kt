@@ -43,6 +43,8 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
 /** Entity, DAO, 타입 변환기와 스키마 버전을 Room에 등록하는 데이터베이스 진입점이다. */
 @Database(
     entities = [
+        com.habittracker.data.local.entity.HouseholdProduct::class,
+        com.habittracker.data.local.entity.HouseholdPurchase::class,
         TaskItemMasterEntity::class,
         DailyRecordEntity::class,
         DailyRecordItemEntity::class,
@@ -76,16 +78,17 @@ import com.habittracker.data.local.entity.VocabularyWordEntity
         ExchangeRateEntity::class,
         ExchangeExpenseEntity::class,
     ],
-    version = 43,
+    version = 47,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
 abstract class HabitTrackerDatabase : RoomDatabase() {
     abstract fun habitDao(): HabitDao
+    abstract fun householdPriceDao(): com.habittracker.data.local.entity.HouseholdPriceDao
 
     companion object {
         const val DB_NAME = "habit-tracker.db"
-        const val DB_VERSION = 43
+        const val DB_VERSION = 47
 
         // builder와 create를 나누면 암호화/복구 계층이 필요에 따라 빌더 설정을 재사용할 수 있다.
         fun builder(context: Context) =

@@ -41,7 +41,7 @@ class AppViewModelFactory : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(DiaryViewModel::class.java) -> DiaryViewModel(repository) as T
             modelClass.isAssignableFrom(LottoViewModel::class.java) -> LottoViewModel(repository) as T
             modelClass.isAssignableFrom(PensionLotteryViewModel::class.java) -> PensionLotteryViewModel(repository) as T
-            modelClass.isAssignableFrom(PensionLotteryGeneratorViewModel::class.java) -> PensionLotteryGeneratorViewModel(repository) as T
+            modelClass.isAssignableFrom(PensionLotteryGeneratorViewModel::class.java) -> PensionLotteryGeneratorViewModel(repository, extras.createSavedStateHandle()) as T
             modelClass.isAssignableFrom(CardHistoryViewModel::class.java) -> CardHistoryViewModel(repository) as T
             modelClass.isAssignableFrom(MemoViewModel::class.java) -> MemoViewModel(repository) as T
             modelClass.isAssignableFrom(PlantViewModel::class.java) -> PlantViewModel(repository) as T
@@ -49,7 +49,11 @@ class AppViewModelFactory : ViewModelProvider.Factory {
                 application.appContainer.reminderRepository,
                 extras.createSavedStateHandle(),
             ) as T
+            modelClass.isAssignableFrom(com.habittracker.ui.notification.PersonalAlertsViewModel::class.java) -> com.habittracker.ui.notification.PersonalAlertsViewModel(
+                com.habittracker.data.PersonalAlerts.get(application), extras.createSavedStateHandle(),
+            ) as T
             modelClass.isAssignableFrom(NotificationAssistantViewModel::class.java) -> NotificationAssistantViewModel(application.appContainer.notificationAssistantRepository) as T
+            modelClass.isAssignableFrom(com.habittracker.ui.household.HouseholdPriceViewModel::class.java) -> com.habittracker.ui.household.HouseholdPriceViewModel(repository.householdPrices, extras.createSavedStateHandle()) as T
             modelClass.isAssignableFrom(StockViewModel::class.java) -> StockViewModel(repository) as T
             modelClass.isAssignableFrom(ExchangeViewModel::class.java) -> ExchangeViewModel(
                 application.appContainer.exchangeRepository,
