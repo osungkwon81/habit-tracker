@@ -138,6 +138,8 @@ class HabitRepository(
     internal val pensionExperiments = com.habittracker.data.lotto.PensionExperimentStore(context)
     private val lotteryContext = context.applicationContext
     internal val adaptiveSettings = com.habittracker.data.lotto.LotteryAdaptiveSettings(lotteryContext)
+    internal val patternEvolution = com.habittracker.data.lotto.LotteryPatternEvolution(lotteryContext)
+    private val candidateArchive = com.habittracker.data.lotto.LotteryCandidateArchive(lotteryContext)
     internal val autoImprovement = com.habittracker.data.lotto.LotteryAutoImprovement(lotteryContext, this)
 
     internal suspend fun getLotteryResearchInput(product: LotteryProduct) = when (product) {
@@ -146,8 +148,37 @@ class HabitRepository(
     }
 
     private fun enqueueLotteryImprovement(product: LotteryProduct) {
+        try { com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueUserEvaluation(lotteryContext, product) }
+        catch (error: Exception) { Log.e("LotteryCandidates", "product=$product phase=user-evaluation-schedule failed", error) }
         try { com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueIfEnabled(lotteryContext, product) }
         catch (error: Exception) { Log.e("LotteryAutoImprovement", "product=$product phase=schedule failed", error) }
+    }
+
+    internal suspend fun recordUserCandidates(product: LotteryProduct, throughRound: Int, inputHash: String,
+        configJson: String, source: String, seed: Long, startedAt: LocalDateTime,
+        stages: List<Map<String, Any?>>, lottoHistorySize: Int? = null): String {
+        val current = getLotteryResearchInput(product)
+        val through = current.through(throughRound)
+        val input = if (product == LotteryProduct.LOTTO_645 && lottoHistorySize != null)
+            through.copy(lotto = through.lotto.sortedByDescending { it.roundNo }.take(lottoHistorySize)) else through
+        val actualHash = if (product == LotteryProduct.LOTTO_645) {
+            val raw = input.lotto.sortedByDescending { it.roundNo }.joinToString("|") {
+                "${it.roundNo}:${it.numbers().joinToString(",")}:${it.bonusNumber}"
+            }
+            java.security.MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        } else com.habittracker.data.lotto.pensionGenerationInputHash(input.pension)
+        require(input.rounds().maxOrNull() == throughRound && actualHash == inputHash) {
+            "${throughRound + 1}회차 후보 생성 중 분석 입력이 변경되었습니다. 다시 생성해 주세요."
+        }
+        val id = candidateArchive.recordUserGeneration(input, inputHash, configJson, source, seed, startedAt, stages,
+            resultAlreadyKnown = current.rounds().any { it > throughRound })
+        requestLotteryRecordBackup()
+        if (current.rounds().any { it > throughRound }) {
+            try { com.habittracker.data.lotto.LotteryAutoImprovementWorker.enqueueUserEvaluation(lotteryContext, product) }
+            catch (error: Exception) { Log.e("LotteryCandidates", "product=$product run=$id phase=user-evaluation-schedule failed; evaluate on refresh", error) }
+        }
+        return id
     }
 
     internal suspend fun getPensionExperimentInput() = com.habittracker.data.lotto.PensionExperimentInput(
@@ -2660,13 +2691,17 @@ class HabitRepository(
             if (setting.approval == null) setting.configJson else JSONObject(setting.configJson)
                 .put("operatingApproval", JSONObject(com.habittracker.data.lotto.LottoDesignRecordJson.encode(setting.approval))).toString()
         } ?: LottoNumberGenerator.configurationSnapshot()
+        val patternModel = if (mode == com.habittracker.data.lotto.LottoGenerationMode.PRECISE)
+            patternEvolution.model(LotteryProduct.LOTTO_645) else com.habittracker.data.lotto.LotteryPatternModel()
         return LottoGenerationSnapshot(
             history = analysisDraws.map(LottoDrawEntity::numbers),
             historyThroughRound = analysisDraws.first().roundNo,
             inputDataHash = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { byte -> "%02x".format(byte) },
-            configJson = config,
+            configJson = if (mode == com.habittracker.data.lotto.LottoGenerationMode.PRECISE)
+                JSONObject(config).put("patternModel", JSONObject(patternModel.json())).toString() else config,
             balancedRecentPriorDraws = adaptive ?: approved?.priorDraws ?: 32.0,
+            patternModel = patternModel,
         )
     }
 
@@ -3205,7 +3240,7 @@ class HabitRepository(
                 require(currentSnapshot.inputDataHash == snapshot.inputDataHash) {
                     "${roundNo}회차 생성 이후 분석 입력이 변경되었습니다. 번호를 다시 생성해 주세요."
                 }
-                require(!usesAdaptive || currentSnapshot.configJson == snapshot.configJson) { "생성 이후 가중치가 변경되었습니다. 번호를 다시 생성해 주세요." }
+                require((!usesAdaptive || currentSnapshot.configJson == snapshot.configJson) && currentSnapshot.patternModel == snapshot.patternModel) { "생성 이후 가중치가 변경되었습니다. 번호를 다시 생성해 주세요." }
                 val savedAt = lotteryEvaluationNow()
                 val isEvaluationTarget = savedAt.isBefore(
                     lotteryEvaluationDeadline(LotteryProduct.LOTTO_645, roundNo),

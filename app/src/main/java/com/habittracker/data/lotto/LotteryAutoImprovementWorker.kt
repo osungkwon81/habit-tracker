@@ -27,14 +27,16 @@ class LotteryAutoImprovementWorker(context: Context, parameters: WorkerParameter
         val product = inputData.getString(PRODUCT)?.let { value -> LotteryProduct.entries.find { it.name == value } }
             ?: return Result.failure()
         val automatic = inputData.getBoolean(AUTOMATIC, false)
+        val userEvaluation = inputData.getBoolean(USER_EVALUATION, false)
         if (automatic && !isEnabled(applicationContext, product)) return Result.success()
         return try {
             val repository = (applicationContext as HabitTrackerApplication).appContainer.awaitRepository()
-            repository.autoImprovement.run(product, automatic)
+            if (userEvaluation) repository.autoImprovement.evaluateUserCandidates(product)
+            else repository.autoImprovement.run(product, automatic)
             Result.success()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
-            Log.e("LotteryAutoImprovement", "product=$product phase=worker failed; no automatic retry", error)
+            Log.e("LotteryAutoImprovement", "product=$product phase=${if (userEvaluation) "user-evaluation" else "worker"} failed; no automatic retry", error)
             if (automatic && isEnabled(applicationContext, product)) showChange(applicationContext, product,
                 "자동 개선 보류: ${error.message ?: "자료·기록을 확인해 주세요."}")
             Result.failure(workDataOf("error" to (error.message ?: "자동 개선 실패").take(1000)))
@@ -44,6 +46,7 @@ class LotteryAutoImprovementWorker(context: Context, parameters: WorkerParameter
     companion object {
         private const val PRODUCT = "product"
         private const val AUTOMATIC = "automatic"
+        private const val USER_EVALUATION = "user-evaluation"
         private const val PREFS = "lottery-auto-improvement"
         private const val CHANNEL = "lottery-improvement-changes"
 
@@ -77,6 +80,12 @@ class LotteryAutoImprovementWorker(context: Context, parameters: WorkerParameter
                 .setInputData(workDataOf(PRODUCT to product.name, AUTOMATIC to automatic))
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(workName(product), ExistingWorkPolicy.KEEP, request)
+        }
+
+        internal fun enqueueUserEvaluation(context: Context, product: LotteryProduct) {
+            val request = OneTimeWorkRequestBuilder<LotteryAutoImprovementWorker>()
+                .setInputData(workDataOf(PRODUCT to product.name, USER_EVALUATION to true)).build()
+            WorkManager.getInstance(context).enqueueUniqueWork("lottery-user-evaluation-${product.name}", ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
 
         internal fun showChange(context: Context, product: LotteryProduct, message: String) {

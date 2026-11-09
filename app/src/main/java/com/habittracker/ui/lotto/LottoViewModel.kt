@@ -683,10 +683,18 @@ class LottoViewModel(
                 runCatching {
                     val snapshot = repository.getLottoGenerationSnapshot(forBalancedGeneration = true, mode = mode)
                     withContext(Dispatchers.Default) {
-                        LottoNumberGenerator.generateBalanced(
+                        val startedAt = com.habittracker.data.lotto.lotteryEvaluationNow()
+                        val stages = mutableListOf<Map<String, Any?>>()
+                        val tickets = LottoNumberGenerator.generateBalanced(
                             snapshot.history, mode = mode, historyThroughRound = snapshot.historyThroughRound,
                             recentPriorDraws = snapshot.balancedRecentPriorDraws,
+                            patternModel = snapshot.patternModel,
+                            recordStages = { stages += it },
                         ).map { it.copy(generationSnapshot = snapshot) }
+                        repository.recordUserCandidates(LotteryProduct.LOTTO_645, snapshot.historyThroughRound,
+                            snapshot.inputDataHash, snapshot.configJson, sourceChatGpt, requireNotNull(tickets.first().generationSeed),
+                            startedAt, stages, lottoHistorySize = snapshot.history.size)
+                        tickets
                     }
                 }.onSuccess { tickets ->
                     generatedChatGpt.value = tickets
@@ -711,11 +719,19 @@ class LottoViewModel(
             try {
                 delay(16)
                 runCatching {
-                    val snapshot = repository.getLottoGenerationSnapshot()
+                    val snapshot = repository.getLottoGenerationSnapshot(mode = mode)
                     withContext(Dispatchers.Default) {
-                        LottoNumberGenerator.generateDiversified(
+                        val startedAt = com.habittracker.data.lotto.lotteryEvaluationNow()
+                        val stages = mutableListOf<Map<String, Any?>>()
+                        val tickets = LottoNumberGenerator.generateDiversified(
                             snapshot.history, mode = mode, historyThroughRound = snapshot.historyThroughRound,
+                            patternModel = snapshot.patternModel,
+                            recordStages = { stages += it },
                         ).map { it.copy(generationSnapshot = snapshot) }
+                        repository.recordUserCandidates(LotteryProduct.LOTTO_645, snapshot.historyThroughRound,
+                            snapshot.inputDataHash, snapshot.configJson, sourceGemini, requireNotNull(tickets.first().generationSeed),
+                            startedAt, stages, lottoHistorySize = snapshot.history.size)
+                        tickets
                     }
                 }.onSuccess { tickets ->
                     generatedGemini.value = tickets

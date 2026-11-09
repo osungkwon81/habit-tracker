@@ -87,9 +87,18 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
 
     fun state(product: LotteryProduct): StateFlow<LotteryAutoImprovementState> = states.getValue(product)
 
+    suspend fun evaluateUserCandidates(product: LotteryProduct) = withContext(Dispatchers.IO) {
+        val input = repository.getLotteryResearchInput(product)
+        if (candidates.evaluateUserPending(input)) repository.requestLotteryRecordBackup()
+        val state = states.getValue(product)
+        state.value = state.value.copy(candidateReport = listOfNotNull(candidates.summary(product),
+            repository.patternEvolution.summary(product)).joinToString("\n"))
+    }
+
     suspend fun refresh(product: LotteryProduct) = withContext(Dispatchers.IO) {
         try {
             val input = repository.getLotteryResearchInput(product)
+            if (candidates.evaluateUserPending(input)) repository.requestLotteryRecordBackup()
             val preview = preview(input)
             val old = states.getValue(product).value
             val summary = readLastSummary(product, preview)
@@ -98,8 +107,8 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
                 firstTarget = preview.targets.firstOrNull(), lastTarget = preview.targets.lastOrNull(),
                 targetCount = preview.targets.size, candidateWorkCount = preview.workCount,
                 result = if (old.running) old.result else summary,
-                evaluationStatus = adaptiveStatus(product), canRollback = repository.adaptiveSettings.active(product) != null,
-                candidateReport = candidates.summary(product),
+                evaluationStatus = adaptiveStatus(product), canRollback = canRollback(product),
+                candidateReport = listOfNotNull(candidates.summary(product), repository.patternEvolution.summary(product)).joinToString("\n"),
                 issue = if (old.running) old.issue else preview.issue,
             )
         } catch (cancelled: CancellationException) { throw cancelled }
@@ -118,8 +127,12 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
 
     suspend fun rollback(product: LotteryProduct) = gate.withLock {
         try {
-            val active = requireNotNull(repository.adaptiveSettings.active(product)) { "복구할 시험 적용 설정이 없습니다." }
-            rollbackTrial(product, active, "사용자 요청으로 이전 가중치를 복구했습니다.", automatic = false)
+            require(canRollback(product)) { "복구할 시험 적용 설정이 없습니다." }
+            repository.patternEvolution.rollback(product)
+            repository.adaptiveSettings.active(product)?.let { active ->
+                rollbackTrial(product, active, "사용자 요청으로 이전 가중치를 복구했습니다.", automatic = false)
+            }
+            repository.requestLotteryRecordBackup()
             refresh(product)
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
@@ -136,6 +149,9 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             else -> "비교 조건 미충족 · 기존 가중치 ${last["after"]} 유지"
         }
     }
+
+    private suspend fun canRollback(product: LotteryProduct): Boolean = repository.adaptiveSettings.active(product) != null ||
+        repository.patternEvolution.canRollback(product)
 
     private suspend fun monitoringThrough(product: LotteryProduct, active: Map<String, Any?>): Int {
         val last = repository.adaptiveSettings.last(product)
@@ -178,7 +194,11 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
                     rollbackTrial(product, previous, "후보 평가 구조 변경으로 이전 시험 가중치를 복구했습니다.")
                 }
                 val held = candidates.evaluatePending(input)
-                state.value = state.value.copy(candidateReport = candidates.summary(product),
+                candidates.evaluateUserPending(input)
+                repository.patternEvolution.update(input, candidates.evaluations(input),
+                    repository.adaptiveSettings.value(product) ?: if (product == LotteryProduct.LOTTO_645) 32.0 else 1.0)
+                state.value = state.value.copy(candidateReport = listOfNotNull(candidates.summary(product),
+                    repository.patternEvolution.summary(product)).joinToString("\n"), canRollback = canRollback(product),
                     issue = held.takeIf { it.isNotEmpty() }?.let { "입력·구현 변경으로 ${it.joinToString()}회 평가 보류 · 이후 회차는 계속 수집합니다." })
                 val next = requireNotNull(input.rounds().maxOrNull()) + 1
                 if (lotteryEvaluationNow().isBefore(lotteryEvaluationDeadline(product, next))) {
@@ -189,7 +209,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             if (automatic) {
                 val active = repository.adaptiveSettings.active(product)
                 if (active == null && repository.adaptiveSettings.attempted(product)) {
-                    state.value = state.value.copy(evaluationStatus = adaptiveStatus(product), canRollback = false)
+                    state.value = state.value.copy(evaluationStatus = adaptiveStatus(product), canRollback = canRollback(product))
                     return
                 }
                 if (active != null) {
@@ -220,7 +240,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
                         roundResult(folder, roundPlan(frozen, round), frozen, round, automatic = true).first
                     }
                     state.value = state.value.copy(evaluationStatus = selectOrRecover(plan.input, results, folder))
-                    state.value = state.value.copy(canRollback = repository.adaptiveSettings.active(product) != null)
+                    state.value = state.value.copy(canRollback = canRollback(product))
                 }
                 return
             }
@@ -254,7 +274,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             state.value = state.value.copy(result = summary)
             if (automatic && LotteryAutoImprovementWorker.isEnabled(app, product)) {
                 state.value = state.value.copy(evaluationStatus = selectOrRecover(plan.input, results, run))
-                state.value = state.value.copy(canRollback = repository.adaptiveSettings.active(product) != null)
+                state.value = state.value.copy(canRollback = canRollback(product))
             }
         } catch (error: Exception) {
             runFolder?.let { preserveFailure(it, error) }

@@ -45,12 +45,13 @@ fun LotteryAutoImprovementSection(
         AppSecondaryButton(text = if (state.enabled || state.running) "중단·자동 개선 끄기" else "자동 개선 켜기",
             onClick = { if (state.enabled || state.running) onEnabledChange(false) else confirmation = true })
         AppSecondaryButton(text = "상태 새로고침", enabled = !state.running, onClick = onRefresh)
-        if (state.canRollback && onRollback != null) AppSecondaryButton(text = "이전 가중치로 복구", enabled = !state.running, onClick = { rollbackConfirmation = true })
+        if (state.canRollback && onRollback != null) AppSecondaryButton(text = "이전 설정으로 복구", enabled = !state.running, onClick = { rollbackConfirmation = true })
         AppSecondaryButton(text = if (showDetails) "상세 접기" else "데이터·평가 기준 보기", onClick = { showDetails = !showDetails })
         if (showDetails) {
-            Text("고정 추천 묶음의 전략 비교입니다. 화면에서 별도로 생성·구매한 번호의 결과는 구매 성과에서 확인하세요.", style = MaterialTheme.typography.bodySmall)
+            Text("직접 생성·재생성한 후보도 저장·구매 여부와 관계없이 추첨 후 분석합니다. 같은 회차의 반복 생성은 한 회차로 묶어 패턴 관찰에 반영하며, 구매 성과는 구매 내역에서 확인하세요.", style = MaterialTheme.typography.bodySmall)
             state.result?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             state.candidateReport?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text("반복 패턴은 별도로 관찰합니다. 새 패턴 점수는 제안 이후 추첨 전에 고정한 12회로 비교하고, 적용 후 새 4회에서 악화를 점검합니다.")
             audit?.let {
                 Text("추첨 일정 기준 ${it.expectedLastRound}회까지 · 시작 이전 미보유 ${it.missingBeforeStart}회차")
                 if (it.missingRounds.isNotEmpty()) Text("누락 회차: ${it.missingRounds.take(20).joinToString()}${if (it.missingRounds.size > 20) " 외" else ""}")
@@ -75,6 +76,6 @@ fun LotteryAutoImprovementSection(
             onConfirm = { confirmation = false; onEnabledChange(true) },
         )
     }
-    if (rollbackConfirmation) AppConfirmDialog(title = "이전 가중치로 복구", message = "시험 적용 직전의 가중치로 되돌립니다. 저장된 번호와 비교 기록은 유지합니다.", confirmText = "복구",
+    if (rollbackConfirmation) AppConfirmDialog(title = "이전 설정으로 복구", message = "진행 중인 패턴 제안을 중지하고 최근 시험 적용의 패턴 점수·선별 기준과 가중치를 이전 설정으로 되돌립니다.", confirmText = "복구",
         onDismiss = { rollbackConfirmation = false }, onConfirm = { rollbackConfirmation = false; onRollback?.invoke() })
 }

@@ -23,6 +23,7 @@ data class LottoGenerationSnapshot(
     val configJson: String,
     val generationVersion: String = LottoNumberGenerator.CURRENT_GENERATION_VERSION,
     val balancedRecentPriorDraws: Double = 32.0,
+    val patternModel: LotteryPatternModel = LotteryPatternModel(),
 ) {
     val targetRoundNo: Int get() = historyThroughRound + 1
 }
@@ -87,13 +88,17 @@ object LottoNumberGenerator {
         seed: Long = random.nextLong(),
         historyThroughRound: Int = history.size,
         recentPriorDraws: Double = 32.0,
+        patternModel: LotteryPatternModel = LotteryPatternModel(),
+        recordStages: ((Map<String, Any?>) -> Unit)? = null,
     ): List<LottoGeneratedTicket> = generateBalancedWithPrior(
-        history, gameCount, mode, seed, historyThroughRound, recentPriorDraws = recentPriorDraws,
+        history, gameCount, mode, seed, historyThroughRound, recentPriorDraws = recentPriorDraws, patternModel = patternModel,
+        recordStages = recordStages,
     )
 
     internal fun generateTracked(history: List<List<Int>>, seed: Long, through: Int, prior: Double,
+        patternModel: LotteryPatternModel = LotteryPatternModel(),
         record: (Map<String, Any?>) -> Unit): List<LottoGeneratedTicket> = generateBalancedWithPrior(
-        history, 5, LottoGenerationMode.PRECISE, seed, through, prior, true, record)
+        history, 5, LottoGenerationMode.PRECISE, seed, through, prior, true, record, patternModel)
 
     internal fun generateBalancedForPriorDesign(
         history: List<List<Int>>,
@@ -119,6 +124,7 @@ object LottoNumberGenerator {
         recentPriorDraws: Double,
         requireFullCandidatePool: Boolean = false,
         recordStages: ((Map<String, Any?>) -> Unit)? = null,
+        patternModel: LotteryPatternModel = LotteryPatternModel(),
     ): List<LottoGeneratedTicket> {
         require(recentPriorDraws == 32.0 || recentPriorDraws == 64.0) { "지원하지 않는 로또 운영 priorDraws입니다." }
         if (history.isEmpty()) return emptyList()
@@ -160,6 +166,7 @@ object LottoNumberGenerator {
             requireFullCandidatePool = requireFullCandidatePool,
             recordStages = recordStages,
             narrowingStrength = if (mode == LottoGenerationMode.PRECISE && recentPriorDraws == 64.0) 0.5 else 1.0,
+            patternModel = patternModel,
         )
     }
 
@@ -169,6 +176,8 @@ object LottoNumberGenerator {
         mode: LottoGenerationMode = LottoGenerationMode.BASIC,
         seed: Long = random.nextLong(),
         historyThroughRound: Int = history.size,
+        patternModel: LotteryPatternModel = LotteryPatternModel(),
+        recordStages: ((Map<String, Any?>) -> Unit)? = null,
     ): List<LottoGeneratedTicket> {
         if (history.isEmpty()) return emptyList()
 
@@ -206,6 +215,9 @@ object LottoNumberGenerator {
             strategy = CoverageStrategy.DIVERSIFIED,
             featureBuilder = { numbers -> scoreCandidate(numbers, trendProfile, lastDraw, CoverageStrategy.DIVERSIFIED).featureSnapshotJson },
             generationSeed = seed,
+            patternModel = patternModel,
+            recordStages = recordStages,
+            requireFullCandidatePool = recordStages != null,
         )
     }
 
@@ -501,6 +513,7 @@ object LottoNumberGenerator {
         featureBuilder: (List<Int>) -> String? = { null },
         recordStages: ((Map<String, Any?>) -> Unit)? = null,
         narrowingStrength: Double = 1.0,
+        patternModel: LotteryPatternModel = LotteryPatternModel(),
     ): List<LottoGeneratedTicket> {
         val candidates = linkedSetOf<List<Int>>()
         val maxAttempts = mode.candidatePoolSize * 20
@@ -517,10 +530,13 @@ object LottoNumberGenerator {
         require(!requireFullCandidatePool || candidates.size == mode.candidatePoolSize) {
             "설계용 후보 생성 실패: 시드=$generationSeed, 후보 수=${candidates.size}, 필요=${mode.candidatePoolSize}"
         }
-        val scored = candidates
-            .map { numbers -> ScoredCandidate(numbers = numbers, score = scorer(numbers)) }
-            .sortedByDescending { candidate -> candidate.score.totalScore }
-            .take(mode.finalistPoolSize)
+        val allScored = candidates.map { numbers ->
+            val base = scorer(numbers)
+            ScoredCandidate(numbers, base.copy(totalScore = (base.totalScore +
+                patternModel.adjustment(numbers.joinToString(","), lotto = true)).coerceIn(0.0, 100.0)))
+        }
+        val ordered = allScored.sortedByDescending { it.score.totalScore }
+        val scored = ordered.take(mode.finalistPoolSize)
 
         val selected = pickDiverseTopGames(scored, gameCount, strategy, narrowingStrength)
         require(recordStages == null || selected.size == gameCount) { "단계 평가의 전체 게임 수를 확보하지 못했습니다." }
@@ -528,7 +544,25 @@ object LottoNumberGenerator {
             val pool = candidates.toList()
             val ids = pool.withIndex().associate { it.value to it.index }
             recordStages(mapOf("pool" to pool.map { it.joinToString(",") },
+                "mode" to mode.name, "strategy" to strategy.name, "narrowingStrength" to narrowingStrength,
                 "ranked" to scored.map { ids.getValue(it.numbers) }, "scores" to scored.map { it.score.totalScore },
+                "allScores" to allScored.map { candidate -> candidate.score.let { score ->
+                    listOf(score.totalScore, score.dataScore, score.patternScore, score.distributionScore,
+                        score.avoidanceScore, score.previousDrawOverlapPenalty,
+                        patternModel.adjustment(candidate.numbers.joinToString(","), lotto = true)) } },
+                "scoreColumns" to listOf("종합", "데이터", "패턴", "분산", "공동당첨 회피", "직전 중복 감점", "반복 패턴 보정"),
+                "order" to ordered.map { ids.getValue(it.numbers) },
+                "selectionReasons" to scored.associate { candidate ->
+                    val picked = selected.map { it.numbers }
+                    val overlaps = picked.filter { it != candidate.numbers }.map { it.intersect(candidate.numbers.toSet()).size }
+                    val uses = picked.flatten().groupingBy { it }.eachCount()
+                    ids.getValue(candidate.numbers).toString() to when {
+                        candidate in selected -> "SELECTED"
+                        overlaps.any { it > (strategy.maximumPairwiseOverlap ?: 6) } -> "PAIR_OVERLAP"
+                        candidate.numbers.any { (uses[it] ?: 0) >= maxOf(2, (gameCount * pickCount + maxNumber - 1) / maxNumber) } -> "NUMBER_REUSE"
+                        else -> "DIVERSITY_ADJUSTED_SCORE"
+                    }
+                },
                 "selected" to selected.map { ids.getValue(it.numbers) }, "attempts" to attempt))
         }
         return selected.map { candidate ->
@@ -538,7 +572,12 @@ object LottoNumberGenerator {
                 score = candidate.score.toAnalysisScore(),
                 generationMode = mode.name,
                 generationSeed = generationSeed,
-                featureSnapshotJson = candidate.score.featureSnapshotJson ?: featureBuilder(candidate.numbers),
+                featureSnapshotJson = (candidate.score.featureSnapshotJson ?: featureBuilder(candidate.numbers)).let { original ->
+                    if (patternModel.throughRound == 0) original else org.json.JSONObject(original ?: "{}")
+                        .put("patternModel", org.json.JSONObject(patternModel.json()))
+                        .put("patternAdjustment", patternModel.adjustment(candidate.numbers.joinToString(","), lotto = true))
+                        .put("adjustedTotalScore", candidate.score.totalScore).toString()
+                },
             )
         }
     }
