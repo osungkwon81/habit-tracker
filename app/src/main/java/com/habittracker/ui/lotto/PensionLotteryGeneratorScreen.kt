@@ -37,7 +37,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.habittracker.R
 import com.habittracker.ui.components.AppEmptyCard
 import com.habittracker.ui.components.AppConfirmDialog
-import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
@@ -47,8 +46,7 @@ import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppLoadingCard
 import com.habittracker.ui.components.AppSupportText
-import com.habittracker.ui.components.AppMenuGroup
-import com.habittracker.ui.components.AppSectionNavigation
+import com.habittracker.ui.navigation.AppDestination
 import com.habittracker.ui.components.LocalAppNavigationGuard
 import java.time.format.DateTimeFormatter
 
@@ -57,7 +55,7 @@ private val PensionGenerationTimeFormatter = DateTimeFormatter.ofPattern("yyyy.M
 @Composable
 fun PensionLotteryGeneratorScreen(
     viewModel: PensionLotteryGeneratorViewModel,
-    onBack: () -> Unit,
+    onOpenDestination: (AppDestination) -> Unit,
     initialSection: String = "NUMBERS",
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -105,23 +103,25 @@ fun PensionLotteryGeneratorScreen(
 
     AppScreen {
         item {
-            AppHeroCard(
-                title = "연금 추천 번호",
-                description = "번호 생성·저장 이력·자동 개선을 관리합니다.",
-                status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
+            LotteryScreenHeader(
+                lottery = AppDestination.PENSION_LOTTO,
+                latestRoundNo = uiState.latestRoundNo,
             )
         }
         item {
-            AppSectionNavigation(
-                title = "연금복권",
-                groups = listOf(
-                    AppMenuGroup("추천 번호", listOf("NUMBERS" to "번호 생성", "HISTORY" to "저장 이력", "IMPROVEMENT" to "자동 개선")),
-                    AppMenuGroup("복권 관리", listOf("MANAGEMENT" to "구입·당첨·추첨 결과")),
-                ),
-                selectedKey = section,
-                onSelect = { key ->
-                    if (key == "MANAGEMENT") onBack() else {
-                        section = key
+            LotterySectionNavigation(
+                lottery = AppDestination.PENSION_LOTTO,
+                selected = when (section) {
+                    "HISTORY" -> AppDestination.PENSION_LOTTO_SAVED
+                    "IMPROVEMENT" -> AppDestination.PENSION_LOTTO_IMPROVEMENT
+                    else -> AppDestination.PENSION_LOTTO_GENERATOR
+                },
+                onSelect = { destination ->
+                    when (destination) {
+                        AppDestination.PENSION_LOTTO_GENERATOR -> section = "NUMBERS"
+                        AppDestination.PENSION_LOTTO_SAVED -> section = "HISTORY"
+                        AppDestination.PENSION_LOTTO_IMPROVEMENT -> section = "IMPROVEMENT"
+                        else -> onOpenDestination(destination)
                     }
                 },
             )
@@ -155,26 +155,27 @@ fun PensionLotteryGeneratorScreen(
             }
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    PensionLotteryNumberPattern.entries.forEach { pattern ->
-                        val isSelected = selectedGenerationPattern == pattern.name
-                        val label = if (pattern == PensionLotteryNumberPattern.APPEARED) "출현형" else "미출현"
-                        val onGenerate = {
-                            selectedGenerationPattern = pattern.name
-                            viewModel.generate(pattern)
+            AppSectionCard {
+                Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AppSectionHeader(title = "번호 생성")
+                    AppSupportText("한 번 누르면 1개 생성 · 1~5조 동일 번호 구매")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        PensionLotteryNumberPattern.entries.forEach { pattern ->
+                            val isSelected = selectedGenerationPattern == pattern.name
+                            val label = if (pattern == PensionLotteryNumberPattern.APPEARED) "출현형 생성" else "미출현 혼합형 생성"
+                            val onGenerate = {
+                                selectedGenerationPattern = pattern.name
+                                viewModel.generate(pattern)
+                            }
+                            val buttonModifier = Modifier.weight(1f).semantics { selected = isSelected }
+                            val enabled = uiState.canGenerate && !uiState.isGenerating && !uiState.isSaving
+                            if (isSelected) AppPrimaryButton(label, onGenerate, modifier = buttonModifier, enabled = enabled)
+                            else AppSecondaryButton(label, onGenerate, modifier = buttonModifier, enabled = enabled)
                         }
-                        val buttonModifier = Modifier.weight(1f).semantics { selected = isSelected }
-                        val enabled = uiState.canGenerate && !uiState.isGenerating && !uiState.isSaving
-                        if (isSelected) AppPrimaryButton(label, onGenerate, modifier = buttonModifier, enabled = enabled)
-                        else AppSecondaryButton(label, onGenerate, modifier = buttonModifier, enabled = enabled)
                     }
+                    if (uiState.isGenerating) AppLoadingCard("번호를 생성하고 있습니다.")
+                    else if (uiState.isSaving) AppLoadingCard("저장 내용을 반영하고 있습니다.")
                 }
-                AppSupportText(when {
-                    uiState.isGenerating -> "번호를 생성하고 있습니다."
-                    uiState.isSaving -> "저장 내용을 반영하고 있습니다."
-                    else -> "한 번 누르면 1개 생성 · 1~5조 동일 번호 구매"
-                })
             }
         }
         if (uiState.generatedNumbers.isEmpty() && uiState.currentRoundHistory == null) {

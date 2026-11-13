@@ -147,7 +147,10 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
     val snackbar = remember { SnackbarHostState() }
     val guard = remember { AppNavigationGuard() }
     androidx.compose.runtime.LaunchedEffect(notificationAccount) {
-        if (!notificationAccount.isNullOrBlank()) navController.navigate(AppDestination.GOOGLE_BALANCE.route) { launchSingleTop = true }
+        if (!notificationAccount.isNullOrBlank()) {
+            navController.navigate(AppDestination.GOOGLE_BALANCE.route) { launchSingleTop = true }
+            navController.navigate(AppDestination.GOOGLE_BALANCE_ACCOUNT.route.replace("{accountId}", android.net.Uri.encode(notificationAccount))) { launchSingleTop = true }
+        }
     }
     val activity = LocalContext.current as? ComponentActivity
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -348,7 +351,6 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
                 }
             }
             listOf(
-                AppDestination.PENSION_LOTTO to null,
                 AppDestination.PENSION_LOTTO_PURCHASE to PensionLotteryTab.PURCHASE,
                 AppDestination.PENSION_LOTTO_WINNING to PensionLotteryTab.WINNING,
                 AppDestination.PENSION_LOTTO_DRAW to PensionLotteryTab.INPUT,
@@ -361,12 +363,13 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
                     PensionLotteryScreen(
                         viewModel = viewModel,
                         onBackToLotteryHome = { navController.popBackStack() },
-                        onOpenGenerator = { navController.navigate(AppDestination.PENSION_LOTTO_GENERATOR.route) },
+                        onOpenDestination = { target -> navController.navigate(target.route) { launchSingleTop = true } },
                         initialTab = initialTab,
                     )
                 }
             }
             listOf(
+                AppDestination.PENSION_LOTTO to "NUMBERS",
                 AppDestination.PENSION_LOTTO_GENERATOR to "NUMBERS",
                 AppDestination.PENSION_LOTTO_SAVED to "HISTORY",
                 AppDestination.PENSION_LOTTO_IMPROVEMENT to "IMPROVEMENT",
@@ -375,7 +378,7 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
                     val viewModel: PensionLotteryGeneratorViewModel = viewModel(factory = viewModelFactory)
                     PensionLotteryGeneratorScreen(
                         viewModel = viewModel,
-                        onBack = { navController.navigate(AppDestination.PENSION_LOTTO.route) { launchSingleTop = true } },
+                        onOpenDestination = { target -> navController.navigate(target.route) { launchSingleTop = true } },
                         initialSection = initialSection,
                     )
                 }
@@ -464,10 +467,16 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
             }
             composable(AppDestination.GOOGLE_BALANCE.route) {
                 val viewModel: com.habittracker.ui.notification.PersonalAlertsViewModel = viewModel(factory = viewModelFactory)
-                androidx.compose.runtime.LaunchedEffect(notificationAccount) {
-                    if (!notificationAccount.isNullOrBlank()) viewModel.select(notificationAccount)
-                }
-                com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = true)
+                com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = true, onOpenAccount = { accountId ->
+                    navController.navigate(AppDestination.GOOGLE_BALANCE_ACCOUNT.route.replace("{accountId}", android.net.Uri.encode(accountId))) { launchSingleTop = true }
+                })
+            }
+            composable(
+                AppDestination.GOOGLE_BALANCE_ACCOUNT.route,
+                arguments = listOf(androidx.navigation.navArgument("accountId") { type = androidx.navigation.NavType.StringType }),
+            ) {
+                val viewModel: com.habittracker.ui.notification.PersonalAlertsViewModel = viewModel(factory = viewModelFactory)
+                com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = true, accountDetails = true)
             }
             composable(AppDestination.HOUSEHOLD_PRICES.route) {
                 val viewModel: com.habittracker.ui.household.HouseholdPriceViewModel = viewModel(factory = viewModelFactory)
@@ -551,9 +560,20 @@ private fun MenuTreeNode(
                 }.padding(start = AppSpacing.xs),
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.xs),
             ) {
-                children.forEach { child ->
-                    androidx.compose.runtime.key(child.route) {
-                        MenuTreeNode(destination = child, onOpen = onOpen, showIcon = false)
+                if (destination.childGroups.isNotEmpty()) {
+                    destination.childGroups.forEach { (title, destinations) ->
+                        com.habittracker.ui.components.AppSectionHeader(title = title)
+                        destinations.forEach { child ->
+                            androidx.compose.runtime.key(child.route) {
+                                MenuTreeNode(destination = child, onOpen = onOpen, showIcon = false)
+                            }
+                        }
+                    }
+                } else {
+                    children.forEach { child ->
+                        androidx.compose.runtime.key(child.route) {
+                            MenuTreeNode(destination = child, onOpen = onOpen, showIcon = false)
+                        }
                     }
                 }
             }

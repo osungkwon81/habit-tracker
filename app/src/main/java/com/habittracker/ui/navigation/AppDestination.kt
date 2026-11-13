@@ -34,7 +34,7 @@ enum class AppDestination(
     LOTTO_DRAW("lotto/645/draws", "추첨 결과"),
     LOTTO_STATS("lotto/645/stats", "손익·성과"),
     LOTTO_IMPROVEMENT("lotto/645/improvement", "자동 개선"),
-    PENSION_LOTTO("lotto/pension", "연금720+"),
+    PENSION_LOTTO("lotto/pension", "연금복권 720+"),
     PENSION_LOTTO_GENERATOR("lotto/pension/generator", "번호 생성"),
     PENSION_LOTTO_SAVED("lotto/pension/saved", "저장 번호"),
     PENSION_LOTTO_PURCHASE("lotto/pension/purchases", "구입 이력"),
@@ -53,6 +53,7 @@ enum class AppDestination(
     EXCHANGE_EXPENSES("exchange/expenses", "외화 지출"),
     EXCHANGE_COLLECTION_SETTINGS("exchange/collection-settings", "환율 수집 설정"),
     GOOGLE_BALANCE("google-balance", "구글 잔액 관리"),
+    GOOGLE_BALANCE_ACCOUNT("google-balance/account/{accountId}", "계정 상세"),
     HOUSEHOLD_PRICES("household-prices", "생활용품 가격 기록"),
     NOTIFICATION_ASSISTANT("notification-assistant", "뽐뿌 알림"),
     NOTIFICATION_ASSISTANT_APPS("notification-assistant/apps", "알림 체크 앱"),
@@ -80,13 +81,30 @@ enum class AppDestination(
             PENSION_LOTTO_WINNING, PENSION_LOTTO_DRAW, PENSION_LOTTO_MATCH,
             PENSION_LOTTO_PATTERN, PENSION_LOTTO_STATS, PENSION_LOTTO_IMPROVEMENT -> PENSION_LOTTO
             EXCHANGE_RECORDS, EXCHANGE_EXPENSES, EXCHANGE_COLLECTION_SETTINGS -> EXCHANGE
+            GOOGLE_BALANCE_ACCOUNT -> GOOGLE_BALANCE
             NOTIFICATION_ASSISTANT_APPS, NOTIFICATION_ASSISTANT_ACTIVE,
             NOTIFICATION_ASSISTANT_TASKS -> NOTIFICATION_ASSISTANT
             else -> null
         }
 
+    val childGroups: List<Pair<String, List<AppDestination>>>
+        get() = when (this) {
+            LOTTO_645 -> listOf(
+                "번호" to listOf(LOTTO_GENERATOR, LOTTO_SAVED),
+                "내 복권" to listOf(LOTTO_PURCHASE, LOTTO_WINNING, LOTTO_QR),
+                "결과·분석" to listOf(LOTTO_DRAW, LOTTO_STATS, LOTTO_IMPROVEMENT),
+            )
+            PENSION_LOTTO -> listOf(
+                "번호" to listOf(PENSION_LOTTO_GENERATOR, PENSION_LOTTO_SAVED),
+                "내 복권" to listOf(PENSION_LOTTO_PURCHASE, PENSION_LOTTO_WINNING),
+                "결과·분석" to listOf(PENSION_LOTTO_DRAW, PENSION_LOTTO_MATCH, PENSION_LOTTO_PATTERN, PENSION_LOTTO_STATS, PENSION_LOTTO_IMPROVEMENT),
+            )
+            else -> emptyList()
+        }
+
     val children: List<AppDestination>
-        get() = entries.filter { it.parent == this && it !in listOf(NOTIFICATION_ASSISTANT_APPS, NOTIFICATION_ASSISTANT_ACTIVE, NOTIFICATION_ASSISTANT_TASKS) }
+        get() = if (childGroups.isNotEmpty()) childGroups.flatMap { it.second }
+        else entries.filter { it.parent == this && it !in listOf(GOOGLE_BALANCE_ACCOUNT, NOTIFICATION_ASSISTANT_APPS, NOTIFICATION_ASSISTANT_ACTIVE, NOTIFICATION_ASSISTANT_TASKS) }
 
     val homeLabel: String
         get() = parent?.let { "${it.label} · $label" } ?: label

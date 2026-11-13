@@ -59,15 +59,13 @@ import com.habittracker.data.local.model.LottoPeriodStatRow
 import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppEmptyCard
-import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppSaveButton
 import com.habittracker.ui.components.AppScreen
 import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
-import com.habittracker.ui.components.AppMenuGroup
-import com.habittracker.ui.components.AppSectionNavigation
+import com.habittracker.ui.navigation.AppDestination
 import com.habittracker.ui.components.AppStatusText
 import java.time.Instant
 import java.time.LocalDate
@@ -88,7 +86,7 @@ private val PensionPositionColors = listOf(
 fun PensionLotteryScreen(
     viewModel: PensionLotteryViewModel,
     onBackToLotteryHome: () -> Unit,
-    onOpenGenerator: () -> Unit,
+    onOpenDestination: (AppDestination) -> Unit,
     initialTab: PensionLotteryTab? = null,
 ) {
     androidx.compose.runtime.LaunchedEffect(viewModel, initialTab) {
@@ -103,17 +101,16 @@ fun PensionLotteryScreen(
 
     AppScreen {
         item {
-            AppHeroCard(
-                title = "연금복권 720+",
-                description = "번호 분석과 구입·당첨 이력, 손익 통계를 관리합니다.",
-                status = "최신 저장 ${uiState.latestRoundNo ?: "-"}회",
+            LotteryScreenHeader(
+                lottery = AppDestination.PENSION_LOTTO,
+                latestRoundNo = uiState.latestRoundNo,
             )
         }
         item {
             PensionLotteryTabSelector(
                 selectedTab = uiState.selectedTab,
                 onSelect = viewModel::selectTab,
-                onOpenGenerator = onOpenGenerator,
+                onOpenDestination = onOpenDestination,
             )
         }
 
@@ -297,17 +294,25 @@ fun PensionLotteryScreen(
 private fun PensionLotteryTabSelector(
     selectedTab: PensionLotteryTab,
     onSelect: (PensionLotteryTab) -> Unit,
-    onOpenGenerator: () -> Unit,
+    onOpenDestination: (AppDestination) -> Unit,
 ) {
-    AppSectionNavigation(
-        title = "연금복권",
-        groups = listOf(
-            AppMenuGroup("추천 번호", listOf("GENERATOR" to "생성·저장·자동 개선")),
-            AppMenuGroup("내 복권", listOf(PensionLotteryTab.PURCHASE.name to "구입 이력", PensionLotteryTab.WINNING.name to "당첨 이력", PensionLotteryTab.ACCOUNTING_STATS.name to "손익")),
-            AppMenuGroup("추첨·분석", listOf(PensionLotteryTab.INPUT.name to "추첨 결과", PensionLotteryTab.MATCH.name to "번호 조회", PensionLotteryTab.STATS.name to "패턴 통계")),
-        ),
-        selectedKey = if (selectedTab == PensionLotteryTab.SCORE) PensionLotteryTab.STATS.name else selectedTab.name,
-        onSelect = { key -> if (key == "GENERATOR") onOpenGenerator() else onSelect(PensionLotteryTab.valueOf(key)) },
+    val destinations = remember {
+        mapOf(
+            PensionLotteryTab.PURCHASE to AppDestination.PENSION_LOTTO_PURCHASE,
+            PensionLotteryTab.WINNING to AppDestination.PENSION_LOTTO_WINNING,
+            PensionLotteryTab.ACCOUNTING_STATS to AppDestination.PENSION_LOTTO_STATS,
+            PensionLotteryTab.INPUT to AppDestination.PENSION_LOTTO_DRAW,
+            PensionLotteryTab.MATCH to AppDestination.PENSION_LOTTO_MATCH,
+            PensionLotteryTab.STATS to AppDestination.PENSION_LOTTO_PATTERN,
+        )
+    }
+    LotterySectionNavigation(
+        lottery = AppDestination.PENSION_LOTTO,
+        selected = destinations.getValue(if (selectedTab == PensionLotteryTab.SCORE) PensionLotteryTab.STATS else selectedTab),
+        onSelect = { destination ->
+            val tab = destinations.entries.firstOrNull { it.value == destination }?.key
+            if (tab != null) onSelect(tab) else onOpenDestination(destination)
+        },
     )
 }
 

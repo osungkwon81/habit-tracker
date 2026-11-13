@@ -171,6 +171,12 @@ fun HouseholdPriceScreen(vm: HouseholdPriceViewModel) {
     val raw by vm.draft.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    val matchingProducts = remember(state.rows, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) state.rows
+        else state.rows.filter { it.history.product.name.contains(query, ignoreCase = true) }
+    }
     val row = state.rows.find { it.history.product.id == selected }
     val guard = LocalAppNavigationGuard.current
     SideEffect { guard.hasUnsavedChanges = vm.dirty }
@@ -189,10 +195,23 @@ fun HouseholdPriceScreen(vm: HouseholdPriceViewModel) {
         if (!state.loaded) {
             item { if (state.issue != null) { Text(state.issue!!); AppSecondaryButton("다시 불러오기", onClick = vm::refresh) } else AppLoadingCard("구매 기록을 불러오고 있습니다.") }
         } else if (row == null) {
+            item {
+                AppTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = "제품 검색",
+                    supportingText = "등록된 제품명 일부로 검색할 수 있습니다.",
+                    singleLine = true,
+                    trailingContent = {
+                        if (searchQuery.isNotEmpty()) TextButton(onClick = { searchQuery = "" }) { Text("지우기") }
+                    },
+                )
+            }
             item { AppPrimaryButton("제품 등록", onClick = { vm.editProduct() }) }
             if (state.rows.isEmpty()) item { AppEmptyCard("제품을 등록하고 첫 구매 가격을 남겨보세요.") }
+            else if (matchingProducts.isEmpty()) item { AppEmptyCard("검색 결과가 없습니다.") }
             else item { AppTableRow(listOf("제품", "구매 가격"), header = true, trailingContent = { Text("기록") }) }
-            items(state.rows, key = { it.history.product.id }) { summary ->
+            items(matchingProducts, key = { it.history.product.id }) { summary ->
                 val latest = summary.latest
                 AppTableRow(listOf(summary.history.product.name, if (latest == null) "구매 기록 없음" else
                     "최근 ${money(householdPrice(latest))}\n최저 ${money(householdPrice(requireNotNull(summary.cheapest)))}\n${latest.unit}당"),

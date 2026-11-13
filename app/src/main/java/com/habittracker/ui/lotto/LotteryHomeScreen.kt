@@ -24,6 +24,10 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSupportText
+import com.habittracker.ui.components.AppMenuGroup
+import com.habittracker.ui.components.AppSectionNavigation
+import com.habittracker.ui.components.LocalAppNavigationGuard
+import com.habittracker.ui.navigation.AppDestination
 import kotlinx.coroutines.delay
 
 @Composable
@@ -76,7 +80,7 @@ fun LotteryHomeScreen(
                     )
                     AppNavigationRow(
                         title = "연금복권 720+",
-                        subtitle = "추천 번호 · 구입 내역 · 당첨 확인",
+                        subtitle = "번호 생성 · 구입 내역 · 추첨 결과",
                         onClick = onOpenPensionLottery,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -102,4 +106,38 @@ fun LotteryHomeScreen(
             }
         }
     }
+}
+
+@Composable
+internal fun LotteryScreenHeader(
+    lottery: AppDestination,
+    latestRoundNo: Int?,
+    nextRoundNo: Int? = latestRoundNo?.plus(1),
+) {
+    AppHeroCard(
+        title = lottery.label,
+        description = "번호 생성과 구입·추첨 이력을 관리합니다.",
+        status = "최근 ${latestRoundNo ?: "-"}회 · 다음 ${nextRoundNo ?: "-"}회",
+    )
+}
+
+@Composable
+internal fun LotterySectionNavigation(
+    lottery: AppDestination,
+    selected: AppDestination,
+    onSelect: (AppDestination) -> Unit,
+) {
+    val guard = LocalAppNavigationGuard.current
+    val groups = remember(lottery) { lottery.childGroups }
+    AppSectionNavigation(
+        title = lottery.label,
+        groups = groups.map { (title, destinations) ->
+            AppMenuGroup(title, destinations.map { it.route to it.label })
+        },
+        selectedKey = selected.route,
+        onSelect = { route ->
+            val destination = groups.asSequence().flatMap { it.second.asSequence() }.first { it.route == route }
+            if (destination != selected) guard.navigate { onSelect(destination) }
+        },
+    )
 }

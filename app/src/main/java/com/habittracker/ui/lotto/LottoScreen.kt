@@ -64,7 +64,6 @@ import com.habittracker.data.lotto.LottoScorePerformance
 import com.habittracker.ui.digitsOnly
 import com.habittracker.ui.components.AppActionNotice
 import com.habittracker.ui.components.AppEmptyCard
-import com.habittracker.ui.components.AppHeroCard
 import com.habittracker.ui.components.AppLoadingCard
 import com.habittracker.ui.components.AppPrimaryButton
 import com.habittracker.ui.components.AppSaveButton
@@ -73,8 +72,7 @@ import com.habittracker.ui.components.AppSectionCard
 import com.habittracker.ui.components.AppSectionHeader
 import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSelectableChip
-import com.habittracker.ui.components.AppMenuGroup
-import com.habittracker.ui.components.AppSectionNavigation
+import com.habittracker.ui.navigation.AppDestination
 import com.habittracker.ui.components.AppStatusText
 import com.habittracker.ui.components.AppSupportText
 import java.text.NumberFormat
@@ -137,10 +135,10 @@ fun LottoScreen(
 
     AppScreen {
         item {
-            AppHeroCard(
-                title = "로또 6/45",
-                description = "번호 생성과 구입·추첨 이력을 관리합니다.",
-                status = "최근 ${uiState.latestSavedRoundNo ?: "-"}회 · 다음 ${uiState.nextRoundNo ?: "-"}회",
+            LotteryScreenHeader(
+                lottery = AppDestination.LOTTO_645,
+                latestRoundNo = uiState.latestSavedRoundNo,
+                nextRoundNo = uiState.nextRoundNo,
             )
         }
         item { LottoNavigation(uiState.selectedTab, viewModel) }
@@ -378,15 +376,22 @@ private fun LottoNavigation(selected: LottoTab, viewModel: LottoViewModel) {
         LottoTab.STATS -> viewModel.selectStatsTab()
         LottoTab.EXPERIMENT -> viewModel.selectExperimentTab()
     }
-    AppSectionNavigation(
-        title = "로또",
-        groups = listOf(
-            AppMenuGroup("번호", listOf(LottoTab.GENERATOR.name to "번호 생성", LottoTab.SAVED.name to "저장 번호")),
-            AppMenuGroup("내 복권", listOf(LottoTab.PHYSICAL_QR.name to "QR 복권", LottoTab.PURCHASE.name to "구입 이력", LottoTab.WINNING.name to "당첨 이력")),
-            AppMenuGroup("결과·개선", listOf(LottoTab.DRAW.name to "추첨 결과", LottoTab.STATS.name to "손익·성과", LottoTab.EXPERIMENT.name to "자동 개선")),
-        ),
-        selectedKey = selected.name,
-        onSelect = { select(LottoTab.valueOf(it)) },
+    val destinations = remember {
+        mapOf(
+            LottoTab.GENERATOR to AppDestination.LOTTO_GENERATOR,
+            LottoTab.SAVED to AppDestination.LOTTO_SAVED,
+            LottoTab.PHYSICAL_QR to AppDestination.LOTTO_QR,
+            LottoTab.PURCHASE to AppDestination.LOTTO_PURCHASE,
+            LottoTab.WINNING to AppDestination.LOTTO_WINNING,
+            LottoTab.DRAW to AppDestination.LOTTO_DRAW,
+            LottoTab.STATS to AppDestination.LOTTO_STATS,
+            LottoTab.EXPERIMENT to AppDestination.LOTTO_IMPROVEMENT,
+        )
+    }
+    LotterySectionNavigation(
+        lottery = AppDestination.LOTTO_645,
+        selected = destinations.getValue(selected),
+        onSelect = { destination -> select(destinations.entries.first { it.value == destination }.key) },
     )
 }
 

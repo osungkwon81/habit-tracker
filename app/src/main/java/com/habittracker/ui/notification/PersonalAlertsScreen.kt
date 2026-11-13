@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -35,9 +36,10 @@ class PersonalAlertsViewModel(private val store: PersonalAlerts, private val sav
     val snapshot = store.snapshot
     val message = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val busy = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isMutating = kotlinx.coroutines.flow.MutableStateFlow(false)
     val loadIssue = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val errors = kotlinx.coroutines.flow.MutableStateFlow<Map<String, String>>(emptyMap())
-    val selected = saved.getStateFlow("selected", "")
+    val selected = saved.getStateFlow("selected", saved.get<String>("accountId").orEmpty())
     fun select(id: String) { if (!busy.value) { clearDraft(); saved["selected"] = id } }
     fun clearDraft() { listOf("keyword", "accountName", "balance", "expenseName", "expenseAmount", "billId", "billName", "billAmount", "day", "advance").forEach { set(it, "") }; saved["draftBaseline"] = "" }
     private val draftKeys = listOf("keyword", "accountName", "balance", "expenseName", "expenseAmount", "billName", "billAmount", "day", "advance")
@@ -49,15 +51,16 @@ class PersonalAlertsViewModel(private val store: PersonalAlerts, private val sav
     fun text(key: String): String = saved[key] ?: ""
     fun set(key: String, value: String) { saved[key] = value; errors.value = errors.value - key }
     init { refresh() }
-    fun refresh() = operation {
+    fun refresh() = operation(isRefresh = true) {
         loadIssue.value = null
         val data = store.load()
         if (selected.value.isEmpty()) data.getJSONArray("accounts").objects().firstOrNull()?.let { saved["selected"] = it.getString("id") }
         store.schedule()
         store.chargeDueBills()
     }
-    private fun operation(action: suspend () -> Unit) {
+    private fun operation(isRefresh: Boolean = false, action: suspend () -> Unit) {
         if (busy.value) return
+        isMutating.value = !isRefresh
         busy.value = true
         viewModelScope.launch {
             try { action() }
@@ -65,10 +68,13 @@ class PersonalAlertsViewModel(private val store: PersonalAlerts, private val sav
             catch (error: Exception) {
                 android.util.Log.e("PersonalAlerts", "phase=user-operation failed", error)
                 message.value = error.message ?: "저장 정보를 확인해 주세요."
-                errors.value = draftKeys.filter { error.message?.startsWith(label(it)) == true }
+                if (!isRefresh) errors.value = draftKeys.filter { error.message?.startsWith(label(it)) == true }
                     .associateWith { error.message.orEmpty() }
                 if (snapshot.value == null) loadIssue.value = "저장 정보를 불러오지 못했습니다."
-            } finally { busy.value = false }
+            } finally {
+                busy.value = false
+                isMutating.value = false
+            }
         }
     }
     private fun name(key: String) = text(key).trim().also { require(it.isNotEmpty() && it.length <= 100) { "${label(key)}: 1~100자로 입력해 주세요." } }
@@ -173,11 +179,17 @@ private fun label(key: String) = when (key) {
 private fun alertMoney(value: Long): String = java.text.NumberFormat.getIntegerInstance(java.util.Locale.KOREA).format(value) + "원"
 
 @Composable
-fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
+fun PersonalAlertsScreen(
+    viewModel: PersonalAlertsViewModel,
+    google: Boolean,
+    accountDetails: Boolean = false,
+    onOpenAccount: ((String) -> Unit)? = null,
+) {
     val raw by viewModel.snapshot.collectAsStateWithLifecycle()
     val selected by viewModel.selected.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val isMutating by viewModel.isMutating.collectAsStateWithLifecycle()
     val loadIssue by viewModel.loadIssue.collectAsStateWithLifecycle()
     val errors by viewModel.errors.collectAsStateWithLifecycle()
     val data = remember(raw) { raw?.let(::JSONObject) }
@@ -229,7 +241,7 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
         AppScreen(bottomBar = {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 AppSecondaryButton(text = "취소", enabled = !busy, modifier = Modifier.weight(1f), onClick = { guard.navigate { viewModel.clearDraft(); editor = "" } })
-                AppPrimaryButton(text = if (busy) "저장 중" else "저장", enabled = !busy, modifier = Modifier.weight(1f), onClick = { viewModel.save(editor) })
+                AppPrimaryButton(text = if (isMutating) "저장 중" else "저장", enabled = !busy, modifier = Modifier.weight(1f), onClick = { viewModel.save(editor) })
             }
         }) {
             item { AppHeroCard(title = when (editor) { "account" -> "계정 등록"; "balance" -> "잔액 수정"; "expense" -> "사용 기록"; else -> "정기결제" }, description = "") }
@@ -258,7 +270,9 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
         data?.let { com.habittracker.data.upcomingBills(it, selected, LocalDate.now(java.time.ZoneId.of("Asia/Seoul"))) }.orEmpty()
     }
     AppScreen {
-        item { AppHeroCard(title = if (google) "구글 잔액" else "뽐뿌 알림", description = "") }
+        item { AppHeroCard(title = if (google) {
+            if (accountDetails) "계정 상세" else "구글 잔액 관리"
+        } else "뽐뿌 알림", description = "") }
         if (!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled() || channelBlocked) item {
             AppSupportText(if (channelBlocked) "이 기능의 알림이 차단되어 있습니다." else "알림을 허용해 주세요.")
             AppSecondaryButton(text = "알림 권한 설정", onClick = {
@@ -289,30 +303,36 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
                     TextButton(enabled = !busy, onClick = { deleting = "keywords" to keyword }) { Text("삭제") }
                 })
             } }
-        } else {
+        } else if (!accountDetails) {
             if (data.getJSONArray("accounts").length() == 0) item { AppEmptyCard("관리할 구글 계정을 등록해 주세요.") }
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("계정", style = MaterialTheme.typography.titleMedium)
-                    AppSecondaryButton(text = "계정 추가", enabled = !busy, compact = true, onClick = { editor = "account" })
+                    AppSecondaryButton(text = "계정 추가", enabled = !isMutating, compact = true, onClick = { editor = "account" })
                 }
             }
-            if (data.getJSONArray("accounts").length() > 0) item { AppTableRow(listOf("계정", "잔액"), header = true, trailingContent = { Text("선택") }) }
+            if (data.getJSONArray("accounts").length() > 0) item { AppTableRow(listOf("계정", "잔액"), header = true, trailingContent = { Text("내역") }) }
             data.getJSONArray("accounts").objects().forEach { account -> item(key = account.getString("id")) {
-                AppTableRow(listOf(account.getString("name"), alertMoney(account.getLong("balance"))), trailingContent = {
-                    if (account.getString("id") == selected) Text("선택됨", color = MaterialTheme.colorScheme.primary)
-                    else TextButton(enabled = !busy, onClick = { guard.navigate { viewModel.select(account.getString("id")) } }) { Text("조회") }
+                AppTableRow(listOf(account.getString("name"), alertMoney(account.getLong("balance"))),
+                    modifier = Modifier.sizeIn(minHeight = 48.dp).clickable(
+                        enabled = !busy && onOpenAccount != null,
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClickLabel = "계정 내역 보기",
+                    ) { guard.navigate { onOpenAccount?.invoke(account.getString("id")) } }, trailingContent = {
+                    Text("내역 보기 ›", color = MaterialTheme.colorScheme.primary)
                 })
             } }
+        } else {
             val account = data.getJSONArray("accounts").objects().find { it.getString("id") == selected }
+            if (account == null) item { AppEmptyCard("계정이 없거나 삭제되었습니다.") }
             if (account != null) {
                 item {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         AppSectionHeader(title = account.getString("name"))
                         Text(alertMoney(account.getLong("balance")), modifier = Modifier.align(Alignment.End), style = MaterialTheme.typography.headlineMedium)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            AppSecondaryButton(text = "잔액 수정", enabled = !busy, modifier = Modifier.weight(1f), onClick = { viewModel.set("balance", account.getLong("balance").toString()); viewModel.captureDraft(); editor = "balance" })
-                            AppPrimaryButton(text = "사용 기록", enabled = !busy, modifier = Modifier.weight(1f), onClick = { editor = "expense" })
+                            AppSecondaryButton(text = "잔액 수정", enabled = !isMutating, modifier = Modifier.weight(1f), onClick = { viewModel.set("balance", account.getLong("balance").toString()); viewModel.captureDraft(); editor = "balance" })
+                            AppPrimaryButton(text = "사용 기록", enabled = !isMutating, modifier = Modifier.weight(1f), onClick = { editor = "expense" })
                         }
                     }
                 }
@@ -329,7 +349,7 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("정기결제", style = MaterialTheme.typography.titleMedium)
-                        AppSecondaryButton(text = "추가", enabled = !busy, compact = true, onClick = { editor = "subscription" })
+                        AppSecondaryButton(text = "추가", enabled = !isMutating, compact = true, onClick = { editor = "subscription" })
                     }
                     AppSupportText("삭제 전까지 매월 결제일에 등록 잔액에서 자동 차감합니다. 잔액이 부족하면 음수로 표시됩니다.")
                     AppTableRow(listOf("결제명", "금액", "일정"), header = true)
@@ -342,7 +362,7 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                         if (paid) Text("이번 달 처리됨", color = MaterialTheme.colorScheme.primary)
                         else TextButton(enabled = !busy, onClick = { paying = bill }) { Text("결제 기록") }
-                        TextButton(enabled = !busy, onClick = { viewModel.editBill(bill); editor = "subscription" }) { Text("수정") }
+                        TextButton(enabled = !isMutating, onClick = { viewModel.editBill(bill); editor = "subscription" }) { Text("수정") }
                         TextButton(enabled = !busy, onClick = { deleting = "subscriptions" to bill }) { Text("삭제") }
                     }
                 } }
@@ -353,7 +373,7 @@ fun PersonalAlertsScreen(viewModel: PersonalAlertsViewModel, google: Boolean) {
                         TextButton(enabled = !busy, onClick = { deleting = "expenses" to expense }) { Text("취소") }
                     })
                 } }
-                item { AppSecondaryButton(text = "선택 계정 삭제", enabled = !busy, onClick = { deleting = "accounts" to account }) }
+                item { AppSecondaryButton(text = "계정 삭제", enabled = !busy, onClick = { deleting = "accounts" to account }) }
             }
         }
     }
