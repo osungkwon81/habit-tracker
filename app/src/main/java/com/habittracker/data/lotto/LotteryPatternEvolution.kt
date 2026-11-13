@@ -48,7 +48,7 @@ data class LotteryPatternModel(val weights: Map<String, Double> = emptyMap(), va
 /** 제안 고정 → 이후 12회 비교 → 적용 → 새 4회 감시를 불변 사건으로 보존한다. */
 internal class LotteryPatternEvolution(context: Context) {
     private val app = context.applicationContext
-    private val root = File(app.filesDir, "lottery-adaptive-settings/patterns")
+    private val root = File(app.filesDir.canonicalFile, "lottery-adaptive-settings/patterns")
     val changes = MutableStateFlow(0L)
 
     suspend fun model(product: LotteryProduct): LotteryPatternModel = locked { current(records(product)) }
@@ -196,7 +196,7 @@ internal class LotteryPatternEvolution(context: Context) {
     private fun records(product: LotteryProduct): List<Map<String, Any?>> {
         val folder = File(root, product.name)
         if (!folder.exists()) return emptyList()
-        require(folder.canonicalFile == folder.absoluteFile && folder.isDirectory)
+        require(folder.canonicalFile == folder.absoluteFile && folder.isDirectory) { "패턴 기록 폴더 경로가 유효하지 않습니다: $product" }
         var previous: String? = null
         return requireNotNull(folder.listFiles()).sortedBy { it.name }.mapIndexed { index, file ->
             require(file.name == "${(index + 1).toString().padStart(8, '0')}.json") { "패턴 기록 누락: $product" }
@@ -219,7 +219,7 @@ internal class LotteryPatternEvolution(context: Context) {
             "at" to Instant.now().toString(), "previousHash" to log.lastOrNull()?.get("recordHash"),
             "performanceProven" to false, "historyPresenceGuaranteed" to false)
         val folder = File(root, product.name)
-        require(folder.isDirectory || folder.mkdirs())
+        require(folder.isDirectory || folder.mkdirs()) { "패턴 기록 폴더 생성 실패: $product" }
         require(action == "ROLLBACK" || LotteryAutoImprovementWorker.isEnabled(app, product)) { "자동 개선이 해제되었습니다." }
         LottoDesignRunStore.writeImmutable(File(folder, "${(log.size + 1).toString().padStart(8, '0')}.json"),
             LottoDesignRecordJson.encode(body + ("recordHash" to LottoDesignRecordJson.hash(body))).toByteArray())

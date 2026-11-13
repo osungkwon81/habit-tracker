@@ -151,6 +151,7 @@ fun LottoScreen(
                         onRefresh = { viewModel.refreshAutoImprovement() },
                         onEnabledChange = { viewModel.setAutoImprovementEnabled(it) },
                         onRollback = { viewModel.rollbackAutoImprovement() },
+                        onStartHistorical = { viewModel.startHistoricalImprovement() },
                     )
                 }
                 item {
@@ -158,7 +159,10 @@ fun LottoScreen(
                         text = if (showExperimentManagement) "평가 이력 접기" else "평가 이력 보기",
                         onClick = {
                             showExperimentManagement = !showExperimentManagement
-                            if (showExperimentManagement) viewModel.refreshExperiments()
+                            if (showExperimentManagement) {
+                                viewModel.refreshAutoImprovement()
+                                viewModel.refreshExperiments()
+                            }
                         },
                     )
                 }

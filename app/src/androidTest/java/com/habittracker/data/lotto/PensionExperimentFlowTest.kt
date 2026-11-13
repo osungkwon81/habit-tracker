@@ -49,7 +49,7 @@ class PensionExperimentFlowTest {
         assertEquals(operating.map { it.groupNo to it.winningNumber }, baseline.map { it.groupNo to it.winningNumber })
         val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
         val analysisMethod = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }.apply { isAccessible = true }
-        val analysis = analysisMethod.invoke(null, history, 3, null, true)
+        val analysis = analysisMethod.invoke(null, history, 3, null, true, false, 1.0)
         val generate = owner.declaredMethods.single { it.name == "generateCandidateSet" }.apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
         val original = generate.invoke(null, analysis, excluded, Random(42L), null) as List<com.habittracker.ui.lotto.PensionLotteryGeneratedNumber>
@@ -74,7 +74,7 @@ class PensionExperimentFlowTest {
         val first = numbers.single { it.type == PensionLotteryGenerationType.APPEARED }
         val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
         val analysis = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }
-            .apply { isAccessible = true }.invoke(null, history, 3, null, true)
+            .apply { isAccessible = true }.invoke(null, history, 3, null, true, false, 1.0)
         @Suppress("UNCHECKED_CAST")
         val allowedDigits = requireNotNull(analysis).javaClass.getDeclaredField("topAppearedLastDigits")
             .apply { isAccessible = true }.get(analysis) as List<Int>
@@ -85,7 +85,7 @@ class PensionExperimentFlowTest {
         val trace = PensionGenerationTrace()
         val candidate = owner.declaredMethods.single { it.name == "generateCandidate" }
             .apply { isAccessible = true }
-            .invoke(null, analysis, first.type, null, null, emptySet<String>(), otherNumbers, 2_000, first.generationSeed, trace) as PensionLotteryGeneratedNumber?
+            .invoke(null, analysis, first.type, null, null, emptySet<String>(), otherNumbers, 2_000, first.generationSeed, trace, null, false) as PensionLotteryGeneratedNumber?
         assertNotNull(candidate)
         assertEquals(first.winningNumber, candidate?.winningNumber)
         assertEquals(first.groupNo, candidate?.groupNo)
@@ -100,7 +100,7 @@ class PensionExperimentFlowTest {
         val validate = owner.declaredMethods.single { it.name == "matchesCurrentGenerationConditions" }.apply { isAccessible = true }
         val restore = owner.declaredMethods.single { it.name == "restoreGenerationAnalysis" }.apply { isAccessible = true }
         val batches = listOf(false, true).map { preferDistinct ->
-            val analysis = analyze.invoke(null, history, 3, null, preferDistinct)
+            val analysis = analyze.invoke(null, history, 3, null, preferDistinct, false, 1.0)
             @Suppress("UNCHECKED_CAST")
             val numbers = generate.invoke(null, analysis, emptySet<String>(), Random(42L), null) as List<PensionLotteryGeneratedNumber>
             assertEquals(4, numbers.size)
@@ -113,6 +113,22 @@ class PensionExperimentFlowTest {
         }
         assertTrue(batches[1].map { it.winningNumber.last() }.distinct().size >= batches[0].map { it.winningNumber.last() }.distinct().size)
         assertNotEquals(batches[0].first().generationSnapshot?.configJson, batches[1].first().generationSnapshot?.configJson)
+    }
+
+    @Test fun softLastDigitBatchRestoresItsOriginalGroupConditions() {
+        val history = draws()
+        val numbers = generatePensionExperimentBatch(history, 3, 42L, emptySet(), PensionGenerationTrace(),
+            softLastDigit = true)
+        assertEquals(4, numbers.size)
+        val snapshot = requireNotNull(numbers.first().generationSnapshot)
+        assertFalse(snapshot.isIndividual)
+        assertTrue(org.json.JSONObject(snapshot.configJson).getBoolean("pairDifferentGroup"))
+        val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
+        val restore = owner.declaredMethods.single { it.name == "restoreGenerationAnalysis" }.apply { isAccessible = true }
+        val restored = restore.invoke(null, numbers, history)
+        assertNotNull(restored)
+        val validate = owner.declaredMethods.single { it.name == "matchesCurrentGenerationConditions" }.apply { isAccessible = true }
+        assertEquals(true, validate.invoke(null, numbers, restored))
     }
 
     @Test fun frozenInputPreventsFutureLeakAndModelExclusionsAreIndependent() = runBlocking {
@@ -132,7 +148,7 @@ class PensionExperimentFlowTest {
         val history = draws()
         val owner = Class.forName("com.habittracker.ui.lotto.PensionLotteryGeneratorViewModelKt")
         val base = owner.declaredMethods.single { it.name == "buildGeneratorAnalysis" }
-            .apply { isAccessible = true }.invoke(null, history, 3, null, true)
+            .apply { isAccessible = true }.invoke(null, history, 3, null, true, false, 1.0)
         val analysis = owner.declaredMethods.single { it.name == "forIndividualGeneration" }
             .apply { isAccessible = true }.invoke(null, base)
         val generate = owner.declaredMethods.single { it.name == "generateCandidate" }.apply { isAccessible = true }
@@ -145,7 +161,7 @@ class PensionExperimentFlowTest {
         types.forEachIndexed { index, type ->
             val opposite = generated.lastOrNull { it.type.pattern != type.pattern }
             val number = requireNotNull(generate.invoke(null, analysis, type, opposite?.winningNumber, opposite?.groupNo,
-                generated.map { it.winningNumber }.toSet(), generated.toList(), 20_000, 42L + index, null) as PensionLotteryGeneratedNumber?)
+                generated.map { it.winningNumber }.toSet(), generated.toList(), 20_000, 42L + index, null, null, false) as PensionLotteryGeneratedNumber?)
             assertEquals(true, validate.invoke(null, number, analysis))
             assertEquals(type, number.type)
             if (opposite != null) {

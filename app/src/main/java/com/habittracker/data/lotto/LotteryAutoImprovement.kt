@@ -34,7 +34,18 @@ data class LotteryAutoImprovementState(
     val evaluationStatus: String? = null,
     val canRollback: Boolean = false,
     val candidateReport: String? = null,
+    val history: List<LotteryAutomaticHistoryEntry> = emptyList(),
     val issue: String? = null,
+)
+
+data class LotteryAutomaticHistoryEntry(
+    val id: String,
+    val targets: List<Int>,
+    val recordedRounds: List<Int>,
+    val state: String,
+    val startedAt: String?,
+    val summary: String?,
+    val issue: String?,
 )
 
 internal data class LotteryResearchInput(
@@ -96,6 +107,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
     }
 
     suspend fun refresh(product: LotteryProduct) = withContext(Dispatchers.IO) {
+        refreshHistory(product)
         try {
             val input = repository.getLotteryResearchInput(product)
             if (candidates.evaluateUserPending(input)) repository.requestLotteryRecordBackup()
@@ -288,6 +300,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         } finally {
             repository.requestLotteryRecordBackup()
             state.value = state.value.copy(running = false)
+            refreshHistory(product)
         }
     }
 
@@ -478,7 +491,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             return result to true
         }
         require(attempts.isEmpty() || !automatic) {
-            "$round 회차 실패·취소·중단 기록을 보존하고 자동 재실행을 보류했습니다. 원인을 확인한 뒤 과거 비교 버튼으로 새 시도를 시작할 수 있습니다."
+            "$round 회차 실패·취소·중단 기록을 보존하고 자동 재실행을 보류했습니다. 원인을 확인한 뒤 '과거 비교 시작·재시도'를 눌러 새 시도를 시작해 주세요."
         }
         val attempt = if (attempts.isEmpty()) child(folder, "rounds", key)
             else child(base, "retries", "${Instant.now().toEpochMilli()}-${UUID.randomUUID()}")
@@ -516,7 +529,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         if (read(last, "plan.json") - "createdAt" != plan.json) return null
         val success = File(last, "success.json")
         if (!success.exists() || File(last, "failure.json").exists()) {
-            require(!automatic) { "동일 계획의 실패·취소·중단 기록을 자동 재실행하지 않습니다. 원인을 확인한 뒤 과거 비교를 명시적으로 시작해 주세요." }
+            require(!automatic) { "동일 계획의 실패·취소·중단 기록을 자동 재실행하지 않습니다. 원인을 확인한 뒤 '과거 비교 시작·재시도'를 눌러 새 시도를 시작해 주세요." }
             return null
         }
         val summary = read(last, "success.json")
@@ -607,6 +620,63 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         LottoDesignRecordJson.objectValue(it)["confirmedByUser"] == true
     } == true
 
+    private fun refreshHistory(product: LotteryProduct) {
+        val state = states.getValue(product)
+        try {
+            val runs = File(File(root, product.name), "runs")
+            if (!runs.exists()) {
+                state.value = state.value.copy(history = emptyList())
+                return
+            }
+            require(runs.isDirectory && runs.canonicalFile == runs.absoluteFile) { "자동 평가 이력 경로 오류: $product" }
+            val entries = requireNotNull(runs.listFiles()).sortedByDescending { it.name }.map { run ->
+                try {
+                    require(run.isDirectory && run.name.matches(Regex("[0-9]+-[0-9a-f-]{36}"))) { "자동 평가 실행 경로 오류" }
+                    val plan = read(run, "plan.json")
+                    require(plan["product"] == product.name) { "자동 평가 이력의 복권 종류 불일치" }
+                    val targets = LottoDesignRecordJson.list(plan.getValue("targets")).map(LottoDesignRecordJson::integer)
+                    require(targets == targets.distinct().sorted()) { "자동 평가 대상 회차 중복·순서 오류" }
+                    val recorded = targets.filter { round ->
+                        if (!File(run, "round-$round.json").exists()) false else {
+                            require(LottoDesignRecordJson.integer(read(run, "round-$round.json").getValue("round")) == round) { "자동 평가 회차 참조 오류: $round" }
+                            true
+                        }
+                    }
+                    val succeeded = File(run, "success.json").exists()
+                    val failed = File(run, "failure.json").exists()
+                    require(!succeeded || !failed) { "자동 평가 성공·실패 기록 충돌" }
+                    val success = if (succeeded) read(run, "success.json") else null
+                    val failure = if (failed) read(run, "failure.json") else null
+                    if (success != null) {
+                        require(success["planHash"] == LottoDesignRecordJson.hash(plan - "createdAt") && recorded == targets) {
+                            "자동 평가 완료 기록의 계획·회차 참조 오류"
+                        }
+                    }
+                    val error = failure?.get("error")?.let(LottoDesignRecordJson::objectValue)
+                    val status = when {
+                        success != null -> "SUCCESS"
+                        failure != null -> LottoDesignRecordJson.string(failure.getValue("state"))
+                        else -> "INCOMPLETE"
+                    }
+                    val started = (plan["createdAt"] as? String)?.let {
+                        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+                            .withZone(java.time.ZoneId.of("Asia/Seoul")).format(Instant.parse(it))
+                    }
+                    LotteryAutomaticHistoryEntry(run.name, targets, recorded, status, started,
+                        success?.get("summary") as? String, (error?.get("message") ?: error?.get("type")) as? String)
+                } catch (error: Exception) {
+                    Log.e(TAG, "product=$product run=${run.name} phase=history-read failed", error)
+                    LotteryAutomaticHistoryEntry(run.name, emptyList(), emptyList(), "INVALID", null, null,
+                        error.message ?: "자동 평가 기록을 읽지 못했습니다.")
+                }
+            }
+            state.value = state.value.copy(history = entries)
+        } catch (error: Exception) {
+            Log.e(TAG, "product=$product phase=history-list failed", error)
+            state.value = state.value.copy(issue = error.message ?: "자동 평가 이력을 읽지 못했습니다.")
+        }
+    }
+
     private fun readLastSummary(product: LotteryProduct, preview: Preview): String? {
         val runs = File(File(root, product.name), "runs")
         if (!runs.exists()) return null
@@ -614,8 +684,8 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         val last = requireNotNull(runs.listFiles()).maxByOrNull { it.name } ?: return null
         val plan = read(last, "plan.json")
         if (plan - "createdAt" != preview.json) return "입력·설정 또는 앱 구현이 바뀌었습니다. 이전 탐색 기록은 보존되어 있습니다."
-        if (File(last, "failure.json").exists()) return "마지막 탐색이 실패·취소되었습니다. 자동 이어 실행하지 않습니다."
-        if (!File(last, "success.json").exists()) return "마지막 탐색의 정상 종료 기록이 없습니다."
+        if (File(last, "failure.json").exists()) return "마지막 탐색이 실패·취소되었습니다. 원인을 확인한 뒤 '과거 비교 시작·재시도'에서 새 시도를 시작해 주세요."
+        if (!File(last, "success.json").exists()) return "마지막 탐색의 정상 종료 기록이 없습니다. 원인을 확인한 뒤 '과거 비교 시작·재시도'에서 새 시도를 시작해 주세요."
         val result = read(last, "success.json")
         require(result["planHash"] == LottoDesignRecordJson.hash(preview.json)) { "과거 비교 계획 참조 오류" }
         return LottoDesignRecordJson.string(result.getValue("summary"))

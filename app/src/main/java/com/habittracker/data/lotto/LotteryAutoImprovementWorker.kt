@@ -79,7 +79,8 @@ class LotteryAutoImprovementWorker(context: Context, parameters: WorkerParameter
                 .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
                 .setInputData(workDataOf(PRODUCT to product.name, AUTOMATIC to automatic))
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(workName(product), ExistingWorkPolicy.KEEP, request)
+            WorkManager.getInstance(context).enqueueUniqueWork(workName(product),
+                if (automatic) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.APPEND_OR_REPLACE, request)
         }
 
         internal fun enqueueUserEvaluation(context: Context, product: LotteryProduct) {

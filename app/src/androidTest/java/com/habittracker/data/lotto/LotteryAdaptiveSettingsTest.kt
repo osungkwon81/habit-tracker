@@ -252,6 +252,45 @@ class LotteryAdaptiveSettingsTest {
         assertEquals(listOf(1, 2), proposal["userObservationRounds"])
     }
 
+    @Test fun candidateAndPatternStoresAcceptFilesDirectoryAlias() = runBlocking {
+        val physical = File(directory, "physical-files").apply { check(mkdirs()) }
+        val alias = File(directory, "files-alias")
+        android.system.Os.symlink(physical.canonicalPath, alias.absolutePath)
+        val aliasedContext = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun getFilesDir(): File = alias
+        }
+        for (product in LotteryProduct.entries) {
+            val clock = lotteryEvaluationDeadline(product, 2).minusHours(1)
+            val archive = LotteryCandidateArchive(aliasedContext) { clock }
+            val id = archive.recordUserGeneration(patternInput(1, product), "fixture", "{}", "직접 생성", 42L,
+                clock, listOf(userStage(product)), resultAlreadyKnown = false)
+            assertTrue(File(physical, "lottery-candidates/${product.name}/user/$id.json.gz").isFile)
+            assertTrue(archive.evaluateUserPending(patternInput(2, product)))
+            assertEquals(1, archive.evaluations(patternInput(2, product)).size)
+            aliasedContext.getSharedPreferences("lottery-auto-improvement", Context.MODE_PRIVATE)
+                .edit().putBoolean(product.name, true).commit()
+            val store = LotteryPatternEvolution(aliasedContext)
+            store.update(patternInput(2, product), archive.evaluations(patternInput(2, product)),
+                if (product == LotteryProduct.LOTTO_645) 32.0 else 1.0)
+            assertNotNull(LotteryPatternEvolution(aliasedContext).trial(product))
+        }
+    }
+
+    @Test fun candidateStoreStillRejectsRedirectedSubdirectory() = runBlocking {
+        val redirected = File(directory, "redirected").apply { check(mkdirs()) }
+        android.system.Os.symlink(redirected.canonicalPath, File(directory, "lottery-candidates").absolutePath)
+        val product = LotteryProduct.LOTTO_645
+        val clock = lotteryEvaluationDeadline(product, 2).minusHours(1)
+        try {
+            LotteryCandidateArchive(context) { clock }.recordUserGeneration(patternInput(1), "fixture", "{}",
+                "직접 생성", 42L, clock, listOf(userStage(product)), resultAlreadyKnown = false)
+            fail("저장소 아래에서 다른 경로로 연결된 폴더를 허용하면 안 됩니다.")
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message.orEmpty().contains("후보 기록 저장 경로"))
+        }
+    }
+
     private fun userStage(product: LotteryProduct): Map<String, Any?> = mapOf(
         "pool" to if (product == LotteryProduct.LOTTO_645) listOf("1,2,3,4,5,6", "10,11,12,13,14,15") else listOf("123456", "654321"),
         "ranked" to listOf(1), "selected" to listOf(1), "order" to listOf(1, 0),

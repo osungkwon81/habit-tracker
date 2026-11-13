@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -18,16 +19,48 @@ import com.habittracker.ui.components.AppSecondaryButton
 import com.habittracker.ui.components.AppSectionHeader
 
 @Composable
+internal fun LotteryAutomaticRunHistory(state: LotteryAutoImprovementState) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AppSectionHeader(title = "자동 평가 이력")
+        state.issue?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (state.history.isEmpty() && state.issue == null) {
+            Text(if (state.audit == null) "자동 평가 이력을 읽고 있습니다." else "아직 자동 개선 실행 기록이 없습니다.")
+        }
+        state.history.forEach { entry ->
+            key(entry.id) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AppSectionHeader(title = if (entry.targets.isEmpty()) "대상 회차 확인 필요"
+                        else "${entry.targets.first()}~${entry.targets.last()}회 평가")
+                    entry.startedAt?.let { Text("시작 $it · 한국 시간") }
+                    Text(when (entry.state) {
+                        "SUCCESS" -> "비교 완료"
+                        "FAILED" -> "실패"
+                        "CANCELLED" -> "취소"
+                        "INCOMPLETE" -> "정상 종료 기록 없음"
+                        else -> "기록 확인 필요"
+                    })
+                    if (entry.targets.isNotEmpty()) Text("회차 결과 기록 ${entry.recordedRounds.size}/${entry.targets.size}")
+                    entry.summary?.let { Text(it) }
+                    entry.issue?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun LotteryAutoImprovementSection(
     product: LotteryProduct,
     state: LotteryAutoImprovementState,
     onRefresh: () -> Unit,
     onEnabledChange: (Boolean) -> Unit,
     onRollback: (() -> Unit)? = null,
+    onStartHistorical: (() -> Unit)? = null,
 ) {
     var confirmation by rememberSaveable { mutableStateOf(false) }
     var showDetails by rememberSaveable { mutableStateOf(false) }
     var rollbackConfirmation by rememberSaveable { mutableStateOf(false) }
+    var historicalConfirmation by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         AppSectionHeader(title = "자동 개선", subtitle = if (state.enabled) "켜짐 · 보유 데이터로 후보 비교" else "꺼짐")
         val audit = state.audit
@@ -45,6 +78,9 @@ fun LotteryAutoImprovementSection(
         AppSecondaryButton(text = if (state.enabled || state.running) "중단·자동 개선 끄기" else "자동 개선 켜기",
             onClick = { if (state.enabled || state.running) onEnabledChange(false) else confirmation = true })
         AppSecondaryButton(text = "상태 새로고침", enabled = !state.running, onClick = onRefresh)
+        if (onStartHistorical != null) AppSecondaryButton(text = "과거 비교 시작·재시도",
+            enabled = !state.running && audit?.canResearch == true && state.targetCount > 0,
+            onClick = { historicalConfirmation = true })
         if (state.canRollback && onRollback != null) AppSecondaryButton(text = "이전 설정으로 복구", enabled = !state.running, onClick = { rollbackConfirmation = true })
         AppSecondaryButton(text = if (showDetails) "상세 접기" else "데이터·평가 기준 보기", onClick = { showDetails = !showDetails })
         if (showDetails) {
@@ -78,4 +114,17 @@ fun LotteryAutoImprovementSection(
     }
     if (rollbackConfirmation) AppConfirmDialog(title = "이전 설정으로 복구", message = "진행 중인 패턴 제안을 중지하고 최근 시험 적용의 패턴 점수·선별 기준과 가중치를 이전 설정으로 되돌립니다.", confirmText = "복구",
         onDismiss = { rollbackConfirmation = false }, onConfirm = { rollbackConfirmation = false; onRollback?.invoke() })
+    if (historicalConfirmation) AppConfirmDialog(
+        title = "과거 비교 시작·재시도",
+        message = "${state.firstTarget}~${state.lastTarget}회, 총 ${state.targetCount}개 회차를 고정 시드로 비교합니다. " +
+            (if (product == LotteryProduct.LOTTO_645) "회차별 기존 설정·변경 설정·무작위 대조군은 각각 12,000개 후보입니다. "
+                else "회차별 기존 설정·변경 설정은 각각 4유형×250개, 무작위 대조군은 1,000개 후보입니다. ") +
+            "완료된 동일 입력 결과를 재사용하고, 실패·취소·중단된 회차는 기존 기록을 보존한 새 시도로 계산합니다. 필터 탐색 시도는 후보 수보다 많을 수 있습니다.",
+        confirmText = "비교 시작",
+        onDismiss = { historicalConfirmation = false },
+        onConfirm = {
+            historicalConfirmation = false
+            if (!state.running && state.audit?.canResearch == true && state.targetCount > 0) onStartHistorical?.invoke()
+        },
+    )
 }

@@ -755,13 +755,16 @@ private fun restoreGenerationAnalysis(
         val adaptiveHash = if (config.has("adaptiveRecordHash")) config.optString("adaptiveRecordHash") else null
         if (adaptiveHash != null && !adaptiveHash.matches(Regex("[0-9a-f]{64}"))) return null
         val base = buildGeneratorAnalysis(original, count, approvalHash, softLastDigit = true, lastDigitStrength = strength)
-            ?.forIndividualGeneration() ?: return null
-        val restored = (if (config.optBoolean("candidatePipeline", false)) base.withCandidatePipeline() else base)
+            ?: return null
+        val configured = if (individual) base.forIndividualGeneration() else base
+        val restored = (if (config.optBoolean("candidatePipeline", false)) configured.withCandidatePipeline() else configured)
             .withAdaptiveHash(adaptiveHash, config.optString("adaptivePolicy", com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY))
             .let { restored -> if (config.has("patternModel")) restored.withPatternModel(
                 com.habittracker.data.lotto.LotteryPatternModel.from(com.habittracker.data.lotto.LottoDesignRecordJson.decode(
                     config.getJSONObject("patternModel").toString().toByteArray(), requireCanonical = false))) else restored }
-        return restored.takeIf { it.generationSnapshot == snapshot && numbers.size == 1 && matchesNumberConditions(numbers.single(), it) }
+        return restored.takeIf { it.generationSnapshot == snapshot && if (individual) {
+            numbers.size == 1 && matchesNumberConditions(numbers.single(), it)
+        } else matchesCurrentGenerationConditions(numbers, it) }
     }
     val preferDistinctLastDigits = when (snapshot.configJson) {
         pensionIndividualConfiguration(pensionExperimentConfiguration(count, approvalHash)) -> true

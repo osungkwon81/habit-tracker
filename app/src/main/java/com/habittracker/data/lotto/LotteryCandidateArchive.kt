@@ -18,7 +18,7 @@ import kotlin.random.Random
 /** 후보는 추첨 결과를 받기 전에 고정한다. 단계는 원본 후보의 인덱스만 참조한다. */
 internal class LotteryCandidateArchive(context: Context, private val now: () -> LocalDateTime = ::lotteryEvaluationNow) {
     private val app = context.applicationContext
-    private val root = File(app.filesDir, "lottery-candidates")
+    private val root = File(app.filesDir.canonicalFile, "lottery-candidates")
     private val patterns = LotteryPatternEvolution(app)
 
     fun summary(product: LotteryProduct): String? {
@@ -376,7 +376,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     private fun write(file: File, body: Map<String, Any?>) {
         val parent = requireNotNull(file.parentFile)
         require(parent.isDirectory || parent.mkdirs()) { "후보 기록 폴더 생성 실패" }
-        require(parent.canonicalFile == parent.absoluteFile)
+        require(parent.canonicalFile == parent.absoluteFile) { "후보 기록 저장 경로가 실제 경로와 다릅니다: ${file.name}" }
         val record = body + ("recordHash" to LottoDesignRecordJson.hash(body))
         val bytes = ByteArrayOutputStream().use { buffer ->
             GZIPOutputStream(buffer).use { it.write(LottoDesignRecordJson.encode(record).toByteArray(Charsets.UTF_8)) }; buffer.toByteArray()
@@ -385,7 +385,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     }
 
     private fun read(file: File): Map<String, Any?> {
-        require(file.isFile && file.canonicalFile == file.absoluteFile)
+        require(file.isFile && file.canonicalFile == file.absoluteFile) { "후보 기록 파일이 없거나 경로가 유효하지 않습니다: ${file.name}" }
         val value = GZIPInputStream(file.inputStream()).use { LottoDesignRecordJson.decode(it.readBytes()) }
         require(value["recordHash"] == LottoDesignRecordJson.hash(value - "recordHash")) { "후보 기록 무결성 오류: ${file.name}" }
         return value - "recordHash"

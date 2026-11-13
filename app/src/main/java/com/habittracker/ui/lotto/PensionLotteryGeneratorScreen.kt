@@ -133,12 +133,16 @@ fun PensionLotteryGeneratorScreen(
                 onRefresh = { viewModel.refreshAutoImprovement() },
                 onEnabledChange = { viewModel.setAutoImprovementEnabled(it) },
                 onRollback = { viewModel.rollbackAutoImprovement() },
+                onStartHistorical = { viewModel.startHistoricalImprovement() },
             )
         }
         if (section == "IMPROVEMENT") item {
             AppSecondaryButton(text = if (showExperiments) "평가 이력 접기" else "평가 이력 보기", onClick = {
                 showExperiments = !showExperiments
-                if (showExperiments) viewModel.refreshExperiments()
+                if (showExperiments) {
+                    viewModel.refreshAutoImprovement()
+                    viewModel.refreshExperiments()
+                }
             })
         }
         if (section == "IMPROVEMENT" && showExperiments) item { PensionAutomaticHistory(viewModel) }
