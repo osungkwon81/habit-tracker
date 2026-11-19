@@ -37,6 +37,8 @@ interface HouseholdPriceDao {
     @Query("SELECT COALESCE(MAX(recordedOrder), 0) + 1 FROM household_purchase") suspend fun nextPurchaseOrder(): Long
     @Transaction @Query("SELECT * FROM household_product ORDER BY name COLLATE LOCALIZED, id")
     fun observe(): Flow<List<HouseholdProductHistory>>
+    @Transaction @Query("SELECT * FROM household_product WHERE id = :id")
+    suspend fun history(id: String): HouseholdProductHistory?
     @Query("SELECT * FROM household_product WHERE id = :id") suspend fun product(id: String): HouseholdProduct?
     @Query("SELECT * FROM household_purchase WHERE id = :id") suspend fun purchase(id: String): HouseholdPurchase?
     @Query("SELECT COUNT(*) FROM household_purchase WHERE productId = :id") suspend fun purchaseCount(id: String): Int

@@ -51,6 +51,10 @@ class AppContainer(context: Context) {
                 exchangeRepository = ExchangeRepository(database, databaseProtector, database.habitDao(), applicationContext)
                 _readiness.value = Result.success(Unit)
                 try {
+                    habitRepository.householdPrices.tracking.restore()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { Log.e("AppContainer", "생활용품 가격 추적 예약 복구 실패", error) }
+                try {
                     val alerts = PersonalAlerts.get(applicationContext)
                     alerts.load()
                     alerts.schedule()

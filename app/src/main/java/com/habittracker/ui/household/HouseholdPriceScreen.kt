@@ -35,12 +35,23 @@ import java.time.LocalDate
 import java.util.UUID
 
 data class HouseholdPriceState(val loaded: Boolean = false, val rows: List<HouseholdSummary> = emptyList(), val issue: String? = null)
+private data class TrackingPanel(val settings: HouseholdTrackingSettings? = null, val issue: String? = null)
 
 class HouseholdPriceViewModel(private val store: HouseholdPrices, private val saved: SavedStateHandle) : ViewModel() {
     private val stateMutable = MutableStateFlow(HouseholdPriceState())
     val state = stateMutable.asStateFlow()
     val draft = saved.getStateFlow("household.draft", "")
     val selected = saved.getStateFlow("household.selected", "")
+    fun observeTracking(id: String) = store.tracking.observe(id)
+    fun editLink(row: HouseholdSummary) {
+        if (!busy.value) open(JSONObject().put("kind", "link").put("productId", row.history.product.id)
+            .put("unit", row.history.product.unit).put("url", "").put("count", "").put("option", ""))
+    }
+    fun enableTracking(id: String, enabled: Boolean) = operation { store.tracking.setEnabled(id, enabled) }
+    fun removeLink(id: String, linkId: String, unavailable: Boolean) = operation {
+        store.tracking.remove(id, linkId, unavailable)
+        messageMutable.value = "추적 링크를 삭제했습니다."
+    }
     private val busyMutable = MutableStateFlow(false)
     val busy = busyMutable.asStateFlow()
     private val messageMutable = MutableStateFlow<String?>(null)
@@ -113,6 +124,26 @@ class HouseholdPriceViewModel(private val store: HouseholdPrices, private val sa
     fun save() {
         if (busy.value || draft.value.isEmpty()) return
         val d = JSONObject(draft.value)
+        if (d.getString("kind") == "link") {
+            val url = d.getString("url").trim()
+            val count = d.getString("count").toIntOrNull()
+            val option = d.getString("option").trim()
+            val problems = mutableMapOf<String, String>()
+            if (!url.startsWith("https://") || url.length > 8192) problems["url"] = "상품 상세 페이지의 HTTPS 주소를 입력해 주세요."
+            if (count == null || count <= 0) problems["count"] = "링크 구성에 들어 있는 수량을 1 이상으로 입력해 주세요."
+            if (option.length > 200) problems["option"] = "옵션명을 200자 이내로 입력해 주세요."
+            errorsMutable.value = problems
+            if (problems.isEmpty()) operation {
+                try { store.tracking.add(d.getString("productId"), url, requireNotNull(count), d.getString("unit"), option) }
+                catch (invalid: IllegalArgumentException) {
+                    errorsMutable.value = mapOf("url" to (invalid.message ?: "주소를 확인해 주세요."))
+                    return@operation
+                }
+                close()
+                messageMutable.value = "추적 링크를 등록했습니다."
+            }
+            return
+        }
         val product = d.getString("kind") == "product"
         val newProduct = product && !d.getBoolean("existing")
         val problems = linkedMapOf<String, String>()
@@ -165,7 +196,7 @@ private fun unitPrice(p: HouseholdPurchase) = "${p.unit}당 ${money(householdPri
 private fun configuration(p: HouseholdPurchase) = "${p.count}${p.unit} 구매"
 
 @Composable
-fun HouseholdPriceScreen(vm: HouseholdPriceViewModel) {
+fun HouseholdPriceScreen(vm: HouseholdPriceViewModel, notificationProduct: String? = null, notificationLink: String? = null) {
     val state by vm.state.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val raw by vm.draft.collectAsStateWithLifecycle()
@@ -178,6 +209,34 @@ fun HouseholdPriceScreen(vm: HouseholdPriceViewModel) {
         else state.rows.filter { it.history.product.name.contains(query, ignoreCase = true) }
     }
     val row = state.rows.find { it.history.product.id == selected }
+    var trackingRefresh by remember { mutableIntStateOf(0) }
+    val tracking = if (row != null && raw.isEmpty()) key(selected, trackingRefresh) {
+        remember(selected, trackingRefresh) {
+            vm.observeTracking(selected).map { TrackingPanel(settings = it) }.catch { error ->
+                if (error is CancellationException) throw error
+                android.util.Log.e("HouseholdPrices", "추적 설정 조회 실패 productId=$selected", error)
+                emit(TrackingPanel(issue = "추적 링크를 불러오지 못했습니다."))
+            }
+        }.collectAsStateWithLifecycle(initialValue = TrackingPanel()).value
+    } else TrackingPanel()
+    var pendingLink by rememberSaveable { mutableStateOf(notificationLink) }
+    var notificationOpened by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(notificationProduct) {
+        if (!notificationOpened && notificationProduct != null) {
+            vm.select(notificationProduct)
+            notificationOpened = true
+        }
+    }
+    val noticeTarget = tracking.settings?.links?.find { it.id == pendingLink && it.unavailable }
+    if (pendingLink != null && selected == notificationProduct && tracking.settings != null) {
+        if (noticeTarget != null && row != null) {
+            ConfirmRemoveOffer(row, noticeTarget, { pendingLink = null }) {
+                vm.removeLink(selected, noticeTarget.id, true)
+                pendingLink = null
+            }
+        } else AppConfirmDialog(title = "판매 상태 변경", message = "현재 삭제를 안내할 링크가 없습니다.",
+            confirmText = "확인", onConfirm = { pendingLink = null }, onDismiss = { pendingLink = null })
+    }
     val guard = LocalAppNavigationGuard.current
     SideEffect { guard.hasUnsavedChanges = vm.dirty }
     DisposableEffect(Unit) { onDispose { guard.hasUnsavedChanges = false } }
@@ -251,6 +310,13 @@ fun HouseholdPriceScreen(vm: HouseholdPriceViewModel) {
                     }
                 }
             }
+            item(key = "tracking-$selected") {
+                when {
+                    tracking.settings != null -> HouseholdTrackingSection(vm, row, tracking.settings, busy)
+                    tracking.issue != null -> { Text(tracking.issue); AppSecondaryButton("링크 다시 불러오기", onClick = { trackingRefresh++ }) }
+                    else -> AppLoadingCard("추적 링크를 불러오고 있습니다.")
+                }
+            }
             item { AppSectionHeader("구매 가격 비교", subtitle = "${row.ordered.size}건 · 총 구매금액 ÷ 구입 개수") }
             if (row.ordered.isNotEmpty()) item { AppTableRow(listOf("구매 내역", "${row.history.product.unit}당 가격", "최저가 대비"), header = true) }
             items(row.ordered.asReversed(), key = { it.id }) { p ->
@@ -304,6 +370,14 @@ private fun HouseholdEditor(vm: HouseholdPriceViewModel, raw: String, row: House
             AppSaveButton(onClick = vm::save, enabled = !busy, text = if (busy) "저장 중…" else "저장", modifier = Modifier.weight(1f))
         }
     }) {
+        if (draft.getString("kind") == "link") {
+            item { AppHeroCard(title = "추적 링크 추가", description = row?.history?.product?.name) }
+            item { field("url", "네이버·쿠팡 상품 링크") }
+            item { field("count", "한 묶음에 들어 있는 수량($unit)", numeric = true, help = "예: 치약 3개입 상품이고 비교 단위가 개라면 3") }
+            if (draft.optString("url").contains("naver", ignoreCase = true))
+                item { field("option", "브랜드·스마트스토어 옵션명 (선택)", help = "선택 옵션이 여러 개면 판매 페이지의 옵션명을 입력하세요. 복수 항목은 ' / '로 연결하세요.") }
+            return@AppScreen
+        }
         item { AppHeroCard(title = if (newProduct) "제품·첫 구매 등록" else if (product) "제품 정보" else "구매 기록", description = if (product) null else draft.getString("name")) }
         if (product) {
             item {

@@ -112,18 +112,19 @@ class PersonalAlerts private constructor(private val context: Context) {
             PeriodicWorkRequestBuilder<GoogleBalanceAlertWorker>(15, TimeUnit.MINUTES).build())
         else manager.cancelUniqueWork("google-balance")
     }
-    fun notify(key: String, title: String, body: String, url: String? = null, accountId: String? = null): Boolean {
+    fun notify(key: String, title: String, body: String, url: String? = null, accountId: String? = null,
+               channel: String = channelId(url == null), openIntent: Intent? = null, actionLabel: String? = null): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java)
         if (!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
         ensureChannels(context)
-        val channel = channelId(url == null)
         if (manager.getNotificationChannel(channel).importance == NotificationManager.IMPORTANCE_NONE) return false
-        val intent = if (url != null) Intent(Intent.ACTION_VIEW, Uri.parse(url)) else Intent(context, com.habittracker.MainActivity::class.java)
+        val intent = openIntent ?: if (url != null) Intent(Intent.ACTION_VIEW, Uri.parse(url)) else Intent(context, com.habittracker.MainActivity::class.java)
             .setData(Uri.parse("habittracker://google-balance/$accountId"))
             .putExtra("googleBalanceAccount", accountId)
         val pending = PendingIntent.getActivity(context, key.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         manager.notify(key, 0, Notification.Builder(context, channel).setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(title).setContentText(body).setStyle(Notification.BigTextStyle().bigText(body))
+            .apply { if (actionLabel != null) addAction(Notification.Action.Builder(null, actionLabel, pending).build()) }
             .setContentIntent(pending).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build())
         return true
     }

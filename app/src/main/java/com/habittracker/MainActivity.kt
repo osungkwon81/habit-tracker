@@ -121,14 +121,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             HabitTrackerTheme {
-                HabitTrackerApp(intent.getStringExtra("googleBalanceAccount"))
+                HabitTrackerApp(intent.getStringExtra("googleBalanceAccount"), intent.getStringExtra("householdProduct"),
+                    intent.getStringExtra("householdUnavailableLink"))
             }
         }
     }
 }
 
 @Composable
-private fun HabitTrackerApp(notificationAccount: String? = null) {
+private fun HabitTrackerApp(notificationAccount: String? = null, householdProduct: String? = null, householdLink: String? = null) {
     val container = (LocalContext.current.applicationContext as HabitTrackerApplication).appContainer
     val readiness by container.readiness.collectAsStateWithLifecycle()
     if (readiness?.isSuccess != true) {
@@ -146,6 +147,17 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
     val viewModelFactory = remember { AppViewModelFactory() }
     val snackbar = remember { SnackbarHostState() }
     val guard = remember { AppNavigationGuard() }
+    var householdNoticeOpened by rememberSaveable { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(householdProduct, householdLink) {
+        if (!householdNoticeOpened && householdProduct != null && householdLink != null) {
+            navController.navigate(AppDestination.HOUSEHOLD_PRICES.route)
+            navController.currentBackStackEntry?.savedStateHandle?.apply {
+                set("householdNoticeProduct", householdProduct)
+                set("householdNoticeLink", householdLink)
+            }
+            householdNoticeOpened = true
+        }
+    }
     androidx.compose.runtime.LaunchedEffect(notificationAccount) {
         if (!notificationAccount.isNullOrBlank()) {
             navController.navigate(AppDestination.GOOGLE_BALANCE.route) { launchSingleTop = true }
@@ -478,9 +490,10 @@ private fun HabitTrackerApp(notificationAccount: String? = null) {
                 val viewModel: com.habittracker.ui.notification.PersonalAlertsViewModel = viewModel(factory = viewModelFactory)
                 com.habittracker.ui.notification.PersonalAlertsScreen(viewModel, google = true, accountDetails = true)
             }
-            composable(AppDestination.HOUSEHOLD_PRICES.route) {
+            composable(AppDestination.HOUSEHOLD_PRICES.route) { entry ->
                 val viewModel: com.habittracker.ui.household.HouseholdPriceViewModel = viewModel(factory = viewModelFactory)
-                com.habittracker.ui.household.HouseholdPriceScreen(viewModel)
+                com.habittracker.ui.household.HouseholdPriceScreen(viewModel, entry.savedStateHandle["householdNoticeProduct"],
+                    entry.savedStateHandle["householdNoticeLink"])
             }
             composable(AppDestination.NOTIFICATION_ASSISTANT_APPS.route) {
                 val viewModel: NotificationAssistantViewModel = viewModel(factory = viewModelFactory)

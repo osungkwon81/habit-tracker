@@ -9,17 +9,21 @@ import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.math.MathContext
 import java.time.LocalDate
+import android.content.Context
 
 fun householdPrice(purchase: HouseholdPurchase): BigDecimal = BigDecimal.valueOf(purchase.amount)
     .divide(BigDecimal(purchase.count), MathContext.DECIMAL128)
 
+internal val cheapestFirst = compareBy<HouseholdPurchase> { householdPrice(it) }.thenByDescending { it.date }.thenBy { it.id }
+
 data class HouseholdSummary(val history: HouseholdProductHistory, val ordered: List<HouseholdPurchase>) {
     val latest = ordered.lastOrNull()
-    val cheapest = ordered.minWithOrNull(compareBy<HouseholdPurchase> { householdPrice(it) }.thenByDescending { it.date }.thenBy { it.id })
+    val cheapest = ordered.minWithOrNull(cheapestFirst)
 }
 
-class HouseholdPrices(private val db: HabitTrackerDatabase, private val backup: HabitTrackerDatabaseProtector) {
+class HouseholdPrices(context: Context, private val db: HabitTrackerDatabase, private val backup: HabitTrackerDatabaseProtector) {
     private val dao = db.householdPriceDao()
+    val tracking = HouseholdPriceTracking(context.applicationContext, dao) { backup.requestBackup(db) }
     fun observe() = dao.observe()
     suspend fun register(product: HouseholdProduct, firstPurchase: HouseholdPurchase) = change {
         require(firstPurchase.productId == product.id) { "첫 구매 기록의 제품이 일치하지 않습니다." }
@@ -48,7 +52,10 @@ class HouseholdPrices(private val db: HabitTrackerDatabase, private val backup: 
         if (old == null) dao.insert(purchase.copy(recordedOrder = dao.nextPurchaseOrder()))
         else check(dao.update(purchase.copy(recordedOrder = old.recordedOrder)) == 1)
     }
-    suspend fun deleteProduct(id: String) = change { check(dao.deleteProduct(id) == 1) { "삭제할 제품이 없습니다: $id" } }
+    suspend fun deleteProduct(id: String) {
+        change { check(dao.deleteProduct(id) == 1) { "삭제할 제품이 없습니다: $id" } }
+        tracking.remove(id)
+    }
     suspend fun deletePurchase(id: String) = change { check(dao.deletePurchase(id) == 1) { "삭제할 구매 기록이 없습니다: $id" } }
     private suspend fun change(block: suspend () -> Unit) = withContext(Dispatchers.IO) {
         db.withTransaction { block() }; backup.requestBackup(db)

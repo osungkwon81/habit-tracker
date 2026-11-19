@@ -134,7 +134,7 @@ class HabitRepository(
     private val habitDao: HabitDao,
 ) {
     val lottoExperiments = com.habittracker.data.lotto.LottoExperimentStore(context)
-    val householdPrices = com.habittracker.data.HouseholdPrices(database, databaseProtector)
+    val householdPrices = com.habittracker.data.HouseholdPrices(context, database, databaseProtector)
     internal val pensionExperiments = com.habittracker.data.lotto.PensionExperimentStore(context)
     private val lotteryContext = context.applicationContext
     internal val adaptiveSettings = com.habittracker.data.lotto.LotteryAdaptiveSettings(lotteryContext)
