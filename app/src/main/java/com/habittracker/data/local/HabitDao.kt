@@ -138,6 +138,12 @@ interface HabitDao {
     @Query("SELECT EXISTS(SELECT 1 FROM pension_lottery_generated_number WHERE winning_number = :winningNumber AND is_control = 0)")
     suspend fun hasPensionLotteryRecommendation(winningNumber: String): Boolean
 
+    @Query("""SELECT winning_number FROM pension_lottery_generated_number
+        WHERE target_round_no = :round AND is_hidden = 0 AND is_control = 0
+          AND (:replacing IS NULL OR id != :replacing)
+        ORDER BY generated_at DESC, id ASC LIMIT 3""")
+    suspend fun getRecentPensionRecommendations(round: Int, replacing: Long?): List<String>
+
     @Query("SELECT * FROM pension_lottery_generated_number WHERE substr(generation_id, 1, length(:prefix)) = :prefix AND is_hidden = 0")
     suspend fun getVisiblePensionLotteryBackups(prefix: String): List<PensionLotteryGeneratedNumberEntity>
 

@@ -154,7 +154,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
     }
 
     private suspend fun adaptiveStatus(product: LotteryProduct): String {
-        val last = repository.adaptiveSettings.last(product) ?: return "보유 이력으로 가중치 선택 · 조건 충족 시 시험 적용"
+        val last = repository.adaptiveSettings.last(product) ?: return "추첨 전 추천을 수집 중 · 비교 조건 충족 시 시험 적용"
         return when {
             repository.adaptiveSettings.active(product) != null -> "시험 적용 중 · 가중치 ${last["after"]} · 새 4회마다 복구 여부 점검"
             last["action"] == "ROLLBACK" -> "이전 가중치 ${last["after"]}로 복구됨"
@@ -200,19 +200,26 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             val input = repository.getLotteryResearchInput(product)
             if (automatic && rollbackCorrectedInput(input)) return
             require(input.audit().canResearch) { "회차 누락·중복·번호 오류 또는 최신 결과 미수집을 먼저 해결해 주세요." }
+            var batchRounds: Set<Int> = emptySet()
             if (automatic) {
                 val previous = repository.adaptiveSettings.active(product)
-                if (previous != null && previous["policy"] != LotteryAdaptiveSettings.POLICY) {
+                if (previous != null && previous["policy"] !in listOf(LotteryAdaptiveSettings.POLICY, LotteryAdaptiveSettings.PREVIOUS_POLICY)) {
                     rollbackTrial(product, previous, "후보 평가 구조 변경으로 이전 시험 가중치를 복구했습니다.")
                 }
                 val held = candidates.evaluatePending(input)
                 candidates.evaluateUserPending(input)
-                repository.patternEvolution.update(input, candidates.evaluations(input),
-                    repository.adaptiveSettings.value(product) ?: if (product == LotteryProduct.LOTTO_645) 32.0 else 1.0)
+                val evaluations = candidates.evaluations(input)
+                batchRounds = evaluations.filter { it["preDraw"] == true && it["observationSource"] != "user" &&
+                    it["candidateImplementation"] == LotteryCandidateArchive.IMPLEMENTATION }
+                    .map { LottoDesignRecordJson.integer(it.getValue("round")) }.toSet()
+                val next = requireNotNull(input.rounds().maxOrNull()) + 1
+                repository.patternEvolution.update(input, evaluations,
+                    repository.adaptiveSettings.value(product) ?: if (product == LotteryProduct.LOTTO_645) 32.0 else 1.0,
+                    canRegister = candidates.canRegisterTrial(product, next),
+                    inputIsCurrent = { repository.getLotteryResearchInput(product).generationJson() == input.generationJson() })
                 state.value = state.value.copy(candidateReport = listOfNotNull(candidates.summary(product),
                     repository.patternEvolution.summary(product)).joinToString("\n"), canRollback = canRollback(product),
                     issue = held.takeIf { it.isNotEmpty() }?.let { "입력·구현 변경으로 ${it.joinToString()}회 평가 보류 · 이후 회차는 계속 수집합니다." })
-                val next = requireNotNull(input.rounds().maxOrNull()) + 1
                 if (lotteryEvaluationNow().isBefore(lotteryEvaluationDeadline(product, next))) {
                     if (candidates.canFreeze(input, next)) candidates.freeze(input, next)
                     else state.value = state.value.copy(issue = "$next 회 후보는 중단·입력 변경으로 보류합니다. 다음 회차부터 새로 수집합니다.")
@@ -242,6 +249,10 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             val plan = preview(input)
             require(plan.issue == null) { requireNotNull(plan.issue) }
             if (plan.targets.isEmpty()) { state.value = state.value.copy(evaluationStatus = "시험 적용 후 새 회차를 확인하고 있습니다."); return }
+            if (automatic && repository.adaptiveSettings.active(product) == null && !batchRounds.containsAll(plan.targets)) {
+                state.value = state.value.copy(evaluationStatus = "추첨 전에 고정한 12개 회차가 모이면 당첨 회차 수를 비교합니다.")
+                return
+            }
             state.value = state.value.copy(audit = input.audit(), firstTarget = plan.targets.first(),
                 lastTarget = plan.targets.last(), targetCount = plan.targets.size, candidateWorkCount = plan.workCount)
             reusableSummary(folder, plan, automatic)?.let { summary ->
@@ -278,10 +289,10 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
             val current = repository.getLotteryResearchInput(product).through(plan.targets.last())
             require(current.json() == plan.input.json()) { "계산 중 입력이 변경됐습니다. 이전 결과는 보존하며 새 입력으로 다시 계획해야 합니다." }
             fun rate(key: String) = results.map { LottoDesignRecordJson.decimal(it.getValue(key)) }.average()
-            val baseline = rate("baselineRate"); val candidate = rate("candidateRate"); val control = rate("controlRate")
-            val summary = "최종 추천 탐색 ${results.size}회차 · 기준 ${percent(baseline)} · 변경 ${percent(candidate)} · 무작위 ${percent(control)} · 차이 ${percent(candidate - baseline)}p. 과거 탐색 결과입니다."
+            val baseline = rate("baselineBatchHit"); val candidate = rate("candidateBatchHit"); val control = rate("controlBatchHit")
+            val summary = "최종 추천 당첨 회차 비율 · ${results.size}회차 · 기준 ${percent(baseline)} · 변경 ${percent(candidate)} · 무작위 ${percent(control)}"
             write(run, "success.json", mapOf("planHash" to LottoDesignRecordJson.hash(plan.json), "summary" to summary,
-                "roundCount" to results.size, "baselineRate" to baseline, "candidateRate" to candidate, "controlRate" to control,
+                "roundCount" to results.size, "baselineBatchWinRate" to baseline, "candidateBatchWinRate" to candidate, "controlBatchWinRate" to control,
                 "decision" to "DESIGN_ONLY", "independentFinalEvidence" to false))
             state.value = state.value.copy(result = summary)
             if (automatic && LotteryAutoImprovementWorker.isEnabled(app, product)) {
@@ -335,8 +346,9 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         val store = repository.adaptiveSettings
         val active = store.active(product)
         val latest = requireNotNull(input.rounds().maxOrNull())
+        val primaryKey = if (active != null && active["policy"] == LotteryAdaptiveSettings.PREVIOUS_POLICY) "Rate" else "BatchHit"
         fun number(row: Map<String, Any?>, role: String, secondary: Boolean = false) =
-            LottoDesignRecordJson.decimal(row.getValue(role + if (secondary) "Secondary" else "Rate"))
+            LottoDesignRecordJson.decimal(row.getValue(role + if (secondary) "Secondary" else primaryKey))
         fun role(value: Double) = if (value == if (product == LotteryProduct.LOTTO_645) 64.0 else 0.5) "candidate" else "baseline"
         fun mean(rows: List<Map<String, Any?>>, role: String, secondary: Boolean = false) = rows.map { number(it, role, secondary) }.average()
         val rounds = results.map { LottoDesignRecordJson.integer(it["round"] ?: it["targetRound"] ?: error("결과 회차 없음")) }
@@ -369,6 +381,9 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         }
         if (store.attempted(product)) return "이번 가중치 후보의 판단 이력을 유지합니다. 같은 후보를 자동 재채택하지 않습니다."
         require(results.size == 12) { "시험 적용은 앞 6회·뒤 6회 전체 비교가 필요합니다." }
+        val operatingModel = repository.patternEvolution.model(product).json()
+        if (results.any { it["preDraw"] != true || it["candidateImplementation"] != LotteryCandidateArchive.IMPLEMENTATION ||
+                it["operatingModel"] != operatingModel }) return "현재 운영 설정에서 추첨 전에 고정한 12회 비교를 기다립니다."
         val before = if (product == LotteryProduct.LOTTO_645) 32.0 else 1.0
         val after = if (product == LotteryProduct.LOTTO_645) { if (before == 32.0) 64.0 else 32.0 } else 0.5
         val oldRole = role(before); val newRole = role(after)
@@ -379,10 +394,11 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         require(live.through(latest).generationJson() == input.generationJson()) { "설정 적용 직전 입력이 변경됐습니다." }
         val proof = mapOf("through" to latest, "appliedAfterRound" to live.rounds().maxOrNull(), "inputHash" to LottoDesignRecordJson.hash(input.generationJson()), "rounds" to rounds,
             "policy" to LotteryAdaptiveSettings.policy(), "pipeline" to LotteryCandidateArchive.IMPLEMENTATION, "run" to run.relativeTo(root).path,
-            "resultHashes" to results.map(LottoDesignRecordJson::hash), "historicallyExplored" to true,
-            "reason" to if (accepted) "두 구간 모두 최종 추천 당첨 비율 및 보조 일치도 개선" else "최종 추천 시험 적용 조건 미충족")
+            "resultHashes" to results.map(LottoDesignRecordJson::hash), "historicallyExplored" to false,
+            "winningRounds" to listOf(oldRole, newRole, "control").associateWith { role -> results.sumOf { number(it, role).toInt() } },
+            "reason" to if (accepted) "두 구간 모두 최종 추천 당첨 회차 수 및 보조 일치도 개선" else "최종 추천 시험 적용 조건 미충족")
         val record = store.append(product, if (accepted) "APPLY" else "HOLD", before, if (accepted) after else before, proof) { LotteryAutoImprovementWorker.isEnabled(app, product) }
-        val message = if (accepted) "가중치 $before → $after 시험 적용 · 과거 비교 기반이며 당첨 성과 입증은 아닙니다." else "비교 조건 미충족 · 기존 가중치 유지"
+        val message = if (accepted) "가중치 $before → $after 시험 적용 · 새 4회 점검 예정" else "비교 조건 미충족 · 기존 가중치 유지"
         Log.i(TAG, "product=$product phase=decision record=${record["recordHash"]} accepted=$accepted")
         if (accepted) LotteryAutoImprovementWorker.showChange(app, product, message)
         return message
@@ -751,7 +767,7 @@ internal class LotteryAutoImprovement(context: Context, private val repository: 
         private val gate = Mutex()
         internal suspend fun <T> withRecordLock(action: suspend () -> T): T = gate.withLock { action() }
         private const val TAG = "LotteryAutoImprovement"
-        private const val IMPLEMENTATION = "lottery-candidate-stage-adaptive-v4"
+        private const val IMPLEMENTATION = "lottery-exact-batch-adaptive-v6"
         // 탐색 비용의 상한이며 채택에 충분한 표본 수를 뜻하지 않는다.
         private const val DESIGN_ROUNDS = 12
         private const val SEED_COUNT = 1

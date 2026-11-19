@@ -94,11 +94,12 @@ fun LotteryAutoImprovementSection(
                 Text("보너스 미기록 ${it.missingBonusCount}개 · 원본 출처 해시 미기록 ${it.missingSourceHashCount}개")
                 Text("원본 해시와 당시 가용 시각이 없는 기록은 추정해 채우지 않습니다.", style = MaterialTheme.typography.bodySmall)
             }
-            Text(if (product == LotteryProduct.LOTTO_645) "12,000개 → 260개 → 최종 5게임 · 최근 빈도와 최종 분산 가중치 비교"
-                else "유형별 250개 → 50개 → 1개 · 끝자리 가중치와 후보 순위 기준 비교")
-            Text("보유 12회를 6회씩 비교합니다. 두 구간 모두 최종 추천 당첨 비율이 기존 설정·무작위보다 높고 보조 일치도가 평균 0.10 이상 높아야 시험 적용합니다. 전부 미당첨이면 채택하지 않습니다.")
+            Text(if (product == LotteryProduct.LOTTO_645) "12,000개 → 260개 → 최종 5게임 · 5등 이상이 나올 묶음 확률로 선택"
+                else "유형별 250개 → 50개 → 1개 · 최종 4번호는 끝 두 자리를 다르게 선택")
+            Text("추첨 전에 기록한 12회를 6회씩 비교합니다. 두 구간 모두 당첨 회차가 기존 설정·무작위보다 많고 평균 일치도도 각각 0.10 이상 높을 때 시험 적용합니다.")
             Text(if (product == LotteryProduct.LOTTO_645) "보조 지표: 게임당 본번호 평균 일치 수" else "보조 지표: 번호당 끝자리부터 연속으로 맞은 평균 자리 수")
-            Text(if (product == LotteryProduct.LOTTO_645) "주 지표: 최종 5게임의 본번호 3개 이상 일치 비율" else "주 지표: 최종 4번호의 일반 당첨번호 끝 2자리 이상 일치 비율")
+            Text(if (product == LotteryProduct.LOTTO_645) "최종 5게임 중 5등 이상이 하나라도 있으면 당첨 1회로 셉니다."
+                else "최종 4번호 중 일반 6등 이상이 하나라도 있으면 당첨 1회로 셉니다. 7등과 보너스는 따로 기록합니다.")
             Text("적용 후 추첨 전에 고정한 새 4회 추천으로 점검하고 악화 시 복구합니다. 후보에만 있는 당첨은 채택 근거로 사용하지 않습니다. 실제 구매 손익은 별도로 확인합니다.")
             if (state.running) Text("과거 비교 ${state.completedCount}/${state.targetCount}회 · 완료 결과 재사용 ${state.reusedCount}회")
         }
@@ -106,7 +107,7 @@ fun LotteryAutoImprovementSection(
     if (confirmation) {
         AppConfirmDialog(
             title = "자동 개선 켜기",
-            message = "보유 이력의 비교 조건을 충족하면 가중치를 시험 적용하고 변경 사실을 알립니다. 새 4회마다 악화를 점검해 이전 설정으로 복구합니다. 언제든 끄거나 직접 복구할 수 있습니다.",
+            message = "추첨 전에 기록한 추천이 기존 설정과 무작위 추천보다 좋은 성과를 내고 비교 조건을 충족하면 시험 적용을 알립니다. 이후 4회 성과가 악화되면 이전 설정으로 복구합니다. 언제든 끄거나 직접 복구할 수 있습니다.",
             confirmText = "켜기",
             onDismiss = { confirmation = false },
             onConfirm = { confirmation = false; onEnabledChange(true) },

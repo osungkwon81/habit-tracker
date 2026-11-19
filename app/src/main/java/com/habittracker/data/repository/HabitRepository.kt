@@ -572,6 +572,12 @@ class HabitRepository(
                     require(!habitDao.hasPensionLotteryRecommendation(recommendations.single().winningNumber)) {
                         "${first.generationId} 번호는 이미 저장되어 있습니다. 다른 번호를 생성해 주세요."
                     }
+                    if (config.optString("candidatePipelineId") == com.habittracker.ui.lotto.PENSION_PRIZE_PIPELINE) {
+                        val suffix = recommendations.single().winningNumber.takeLast(2)
+                        require(habitDao.getRecentPensionRecommendations(targetRound, replacesRecommendationId).none { it.endsWith(suffix) }) {
+                            "${targetRound}회차 묶음에 같은 끝 두 자리가 있습니다. 번호를 다시 생성해 주세요."
+                        }
+                    }
                 } else if (!isBackup) {
                     val recommendedTypes = setOf("APPEARED", "APPEARED_SECOND", "COLD_MIX", "COLD_MIX_SECOND")
                     require(numbers.filterNot { it.isControl }.map { it.generationType }.toSet() == recommendedTypes &&
@@ -2686,7 +2692,7 @@ class HabitRepository(
         val adaptiveRecord = if (forBalancedGeneration && mode == com.habittracker.data.lotto.LottoGenerationMode.PRECISE) adaptiveSettings.setting(LotteryProduct.LOTTO_645) else null
         val adaptive = adaptiveRecord?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal)
         val config = if (adaptive != null) JSONObject(com.habittracker.data.lotto.LotteryAdaptiveSettings.configurationFor(LotteryProduct.LOTTO_645, adaptive))
-            .put("adaptivePolicy", com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY)
+            .put("adaptivePolicy", requireNotNull(adaptiveRecord).getValue("policy"))
             .put("adaptiveRecordHash", requireNotNull(adaptiveRecord).getValue("recordHash")).toString() else approved?.let { setting ->
             if (setting.approval == null) setting.configJson else JSONObject(setting.configJson)
                 .put("operatingApproval", JSONObject(com.habittracker.data.lotto.LottoDesignRecordJson.encode(setting.approval))).toString()
@@ -2699,7 +2705,11 @@ class HabitRepository(
             inputDataHash = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { byte -> "%02x".format(byte) },
             configJson = if (mode == com.habittracker.data.lotto.LottoGenerationMode.PRECISE)
-                JSONObject(config).put("patternModel", JSONObject(patternModel.json())).toString() else config,
+                JSONObject(config).put("patternModel", JSONObject(patternModel.json()))
+                    .put("candidatePipelineId", com.habittracker.data.lotto.LotteryCandidateArchive.IMPLEMENTATION)
+                    .put("fiveGameSelection", com.habittracker.data.lotto.LottoBatchCoverage.POLICY)
+                    .put("effectiveRankingWeights", org.json.JSONArray(LottoNumberGenerator.rankingWeights(
+                        if (forBalancedGeneration) "BALANCED" else "DIVERSIFIED", patternModel))).toString() else config,
             balancedRecentPriorDraws = adaptive ?: approved?.priorDraws ?: 32.0,
             patternModel = patternModel,
         )

@@ -15,7 +15,7 @@ internal class LotteryAdaptiveSettings(context: Context) {
     private val root = File(context.applicationContext.filesDir.canonicalFile, "lottery-adaptive-settings")
     private val revision = MutableStateFlow(0L)
     val changes = revision.asStateFlow()
-    suspend fun setting(product: LotteryProduct): Map<String, Any?>? = locked { records(product).lastOrNull { it["action"] != "HOLD" && it["policy"] == POLICY } }
+    suspend fun setting(product: LotteryProduct): Map<String, Any?>? = locked { records(product).lastOrNull { it["action"] != "HOLD" && it["policy"] in listOf(POLICY, PREVIOUS_POLICY) } }
     suspend fun value(product: LotteryProduct): Double? = setting(product)?.get("after")?.let(LottoDesignRecordJson::decimal)
     suspend fun last(product: LotteryProduct): Map<String, Any?>? = locked { records(product).lastOrNull() }
     suspend fun active(product: LotteryProduct): Map<String, Any?>? = locked {
@@ -54,7 +54,7 @@ internal class LotteryAdaptiveSettings(context: Context) {
             require(file.name == "${(index + 1).toString().padStart(8, '0')}.json" && file.canonicalFile == file.absoluteFile) { "자동 설정 이력 누락: $product" }
             val record = LottoDesignRecordJson.decode(file.readBytes())
             require(record["recordHash"] == LottoDesignRecordJson.hash(record - "recordHash") && record["previousHash"] == previous &&
-                LottoDesignRecordJson.integer(record.getValue("sequence")) == index + 1 && record["product"] == product.name && record["policy"] in listOf(POLICY, "final-recommendation-selection-trial-v3", "candidate-stage-trial-6plus6-followup4-v2", "bounded-historical-trial-6plus6-followup4-v1")) { "자동 설정 무결성 오류: $product" }
+                LottoDesignRecordJson.integer(record.getValue("sequence")) == index + 1 && record["product"] == product.name && record["policy"] in listOf(POLICY, PREVIOUS_POLICY, "final-recommendation-selection-trial-v3", "candidate-stage-trial-6plus6-followup4-v2", "bounded-historical-trial-6plus6-followup4-v1")) { "자동 설정 무결성 오류: $product" }
             val before = LottoDesignRecordJson.decimal(record.getValue("before"))
             val current = LottoDesignRecordJson.decimal(record.getValue("after"))
             validate(product, before); validate(product, current)
@@ -72,14 +72,20 @@ internal class LotteryAdaptiveSettings(context: Context) {
     private suspend fun <T> locked(block: () -> T): T = withContext(Dispatchers.IO) { gate.withLock { block() } }
     companion object {
         private val gate = Mutex()
-        const val POLICY = "final-recommendation-selection-trial-v4"
+        const val POLICY = "final-batch-winning-rounds-v5"
+        const val PREVIOUS_POLICY = "final-recommendation-selection-trial-v4"
         fun configurationFor(product: LotteryProduct, value: Double): String = org.json.JSONObject(
             if (product == LotteryProduct.LOTTO_645) LottoNumberGenerator.configurationSnapshot(value)
             else com.habittracker.ui.lotto.pensionIndividualWeightConfiguration(value))
             .put("candidatePipelineId", LotteryCandidateArchive.IMPLEMENTATION)
             .apply {
-                if (product == LotteryProduct.LOTTO_645) { put("activeMode", "PRECISE"); put("selectionDiversityStrength", if (value == 64.0) 0.5 else 1.0) }
-                else { put("candidatePoolPerType", 250); put("finalistsPerType", 50); put("rankingPolicy", if (value == 0.5) "total_historical_score" else "last_digit_weight") }
+                if (product == LotteryProduct.LOTTO_645) {
+                    put("activeMode", "PRECISE"); put("fiveGameSelection", LottoBatchCoverage.POLICY)
+                    put("selectionDiversityStrength", if (value == 64.0) 0.5 else 1.0)
+                } else {
+                    put("candidatePoolPerType", 250); put("finalistsPerType", 50); put("uniqueTwoDigitSuffixes", true)
+                    put("rankingPolicy", if (value == 0.5) "total_historical_score" else "last_digit_weight")
+                }
             }.toString()
         fun acceptsTrial(baseline: List<Double>, candidate: List<Double>, control: List<Double>,
             baselineSecondary: List<Double>, candidateSecondary: List<Double>, controlSecondary: List<Double>): Boolean {
@@ -96,7 +102,8 @@ internal class LotteryAdaptiveSettings(context: Context) {
         fun policy(): Map<String, Any?> = mapOf("id" to POLICY, "selectionRounds" to 6, "checkRounds" to 6,
             "followupRounds" to 4, "finalRecommendationStrictlyBetterAgainstBaselineAndControlInBothHalves" to true,
             "secondaryMinimumGainInBothHalves" to 0.10, "repeatedWindowSelection" to false,
-            "label" to "과거 탐색 기반 시험 적용", "performanceProven" to false,
+            "primary" to mapOf("LOTTO_645" to "ANY_3_MAIN_MATCHES_IN_5", "PENSION_720" to "ANY_2_REGULAR_SUFFIX_MATCHES_IN_4"),
+            "label" to "추첨 전 고정 묶음 비교", "performanceProven" to false,
             "rollback" to "새 4회 구간에서 주 지표 하락 또는 보조 일치도 평균 0.10 이상 하락; 입력 정정 시 즉시 복구")
     }
 }

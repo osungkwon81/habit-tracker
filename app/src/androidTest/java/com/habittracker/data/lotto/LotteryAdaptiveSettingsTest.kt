@@ -50,6 +50,91 @@ class LotteryAdaptiveSettingsTest {
         assertTrue(LotteryAdaptiveSettings.acceptsTrial(List(12) { 0.1 }, List(12) { 0.2 }, List(12) { 0.1 }, List(12) { 1.0 }, List(12) { 1.2 }, List(12) { 1.0 }))
         assertFalse(LotteryAdaptiveSettings.acceptsTrial(List(12) { 0.1 }, List(6) { 0.2 } + List(6) { 0.1 }, List(12) { 0.1 }, List(12) { 1.0 }, List(12) { 1.2 }, List(12) { 1.0 }))
     }
+
+    @Test fun lottoGradeLossesAndSeveralFinalPrizesCountAsOneRound() {
+        val input = patternInput(1)
+        val pool = listOf("1,2,3,4,5,6", "1,2,3,4,5,7", "1,2,3,4,5,8", "1,2,3,4,8,9",
+            "1,2,3,8,9,10", "11,12,13,14,15,16", "21,22,23,24,25,26")
+        val stage = mapOf("pool" to pool, "ranked" to listOf(1, 2, 3, 4, 5, 6), "selected" to listOf(2, 3, 4, 5, 6))
+        val result = evaluateStage(input, stage)
+        assertEquals(1, result["candidateBatchHit"])
+        assertEquals(0.6, LottoDesignRecordJson.decimal(result["candidateRate"]), 1e-9)
+        val counts = gradeCounts(result)
+        assertEquals(mapOf("RANKING" to 1), counts["1"])
+        assertEquals(mapOf("FINAL_SELECTION" to 1), counts["2"])
+        for (grade in listOf("3", "4", "5")) assertEquals(mapOf("SELECTED" to 1), counts[grade])
+    }
+
+    @Test fun pensionSeventhAndBonusAreTrackedSeparatelyFromSixthOrBetter() {
+        val input = patternInput(1, LotteryProduct.PENSION_720).let {
+            it.copy(pension = listOf(it.pension.single().copy(bonusNumber = "999999")))
+        }
+        val stage = mapOf("allGroups" to true, "pool" to listOf("123456", "000056", "000006", "999999", "000000", "111111"),
+            "ranked" to listOf(1, 2, 3, 4, 5), "selected" to listOf(2, 3, 4, 5))
+        val losing = evaluateStage(input, stage)
+        assertEquals(0, losing["candidateBatchHit"])
+        val counts = gradeCounts(losing)
+        for (grade in listOf("1", "2")) assertEquals(mapOf("RANKING" to 1), counts[grade])
+        assertEquals(mapOf("FINAL_SELECTION" to 1), counts["6"])
+        for (grade in listOf("7", "BONUS")) assertEquals(mapOf("SELECTED" to 1), counts[grade])
+        assertEquals(1, evaluateStage(input, stage + ("selected" to listOf(1, 2, 3, 4)))["candidateBatchHit"])
+    }
+
+    private fun evaluateStage(input: LotteryResearchInput, stage: Map<String, Any?>): Map<String, Any?> =
+        LotteryCandidateArchive(context).evaluate(mapOf("product" to input.product.name, "target" to 1,
+            "preDraw" to true, "inputHash" to LottoDesignRecordJson.hash(input.through(0).generationJson()),
+            "models" to mapOf("candidate" to mapOf("stages" to listOf(stage)))), input, 1)
+
+    private fun gradeCounts(result: Map<String, Any?>): Map<String, Any?> {
+        val models = LottoDesignRecordJson.objectValue(result["models"])
+        val candidate = LottoDesignRecordJson.objectValue(models["candidate"])
+        val stage = LottoDesignRecordJson.objectValue(LottoDesignRecordJson.list(candidate["stages"]).single())
+        return LottoDesignRecordJson.objectValue(LottoDesignRecordJson.objectValue(stage["prizes"])["gradeStages"])
+    }
+
+    @Test fun twoIndependentRankingLossSignalsLeadToAnIsolatedTrialAndRollback() = runBlocking {
+        val product = LotteryProduct.LOTTO_645
+        context.getSharedPreferences("lottery-auto-improvement", Context.MODE_PRIVATE).edit().putBoolean(product.name, true).commit()
+        val prizes = mapOf("rankingWeights" to LottoNumberGenerator.rankingWeights("BALANCED"),
+            "excessComponentDeficit" to listOf(-1.0, 0.0, 2.0))
+        val stage = mapOf("strategy" to "BALANCED", "mode" to "PRECISE", "generated" to mapOf("rate" to 0.02), "prizes" to prizes)
+        val evidence = (1..2).map { round -> mapOf("round" to round, "preDraw" to true, "candidateHash" to "round-$round",
+            "models" to mapOf("user" to mapOf("stages" to listOf(stage)))) }
+        val store = LotteryPatternEvolution(context) { _, _, _ -> }
+        store.update(patternInput(2), evidence, 32.0)
+        val trial = requireNotNull(store.trial(product))
+        assertEquals("distribution", trial["scoreComponent"])
+        assertTrue(store.model(product).reducedScoreComponents.isEmpty())
+        store.update(patternInput(14), patternEvaluations(trial, 3..14), 32.0)
+        val applied = store.model(product)
+        assertEquals(mapOf("BALANCED" to "distribution"), applied.reducedScoreComponents)
+        assertEquals(emptyMap<String, Double>(), applied.weights)
+        assertTrue(LottoNumberGenerator.rankingWeights("BALANCED", applied)[2] < 0.20)
+        val worse = patternEvaluations(trial, 15..18).map { evaluation ->
+            val models = LottoDesignRecordJson.objectValue(evaluation["models"]).mapValues { (role, value) ->
+                LottoDesignRecordJson.objectValue(value) + ("batchHit" to if (role.endsWith("Candidate")) 0 else 1)
+            }
+            evaluation + ("models" to models)
+        }
+        store.update(patternInput(18), worse, 32.0)
+        assertTrue(store.model(product).reducedScoreComponents.isEmpty())
+    }
+
+    @Test fun pensionRankingChangeNeedsIndependentRoundsAndFutureBatchWins() = runBlocking {
+        val product = LotteryProduct.PENSION_720
+        context.getSharedPreferences("lottery-auto-improvement", Context.MODE_PRIVATE).edit().putBoolean(product.name, true).commit()
+        val prizes = mapOf("alternateShortlistGain" to 0.02, "rankingBasis" to "LAST_DIGIT")
+        val stage = mapOf("prizes" to prizes, "generated" to mapOf("rate" to 0.01))
+        val evidence = (1..2).map { round -> mapOf("round" to round, "preDraw" to true,
+            "models" to mapOf("user" to mapOf("stages" to listOf(stage)))) }
+        val store = LotteryPatternEvolution(context) { _, _, _ -> }
+        store.update(patternInput(2, product), evidence, 1.0)
+        val trial = requireNotNull(store.trial(product))
+        assertEquals("ALTERNATE_SHORTLIST", trial["scoreComponent"])
+        assertFalse(store.model(product).pensionAlternateRanking)
+        store.update(patternInput(14, product), patternEvaluations(trial, 3..14), 1.0)
+        assertTrue(store.model(product).pensionAlternateRanking)
+    }
     @Test fun winningPoolDoesNotMakeLosingFinalRecommendationSuccessful() {
         val product = LotteryProduct.LOTTO_645
         val draw = com.habittracker.data.local.entity.LottoDrawEntity(roundNo = 1, number1 = 1, number2 = 2, number3 = 3, number4 = 4, number5 = 5, number6 = 6, bonusNumber = 7)
@@ -307,6 +392,7 @@ class LotteryAdaptiveSettingsTest {
         mapOf("round" to round, "preDraw" to true, "patternTrialId" to proposal.getValue("trialId"),
             "models" to listOf("patternBaseline", "patternCandidate", "patternDiversifiedBaseline", "patternDiversifiedCandidate", "control").associateWith { role ->
                 mapOf("rate" to if (role.endsWith("Candidate")) 0.2 else 0.1,
+                    "batchHit" to if (role.endsWith("Candidate")) 1 else 0,
                     "secondary" to if (role.endsWith("Candidate")) 1.2 else 1.0)
             })
     }

@@ -88,7 +88,8 @@ class PensionLotteryGeneratorViewModel(
         val adaptive = repository.adaptiveSettings.setting(LotteryProduct.PENSION_720)
         return buildGeneratorAnalysis(savedDraws, setting.count, setting.approvalHash, softLastDigit = true,
             lastDigitStrength = adaptive?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal) ?: 1.0)
-            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String)
+            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String,
+                adaptive?.get("policy") as? String ?: com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY)
             ?.withPatternModel(repository.patternEvolution.model(LotteryProduct.PENSION_720))
     }
 
@@ -162,7 +163,8 @@ class PensionLotteryGeneratorViewModel(
         val adaptive = repository.adaptiveSettings.setting(LotteryProduct.PENSION_720)
         saved to setting?.let { buildGeneratorAnalysis(saved, it.count, it.approvalHash, softLastDigit = true,
             lastDigitStrength = adaptive?.get("after")?.let(com.habittracker.data.lotto.LottoDesignRecordJson::decimal) ?: 1.0)
-            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String)
+            ?.forIndividualGeneration()?.withCandidatePipeline()?.withAdaptiveHash(adaptive?.get("recordHash") as? String,
+                adaptive?.get("policy") as? String ?: com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY)
             ?.withPatternModel(repository.patternEvolution.model(LotteryProduct.PENSION_720)) }
     }.flowOn(Dispatchers.Default)
     private val historyState = combine(draws, storedGeneratedNumbers) { saved, entities ->
@@ -757,7 +759,9 @@ private fun restoreGenerationAnalysis(
         val base = buildGeneratorAnalysis(original, count, approvalHash, softLastDigit = true, lastDigitStrength = strength)
             ?: return null
         val configured = if (individual) base.forIndividualGeneration() else base
-        val restored = (if (config.optBoolean("candidatePipeline", false)) configured.withCandidatePipeline() else configured)
+        val pipeline = config.optString("candidatePipelineId")
+        if (config.optBoolean("candidatePipeline", false) && pipeline !in listOf("pension-250-50-1-weighted-v3", PENSION_PREVIOUS_PIPELINE, PENSION_PRIZE_PIPELINE)) return null
+        val restored = (if (config.optBoolean("candidatePipeline", false)) configured.withCandidatePipeline(pipeline) else configured)
             .withAdaptiveHash(adaptiveHash, config.optString("adaptivePolicy", com.habittracker.data.lotto.LotteryAdaptiveSettings.POLICY))
             .let { restored -> if (config.has("patternModel")) restored.withPatternModel(
                 com.habittracker.data.lotto.LotteryPatternModel.from(com.habittracker.data.lotto.LottoDesignRecordJson.decode(
@@ -1128,34 +1132,76 @@ private fun generateCandidate(
         if (pool.size < 250) return null
         val candidates = pool.values.toList()
         val weights = if (type.pattern == PensionLotteryNumberPattern.APPEARED) analysis.appearedLastDigitWeights else analysis.coldLastDigitWeights
-        fun baseScore(index: Int): Double = (if (analysis.lastDigitStrength == 0.5) candidates[index].totalScore
+        val useTotal = (analysis.lastDigitStrength == 0.5) != patternModel.pensionAlternateRanking
+        fun baseScore(index: Int, total: Boolean = useTotal): Double = (if (total) candidates[index].totalScore
             else weights[candidates[index].winningNumber.last().digitToInt()]).toDouble()
-        val maximumScore = candidates.indices.maxOf(::baseScore).coerceAtLeast(1.0)
-        fun score(index: Int): Double = if (patternModel.weights.isEmpty()) baseScore(index) else
-            baseScore(index) / maximumScore * 100.0 + patternModel.adjustment(candidates[index].winningNumber, lotto = false)
-        val ordered = candidates.indices.sortedByDescending(::score)
+        val adjustments = DoubleArray(candidates.size) { index ->
+            patternModel.adjustment(candidates[index].winningNumber, lotto = false)
+        }
+        fun rankingScores(total: Boolean): DoubleArray {
+            val scores = DoubleArray(candidates.size) { baseScore(it, total) }
+            if (patternModel.weights.isNotEmpty()) {
+                val maximum = scores.max().coerceAtLeast(1.0)
+                for (index in scores.indices) scores[index] = scores[index] / maximum * 100.0 + adjustments[index]
+            }
+            return scores
+        }
+        val scores = rankingScores(useTotal)
+        val ordered = candidates.indices.sortedByDescending { scores[it] }
         // 상위 압축에서도 후보에 존재하는 끝자리별 최상위 번호를 남겨 분산 선택을 유지한다.
         val representatives = ordered.distinctBy { candidates[it].winningNumber.last() }
-        val ranked = (representatives + ordered).distinct().take(50).sortedByDescending(::score)
-        val minimumUse = ranked.minOf { lastDigitUseCounts[candidates[it].winningNumber.last().digitToInt()] ?: 0 }
-        val digits = ranked.map { candidates[it].winningNumber.last().digitToInt() }.distinct()
-            .filter { (lastDigitUseCounts[it] ?: 0) == minimumUse }
-        val totalWeight = digits.sumOf { weights[it].toDouble().coerceAtLeast(1.0) }
-        var draw = random.nextDouble() * totalWeight
-        val digit = digits.firstOrNull { draw -= weights[it].toDouble().coerceAtLeast(1.0); draw < 0 } ?: digits.last()
-        val finalists = ranked.filter { candidates[it].winningNumber.last().digitToInt() == digit }
-        val selected = finalists[random.nextInt(finalists.size)]
+        val previousRanked = (representatives + ordered).distinct().take(50).sortedByDescending { scores[it] }
+        val suffixPolicy = org.json.JSONObject(analysis.generationSnapshot.configJson).optString("candidatePipelineId") == PENSION_PRIZE_PIPELINE
+        val priorSuffixes = if (suffixPolicy) otherNumbers.sortedByDescending { it.generatedAt }.take(3)
+            .map { it.winningNumber.takeLast(2) }.toSet() else emptySet()
+        fun available(index: Int) = candidates[index].winningNumber.takeLast(2) !in priorSuffixes
+        fun digitsFor(indices: List<Int>): List<Int> {
+            val digits = indices.map { candidates[it].winningNumber.last().digitToInt() }.distinct()
+            val minimum = digits.minOf { lastDigitUseCounts[it] ?: 0 }
+            return digits.filter { (lastDigitUseCounts[it] ?: 0) == minimum }
+        }
+        fun drawFrom(indices: List<Int>, digits: List<Int>): Int {
+            var draw = random.nextDouble() * digits.sumOf { weights[it].toDouble().coerceAtLeast(1.0) }
+            val digit = digits.firstOrNull { draw -= weights[it].toDouble().coerceAtLeast(1.0); draw < 0 } ?: digits.last()
+            val choices = indices.filter { candidates[it].winningNumber.last().digitToInt() == digit }
+            return choices[random.nextInt(choices.size)]
+        }
+        val original = drawFrom(previousRanked, digitsFor(previousRanked))
+        val ranked = if (previousRanked.any(::available)) previousRanked else {
+            val reserve = ordered.firstOrNull(::available) ?: return null
+            val replace = previousRanked.last { it !in representatives }
+            (previousRanked - replace + reserve).sortedByDescending { scores[it] }
+        }
+        val eligible = ranked.filter(::available)
+        val digits = digitsFor(eligible)
+        val selected = if (available(original)) original else drawFrom(eligible, digits)
+        val digit = candidates[selected].winningNumber.last().digitToInt()
+        val minimumUse = lastDigitUseCounts[digit] ?: 0
         recordPool?.invoke(mapOf("type" to type.name, "pool" to candidates.map { it.winningNumber },
+            "allGroups" to analysis.generationSnapshot.usesAllGroups,
+            "candidateGroups" to if (analysis.generationSnapshot.usesAllGroups) null else candidates.map { it.groupNo },
+            "previousSelection" to original,
+            "suffixComparison" to if (suffixPolicy) mapOf("priorSuffixes" to priorSuffixes.sorted(),
+                "before" to (priorSuffixes + candidates[original].winningNumber.takeLast(2)).size,
+                "after" to (priorSuffixes + candidates[selected].winningNumber.takeLast(2)).size) else null,
+            "rankingBasis" to if (useTotal) "HISTORICAL_TOTAL" else "LAST_DIGIT",
+            "lastDigitSelection" to mapOf("chosen" to digit, "eligible" to digits,
+                "weights" to weights.map { it.coerceAtLeast(1) }, "priorUses" to (0..9).map { lastDigitUseCounts[it] ?: 0 }),
+            "alternateRanking" to run {
+                val alternativeScores = rankingScores(!useTotal)
+                val alternative = candidates.indices.sortedByDescending { alternativeScores[it] }
+                (alternative.distinctBy { candidates[it].winningNumber.last() } + alternative).distinct().take(50)
+            },
             "generationContext" to mapOf("comparisonNumber" to comparisonNumber, "comparisonGroupNo" to comparisonGroupNo,
                 "excludedWinningNumbers" to excludedWinningNumbers.sorted(),
                 "otherNumbers" to otherNumbers.map { it.winningNumber }, "seed" to generationSeed.toString()),
-            "ranked" to ranked, "selected" to listOf(selected), "scores" to ranked.map(::score),
+            "ranked" to ranked, "selected" to listOf(selected), "scores" to ranked.map { scores[it] },
             "rankingReason" to "끝자리별 대표를 보존한 뒤 상위 50개 한도에서 제외",
             "order" to ordered, "scoreColumns" to listOf("종합", "기존 순위 점수", "반복 패턴 보정", "6자리 총점"),
-            "allScores" to candidates.indices.map { listOf(score(it), baseScore(it),
-                patternModel.adjustment(candidates[it].winningNumber, lotto = false), candidates[it].totalScore.toDouble()) },
+            "allScores" to candidates.indices.map { listOf(scores[it], baseScore(it), adjustments[it], candidates[it].totalScore.toDouble()) },
             "selectionReasons" to ranked.associate { index -> index.toString() to when {
                 index == selected -> "SELECTED"
+                !available(index) -> "DUPLICATE_TWO_DIGIT_SUFFIX"
                 (lastDigitUseCounts[candidates[index].winningNumber.last().digitToInt()] ?: 0) > minimumUse -> "LAST_DIGIT_REUSE"
                 candidates[index].winningNumber.last().digitToInt() != digit -> "LAST_DIGIT_WEIGHTED_DRAW"
                 else -> "WITHIN_LAST_DIGIT_DRAW"
@@ -1623,9 +1669,11 @@ private fun pensionIndividualConfiguration(batchConfig: String): String = org.js
 
 internal fun pensionIndividualWeightConfiguration(strength: Double): String = pensionIndividualConfiguration(pensionSoftLastDigitConfiguration(strength = strength))
 
-private fun PensionLotteryGeneratorAnalysis.withCandidatePipeline(): PensionLotteryGeneratorAnalysis = copy(
+private const val PENSION_PREVIOUS_PIPELINE = "pension-250-50-1-prize-trial-v4"
+internal const val PENSION_PRIZE_PIPELINE = "pension-250-50-1-distinct-suffix-v5"
+private fun PensionLotteryGeneratorAnalysis.withCandidatePipeline(id: String = PENSION_PRIZE_PIPELINE): PensionLotteryGeneratorAnalysis = copy(
     generationSnapshot = generationSnapshot.copy(configJson = org.json.JSONObject(generationSnapshot.configJson)
-        .put("candidatePipeline", true).put("candidatePipelineId", "pension-250-50-1-weighted-v3")
+        .put("candidatePipeline", true).put("candidatePipelineId", id)
         .put("rankingPolicy", if (lastDigitStrength == 0.5) "total_historical_score" else "last_digit_weight")
         .put("candidatePoolPerType", 250).put("finalistsPerType", 50).toString()))
 
@@ -1633,15 +1681,35 @@ internal fun generateTrackedPension(draws: List<PensionLotteryDrawEntity>, seed:
     checkActive: () -> Unit = {},
     patternModel: com.habittracker.data.lotto.LotteryPatternModel = com.habittracker.data.lotto.LotteryPatternModel(),
     record: (Map<String, Any?>) -> Unit): List<PensionLotteryGeneratedNumber> {
-    val analysis = requireNotNull(buildGeneratorAnalysis(draws, 3, softLastDigit = true, lastDigitStrength = strength))
-        .forIndividualGeneration().withCandidatePipeline().withPatternModel(patternModel)
-    val selected = mutableListOf<PensionLotteryGeneratedNumber>()
-    val random = Random(seed)
-    for (type in PensionLotteryGenerationType.entries) {
-        selected += requireNotNull(generateCandidate(analysis, type,
-            comparisonNumber = selected.lastOrNull { it.type.pattern != type.pattern }?.winningNumber,
-            excludedWinningNumbers = selected.map { it.winningNumber }.toSet(), otherNumbers = selected,
-            generationSeed = random.nextLong(), trace = PensionGenerationTrace(checkActive), recordPool = record)) { "연금 후보 250개 확보 실패: type=$type seed=$seed" }
+    val base = requireNotNull(buildGeneratorAnalysis(draws, 3, softLastDigit = true, lastDigitStrength = strength)).forIndividualGeneration()
+    fun batch(pipeline: String, capture: ((Map<String, Any?>) -> Unit)?): List<PensionLotteryGeneratedNumber>? {
+        val analysis = base.withCandidatePipeline(pipeline).withPatternModel(patternModel)
+        val selected = mutableListOf<PensionLotteryGeneratedNumber>()
+        val random = Random(seed)
+        for (type in PensionLotteryGenerationType.entries) {
+            val ticket = generateCandidate(analysis, type,
+                comparisonNumber = selected.lastOrNull { it.type.pattern != type.pattern }?.winningNumber,
+                excludedWinningNumbers = selected.map { it.winningNumber }.toSet(), otherNumbers = selected,
+                generationSeed = random.nextLong(), trace = PensionGenerationTrace(checkActive), recordPool = capture)
+            if (ticket == null) {
+                Log.w("PensionGenerator", "phase=tracked-batch type=$type pipeline=$pipeline seed=$seed eligible selection unavailable")
+                return null
+            }
+            selected += ticket
+        }
+        return selected
+    }
+    val stages = mutableListOf<Map<String, Any?>>()
+    val selected = requireNotNull(batch(PENSION_PRIZE_PIPELINE) { stages += it }) { "서로 다른 끝 두 자리의 연금 4번호 확보 실패: seed=$seed" }
+    val changed = stages.any { it["previousSelection"] != (it["selected"] as List<*>).single() }
+    val previous = if (changed) batch(PENSION_PREVIOUS_PIPELINE, null) else selected
+    val previousNumbers = previous?.map { it.winningNumber }
+    val wins = selected.map { it.winningNumber.takeLast(2) }.distinct().size
+    check(wins == 4) { "연금 최종 4번호의 끝 두 자리 중복: seed=$seed" }
+    val comparison = mapOf("policy" to PENSION_PRIZE_PIPELINE, "total" to 100,
+        "before" to previousNumbers?.distinctBy { it.takeLast(2) }?.size, "after" to wins, "previousNumbers" to previousNumbers)
+    stages.forEachIndexed { index, stage ->
+        record(if (index == stages.lastIndex) stage + ("batchCoverage" to comparison) else stage)
     }
     return selected
 }
@@ -1652,7 +1720,10 @@ private fun PensionLotteryGeneratorAnalysis.forIndividualGeneration(): PensionLo
 
 private fun PensionLotteryGeneratorAnalysis.withPatternModel(model: com.habittracker.data.lotto.LotteryPatternModel): PensionLotteryGeneratorAnalysis =
     if (model.throughRound == 0) this else copy(generationSnapshot = generationSnapshot.copy(
-        configJson = org.json.JSONObject(generationSnapshot.configJson).put("patternModel", org.json.JSONObject(model.json())).toString()))
+        configJson = org.json.JSONObject(generationSnapshot.configJson).put("patternModel", org.json.JSONObject(model.json()))
+            .apply {
+                if (model.pensionAlternateRanking) put("rankingPolicy", if (lastDigitStrength == 0.5) "last_digit_weight" else "total_historical_score")
+            }.toString()))
 
 private fun PensionLotteryGeneratorAnalysis.patternModel(): com.habittracker.data.lotto.LotteryPatternModel {
     val config = org.json.JSONObject(generationSnapshot.configJson)

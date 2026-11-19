@@ -36,7 +36,8 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
 
     private fun summarize(result: Map<String, Any?>, product: LotteryProduct, label: String): String {
         val models = LottoDesignRecordJson.objectValue(result.getValue("models"))
-        val candidate = LottoDesignRecordJson.objectValue(models["user"] ?: models["patternCandidate"] ?: models.getValue("candidate"))
+        val candidate = LottoDesignRecordJson.objectValue(models["user"] ?: models["patternCandidate"] ?:
+            models["patternDiversifiedCandidate"] ?: models.getValue("candidate"))
         val stages = LottoDesignRecordJson.list(candidate.getValue("stages")).map(LottoDesignRecordJson::objectValue)
         fun hits(key: String) = stages.sumOf { stage ->
             val counts = LottoDesignRecordJson.list(LottoDesignRecordJson.objectValue(stage.getValue(key)).getValue("matchCounts")).map(LottoDesignRecordJson::integer)
@@ -53,9 +54,18 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
                 "${row["number"]} · ${row["rank"]}위 · ${row["reason"]} · $details · 경계 ${row["cutoffScore"]}"
             }
         val eligibility = if (result["preDraw"] == true) "추첨 전 기록" else "추첨 후 기록 · 학습 제외"
+        val comparison = stages.firstNotNullOfOrNull { it["batchCoverage"]?.let(LottoDesignRecordJson::objectValue) }
+        val coverageText = comparison?.let { value ->
+            val total = LottoDesignRecordJson.decimal(value.getValue("total"))
+            val before = value["before"]?.let(LottoDesignRecordJson::decimal) ?: return@let "\n기존 묶음 생성 실패 · 확률 비교 보류"
+            val after = LottoDesignRecordJson.decimal(value.getValue("after"))
+            val basis = if (value["replay"] == true) "저장 후보 재계산" else "생성 당시"
+            "\n" + String.format(java.util.Locale.KOREA, "%s 묶음 당첨 확률 · 기존 %.3f%% → 변경 %.3f%% (%+.3f%%p)",
+                basis, before * 100 / total, after * 100 / total, (after - before) * 100 / total)
+        }.orEmpty()
         val userDetails = if (result["observationSource"] == "user") "\n${result["source"]} · ${result["generatedAt"]} · 생성 번호 " +
             stages.flatMap { LottoDesignRecordJson.list(it.getValue("selectedNumbers")) }.joinToString(" / ") else ""
-        return "${result["round"]}회 $label · $eligibility · 기준 이상 일치: 전체 ${hits("generated")} → 압축 ${hits("ranked")} → 최종 ${hits("selected")}개$userDetails" +
+        return "${result["round"]}회 $label · $eligibility · 기준 이상 일치: 전체 ${hits("generated")} → 압축 ${hits("ranked")} → 최종 ${hits("selected")}개$userDetails$coverageText" +
             if (diagnostics.isEmpty()) "\n과거 기록에는 항목별 탈락 점수가 없습니다." else "\n순위 탈락 ${lost}개\n$examples"
     }
 
@@ -99,7 +109,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
                 android.util.Log.w("LotteryCandidates", "product=${input.product} run=${frozen["userRunId"]} round=$round phase=user-evaluation held: input changed")
                 continue
             }
-            val evaluation = File(userFolder(input.product), "${frozen.getValue("userRunId")}-${LottoDesignRecordJson.hash(input.through(round).generationJson())}.evaluation.gz")
+            val evaluation = File(userFolder(input.product), "${frozen.getValue("userRunId")}-${LottoDesignRecordJson.hash(input.through(round).generationJson())}$EVALUATION_SUFFIX")
             if (evaluation.exists()) { read(evaluation); continue }
             val result = evaluate(frozen, input, round) + mapOf("userRunId" to frozen.getValue("userRunId"),
                 "generatedAt" to frozen["startedAt"],
@@ -111,7 +121,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     }
 
     private fun userEvaluations(input: LotteryResearchInput): List<Map<String, Any?>> = synchronized(userRecordsGate) {
-        userFiles(input.product).filter { it.name.endsWith(".evaluation.gz") }.map(::read).filter { result ->
+        userFiles(input.product).filter { it.name.endsWith(EVALUATION_SUFFIX) }.map(::read).filter { result ->
             val round = LottoDesignRecordJson.integer(result.getValue("round"))
             val runId = LottoDesignRecordJson.string(result.getValue("userRunId"))
             require("$runId.json.gz".matches(USER_RECORD_NAME)) { "직접 생성 기록 ID 오류" }
@@ -161,7 +171,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
 
     fun recorded(input: LotteryResearchInput, round: Int): Map<String, Any?>? {
         val file = File(File(root, input.product.name), "$round.json.gz")
-        return if (file.exists()) read(file).takeIf { it["implementation"] == IMPLEMENTATION &&
+        return if (file.exists()) read(file).takeIf { it["implementation"] in readableImplementations &&
             it["inputHash"] == LottoDesignRecordJson.hash(input.through(round - 1).generationJson()) } else null
     }
 
@@ -174,7 +184,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
         val future = destination == null
         val file = destination ?: File(File(root, input.product.name), "$target.json.gz")
         if (file.exists()) return read(file).also {
-            require(it["implementation"] == IMPLEMENTATION) { "고정 후보 구현이 변경됐습니다: $target" }
+            require(it["implementation"] in readableImplementations) { "고정 후보 구현을 확인할 수 없습니다: $target" }
             require(it["product"] == input.product.name && LottoDesignRecordJson.integer(it.getValue("target")) == target)
             require(it["inputHash"] == LottoDesignRecordJson.hash(input.generationJson())) { "고정 후보의 입력이 변경됐습니다: $target 회차" }
         }
@@ -185,17 +195,21 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
         write(started, mapOf("target" to target, "implementation" to IMPLEMENTATION, "inputHash" to LottoDesignRecordJson.hash(input.generationJson())))
         val context = currentCoroutineContext()
         val trial = if (future) patterns.trial(input.product) else null
+        val operatingModel = if (future) patterns.model(input.product) else LotteryPatternModel()
         val seed = 0x145B2L + target.toLong() * 1_000_003L
         val models = withContext(Dispatchers.Default) {
-            val roles = listOf("baseline", "candidate", "control") + if (trial == null) emptyList() else
-                listOf("patternBaseline", "patternCandidate") + if (input.product == LotteryProduct.LOTTO_645)
-                    listOf("patternDiversifiedBaseline", "patternDiversifiedCandidate") else emptyList()
+            val roles = buildList {
+                addAll(listOf("baseline", "candidate", "control"))
+                if (trial != null && trial["scoreStrategy"] != "DIVERSIFIED") addAll(listOf("patternBaseline", "patternCandidate"))
+                if (trial != null && input.product == LotteryProduct.LOTTO_645 && trial["scoreStrategy"] != "BALANCED")
+                    addAll(listOf("patternDiversifiedBaseline", "patternDiversifiedCandidate"))
+            }
             roles.associateWith { role ->
                 context.ensureActive()
                 val stages = mutableListOf<Map<String, Any?>>()
                 val modelSeed = if (role == "control") -seed else seed
                 val patternModel = if (role.startsWith("pattern")) LotteryPatternModel.from(trial?.get(
-                    if (role.endsWith("Candidate")) "after" else "before")) else LotteryPatternModel()
+                    if (role.endsWith("Candidate")) "after" else "before")) else operatingModel
                 val operatingValue = trial?.get("operatingValue")?.let(LottoDesignRecordJson::decimal)
                 if (role == "control") {
                     val random = Random(modelSeed)
@@ -207,7 +221,8 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
                         else random.nextInt(1_000_000).toString().padStart(6, '0')
                     }
                     val finalists = if (input.product == LotteryProduct.LOTTO_645) 260 else 200
-                    stages += mapOf("pool" to pool.toList(), "ranked" to (0 until finalists).toList(),
+                    stages += mapOf("pool" to pool.toList(), "allGroups" to (input.product == LotteryProduct.PENSION_720),
+                        "ranked" to (0 until finalists).toList(),
                         "selected" to (0 until if (input.product == LotteryProduct.LOTTO_645) 5 else 4).toList())
                 } else if (role.startsWith("patternDiversified")) {
                     LottoNumberGenerator.generateDiversified(input.lotto.sortedByDescending { it.roundNo }.map { it.numbers() },
@@ -236,7 +251,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
             }) }
         val body = mapOf("implementation" to IMPLEMENTATION, "product" to input.product.name, "target" to target,
             "createdAt" to Instant.now().toString(), "preDraw" to future,
-            "patternTrialId" to trial?.get("trialId"), "patternTrial" to trial,
+            "patternTrialId" to trial?.get("trialId"), "patternTrial" to trial, "operatingModel" to operatingModel.json(),
             "input" to input.generationJson(), "inputHash" to LottoDesignRecordJson.hash(input.generationJson()),
             "apkHash" to LottoDesignRecordJson.hash(File(app.applicationInfo.sourceDir).readBytes()),
             "splitApkHashes" to app.applicationInfo.splitSourceDirs.orEmpty().map { LottoDesignRecordJson.hash(File(it).readBytes()) },
@@ -252,15 +267,29 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     fun evaluate(frozen: Map<String, Any?>, input: LotteryResearchInput, round: Int): Map<String, Any?> {
         require(frozen["product"] == input.product.name && LottoDesignRecordJson.integer(frozen.getValue("target")) == round)
         require(generationInputMatches(frozen, input, round)) { "평가 입력이 고정 당시와 다릅니다: $round" }
-        val target = if (input.product == LotteryProduct.LOTTO_645) input.lotto.single { it.roundNo == round }.numbers().sorted().joinToString(",")
-            else input.pension.single { it.roundNo == round }.winningNumber
+        val lotto = input.product == LotteryProduct.LOTTO_645
+        val lottoDraw = if (lotto) input.lotto.single { it.roundNo == round } else null
+        val pensionDraw = if (lotto) null else input.pension.single { it.roundNo == round }
+        val target = lottoDraw?.numbers()?.sorted()?.joinToString(",") ?: requireNotNull(pensionDraw).winningNumber
+        val legacy = frozen["implementation"] == LEGACY_IMPLEMENTATION
+        val legacyAllGroups = if (legacy && pensionDraw != null) {
+            val settings = when (val saved = frozen["settings"]) {
+                is String -> listOf(saved)
+                is List<*> -> saved.filterIsInstance<String>()
+                else -> emptyList()
+            }
+            settings.isNotEmpty() && settings.all { config ->
+                val groups = org.json.JSONObject(config).optJSONArray("purchaseGroups")
+                groups != null && (0 until groups.length()).map { groups.getInt(it) }.toSet() == (1..5).toSet()
+            }
+        } else false
         val targetNumbers = target.split(',').toSet()
         fun matches(number: String): Int = if (input.product == LotteryProduct.LOTTO_645)
             number.split(',').count { it in targetNumbers }
         else number.reversed().zip(target.reversed()).takeWhile { (a, b) -> a == b }.size
         val threshold = if (input.product == LotteryProduct.LOTTO_645) 3 else 2
         val models = LottoDesignRecordJson.objectValue(frozen.getValue("models"))
-        val metrics = models.mapValues { (_, value) ->
+        val metrics = models.mapValues { (role, value) ->
             val pools = LottoDesignRecordJson.list(LottoDesignRecordJson.objectValue(value).getValue("stages")).map { raw ->
                 val stage = LottoDesignRecordJson.objectValue(raw)
                 val storedPool = stage["pool"] ?: LottoDesignRecordJson.objectValue(frozen.getValue("pools")).getValue(LottoDesignRecordJson.string(stage.getValue("poolRef"))).also {
@@ -310,6 +339,8 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
                             "PAIR_OVERLAP" -> "최종 게임과 번호 중복 한도 초과"
                             "NUMBER_REUSE" -> "번호 재사용 한도 초과"
                             "DIVERSITY_ADJUSTED_SCORE" -> "분산 보정 후 선택 점수에서 밀림"
+                            "EXACT_BATCH_COVERAGE" -> "당첨 확률로 고른 최종 5게임 묶음에 포함되지 않음"
+                            "DUPLICATE_TWO_DIGIT_SUFFIX" -> "같은 묶음의 다른 번호와 끝 두 자리가 겹침"
                             "LAST_DIGIT_REUSE" -> "끝자리 재사용이 더 많음"
                             "LAST_DIGIT_WEIGHTED_DRAW" -> "끝자리 가중 추첨에서 제외"
                             "WITHIN_LAST_DIGIT_DRAW" -> "같은 끝자리 후보 내 추첨에서 제외"
@@ -317,7 +348,20 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
                         },
                         "patterns" to LotteryPatternModel.keys(pool[index], input.product == LotteryProduct.LOTTO_645)) },
                     "exactRank" to pool.indexOf(target).takeIf { it >= 0 }?.let { positions[it] })
+                val prizes = prizeDiagnostics(pool, matchValues, ranked, selectedSet, stage, role, lottoDraw, pensionDraw,
+                    legacy, legacyAllGroups)
+                val coverage = stage["batchCoverage"] ?: if (lotto && stage["mode"] == "PRECISE" &&
+                    frozen["implementation"] in listOf(LEGACY_IMPLEMENTATION, PREVIOUS_IMPLEMENTATION) &&
+                    ranked.size == 260 && selected.size == 5) {
+                    val replay = LottoBatchCoverage.select(ranked.map { LottoBatchCoverage.mask(pool[it].split(',').map(String::toInt)) },
+                        selected.map(ranked::indexOf), 2)
+                    mapOf("policy" to LottoBatchCoverage.POLICY, "total" to LottoBatchCoverage.TOTAL, "replay" to true,
+                        "before" to replay.previousWins, "after" to replay.selectedWins, "previousSelected" to selected,
+                        "proposedSelected" to replay.indices.map(ranked::get))
+                } else null
                 mapOf("generated" to metric(pool), "ranked" to metric(ranked.map { pool[it] }),
+                    "batchCoverage" to coverage, "suffixComparison" to stage["suffixComparison"],
+                    "prizes" to prizes, "strategy" to stage["strategy"], "mode" to stage["mode"],
                     "diagnostics" to diagnostics,
                     "patternOutcomes" to patternOutcomes,
                     "selected" to metric(selected.map { pool[it] }), "selectedNumbers" to selected.map { pool[it] },
@@ -326,13 +370,23 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
             val final = pools.map { LottoDesignRecordJson.objectValue(it.getValue("selected")) }
             val total = final.sumOf { LottoDesignRecordJson.integer(it.getValue("count")) }
             fun mean(key: String) = final.sumOf { LottoDesignRecordJson.decimal(it.getValue(key)) * LottoDesignRecordJson.integer(it.getValue("count")) } / total
-            mapOf("stages" to pools, "rate" to mean("rate"), "secondary" to mean("secondary"))
+            val completeBatch = total == (if (lotto) 5 else 4)
+            require(frozen["implementation"] != IMPLEMENTATION || role == "user" || completeBatch) { "$round 회 $role 최종 추천 묶음이 불완전합니다." }
+            val batchHit = if (completeBatch) {
+                if (final.any { LottoDesignRecordJson.decimal(it.getValue("rate")) > 0.0 }) 1 else 0
+            } else null
+            mapOf("stages" to pools, "rate" to mean("rate"), "secondary" to mean("secondary"), "batchHit" to batchHit)
         }
         val result = mutableMapOf<String, Any?>("round" to round, "preDraw" to frozen["preDraw"],
-            "patternTrialId" to frozen["patternTrialId"],
+            "patternTrialId" to frozen["patternTrialId"], "evaluationPolicy" to LotteryAdaptiveSettings.POLICY,
+            "candidateImplementation" to frozen["implementation"], "operatingModel" to frozen["operatingModel"],
             "candidateHash" to LottoDesignRecordJson.hash(frozen), "target" to target,
             "targetDataHash" to LottoDesignRecordJson.hash(input.through(round).generationJson()), "models" to metrics)
-        metrics.forEach { (role, metric) -> result[role + "Rate"] = metric.getValue("rate"); result[role + "Secondary"] = metric.getValue("secondary") }
+        metrics.forEach { (role, metric) ->
+            result[role + "Rate"] = metric.getValue("rate")
+            result[role + "Secondary"] = metric.getValue("secondary")
+            result[role + "BatchHit"] = metric.getValue("batchHit")
+        }
         return result
     }
 
@@ -345,12 +399,12 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
             val round = file.name.substringBefore('.').toInt()
             if (round !in input.rounds()) continue
             val frozen = read(file)
-            if (frozen["implementation"] != IMPLEMENTATION || frozen["inputHash"] != LottoDesignRecordJson.hash(input.through(round - 1).generationJson())) {
+            if (frozen["implementation"] !in readableImplementations || frozen["inputHash"] != LottoDesignRecordJson.hash(input.through(round - 1).generationJson())) {
                 android.util.Log.w("LotteryCandidates", "product=${input.product} round=$round phase=evaluation held: implementation/input changed")
                 held += round
                 continue
             }
-            val evaluation = File(directory, "$round-${LottoDesignRecordJson.hash(input.through(round).generationJson())}.evaluation.gz")
+            val evaluation = File(directory, "$round-${LottoDesignRecordJson.hash(input.through(round).generationJson())}$EVALUATION_SUFFIX")
             if (evaluation.exists()) { read(evaluation); continue }
             write(evaluation, evaluate(frozen, input, round))
         }
@@ -360,7 +414,7 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     fun evaluations(input: LotteryResearchInput): List<Map<String, Any?>> {
         val folder = File(root, input.product.name)
         if (!folder.exists()) return emptyList()
-        return requireNotNull(folder.listFiles()).filter { it.name.endsWith(".evaluation.gz") }.map(::read).filter { result ->
+        return requireNotNull(folder.listFiles()).filter { it.name.endsWith(EVALUATION_SUFFIX) }.map(::read).filter { result ->
             val round = LottoDesignRecordJson.integer(result.getValue("round"))
             round in input.rounds() && result["targetDataHash"] == LottoDesignRecordJson.hash(input.through(round).generationJson()) &&
                 recorded(input, round)?.let { result["candidateHash"] == LottoDesignRecordJson.hash(it) } == true
@@ -371,6 +425,12 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
         val directory = File(root, input.product.name)
         if (File(directory, "$round.json.gz").exists()) return recorded(input, round) != null
         return !File(directory, "$round.json.gz.started.gz").exists()
+    }
+
+    fun canRegisterTrial(product: LotteryProduct, firstRound: Int): Boolean {
+        val folder = File(root, product.name)
+        return now().isBefore(lotteryEvaluationDeadline(product, firstRound)) &&
+            !File(folder, "$firstRound.json.gz").exists() && !File(folder, "$firstRound.json.gz.started.gz").exists()
     }
 
     private fun write(file: File, body: Map<String, Any?>) {
@@ -392,7 +452,11 @@ internal class LotteryCandidateArchive(context: Context, private val now: () -> 
     }
 
     companion object {
-        const val IMPLEMENTATION = "final-selection-pattern-diagnostics-v4"
+        const val IMPLEMENTATION = "exact-batch-coverage-v6"
+        private const val PREVIOUS_IMPLEMENTATION = "prize-stage-batch-selection-v5"
+        private const val LEGACY_IMPLEMENTATION = "final-selection-pattern-diagnostics-v4"
+        private val readableImplementations = listOf(IMPLEMENTATION, PREVIOUS_IMPLEMENTATION, LEGACY_IMPLEMENTATION)
+        private const val EVALUATION_SUFFIX = "-coverage-v6.evaluation.gz"
         private val userRecordsGate = Any()
         private val USER_RECORD_NAME = Regex("[0-9]+-[0-9a-f-]{36}\\.json\\.gz")
     }

@@ -136,6 +136,7 @@ object LottoNumberGenerator {
             historyThroughRound = historyThroughRound,
             includeBacktest = false,
             recentPriorDraws = recentPriorDraws,
+            scoreModel = patternModel,
         )
         val lastDraw = normalizedHistory.first()
 
@@ -156,7 +157,7 @@ object LottoNumberGenerator {
                 val overlap = numbers.count(lastDraw::contains)
                 "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 균형 ${formatScore(score.distributionScore)} · " +
-                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 승인 기본 가중치 · " +
+                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · ${weightLabel(CoverageStrategy.BALANCED, patternModel)} · " +
                     "직전겹침 ${overlap}개"
             },
             mode = mode,
@@ -188,6 +189,7 @@ object LottoNumberGenerator {
             backtestStrategy = CoverageStrategy.DIVERSIFIED,
             historyThroughRound = historyThroughRound,
             includeBacktest = false,
+            scoreModel = patternModel,
         )
         val lastDraw = normalizedHistory.first()
 
@@ -208,7 +210,7 @@ object LottoNumberGenerator {
                 val carryCount = numbers.count(lastDraw::contains)
                 "${mode.label} 모드 · 적합 ${formatScore(score.totalScore)} · 데이터 ${formatScore(score.dataScore)} · " +
                     "패턴 ${formatScore(score.patternScore)} · 분산 ${formatScore(score.distributionScore)} · " +
-                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · 승인 기본 가중치 · " +
+                    "공동당첨회피 ${formatScore(score.avoidanceScore)} · ${weightLabel(CoverageStrategy.DIVERSIFIED, patternModel)} · " +
                     "이월 ${carryCount}개"
             },
             mode = mode,
@@ -440,6 +442,7 @@ object LottoNumberGenerator {
         backtestStrategy: CoverageStrategy,
         historyThroughRound: Int = history.size,
         recentPriorDraws: Double = 32.0,
+        scoreModel: LotteryPatternModel = LotteryPatternModel(),
     ): TrendProfile {
         val recentWindow = history.take(minOf(recentTrendWindow, history.size)).ifEmpty { history }
         val longFrequency = buildFrequencyMap(history)
@@ -480,7 +483,7 @@ object LottoNumberGenerator {
             transitionProfile = buildTransitionProfile(history),
             historyAnalysis = historyAnalysis,
             backtestProfile = backtestProfile,
-            scoreWeights = baseScoreWeights(backtestStrategy),
+            scoreWeights = effectiveScoreWeights(backtestStrategy, scoreModel),
         )
     }
 
@@ -538,13 +541,28 @@ object LottoNumberGenerator {
         val ordered = allScored.sortedByDescending { it.score.totalScore }
         val scored = ordered.take(mode.finalistPoolSize)
 
-        val selected = pickDiverseTopGames(scored, gameCount, strategy, narrowingStrength)
+        val selectionTrace = recordStages?.let { mutableMapOf<List<Int>, Map<String, Any?>>() }
+        val effectiveStrength = if (strategy.name in patternModel.reducedFinalDiversity)
+            narrowingStrength * (1.0 - maximumBacktestWeightAdjustment) else narrowingStrength
+        val previous = pickDiverseTopGames(scored, gameCount, strategy, effectiveStrength, selectionTrace)
+        val coverage = if (mode == LottoGenerationMode.PRECISE && gameCount == 5 && previous.size == 5)
+            LottoBatchCoverage.select(scored.map { LottoBatchCoverage.mask(it.numbers) }, previous.map(scored::indexOf),
+                strategy.maximumPairwiseOverlap ?: pickCount) else null
+        val selected = coverage?.indices?.map(scored::get) ?: previous
+        val changed = coverage != null && coverage.selectedWins > coverage.previousWins
         require(recordStages == null || selected.size == gameCount) { "단계 평가의 전체 게임 수를 확보하지 못했습니다." }
         if (recordStages != null) {
             val pool = candidates.toList()
             val ids = pool.withIndex().associate { it.value to it.index }
             recordStages(mapOf("pool" to pool.map { it.joinToString(",") },
-                "mode" to mode.name, "strategy" to strategy.name, "narrowingStrength" to narrowingStrength,
+                "mode" to mode.name, "strategy" to strategy.name, "narrowingStrength" to effectiveStrength,
+                "rankingWeights" to effectiveScoreWeights(strategy, patternModel).let {
+                    listOf(it.data, it.pattern, it.distribution, strategy.avoidanceScoreWeight)
+                },
+                "batchCoverage" to coverage?.let { mapOf("policy" to LottoBatchCoverage.POLICY,
+                    "total" to LottoBatchCoverage.TOTAL, "before" to it.previousWins, "after" to it.selectedWins,
+                    "previousSelected" to previous.map { game -> ids.getValue(game.numbers) }) },
+                "selectionTrace" to if (changed) emptyMap<String, Any?>() else selectionTrace.orEmpty().mapKeys { ids.getValue(it.key).toString() },
                 "ranked" to scored.map { ids.getValue(it.numbers) }, "scores" to scored.map { it.score.totalScore },
                 "allScores" to allScored.map { candidate -> candidate.score.let { score ->
                     listOf(score.totalScore, score.dataScore, score.patternScore, score.distributionScore,
@@ -553,15 +571,9 @@ object LottoNumberGenerator {
                 "scoreColumns" to listOf("종합", "데이터", "패턴", "분산", "공동당첨 회피", "직전 중복 감점", "반복 패턴 보정"),
                 "order" to ordered.map { ids.getValue(it.numbers) },
                 "selectionReasons" to scored.associate { candidate ->
-                    val picked = selected.map { it.numbers }
-                    val overlaps = picked.filter { it != candidate.numbers }.map { it.intersect(candidate.numbers.toSet()).size }
-                    val uses = picked.flatten().groupingBy { it }.eachCount()
-                    ids.getValue(candidate.numbers).toString() to when {
-                        candidate in selected -> "SELECTED"
-                        overlaps.any { it > (strategy.maximumPairwiseOverlap ?: 6) } -> "PAIR_OVERLAP"
-                        candidate.numbers.any { (uses[it] ?: 0) >= maxOf(2, (gameCount * pickCount + maxNumber - 1) / maxNumber) } -> "NUMBER_REUSE"
-                        else -> "DIVERSITY_ADJUSTED_SCORE"
-                    }
+                    ids.getValue(candidate.numbers).toString() to if (candidate in selected) "SELECTED"
+                    else if (changed) "EXACT_BATCH_COVERAGE"
+                    else requireNotNull(selectionTrace?.get(candidate.numbers)).getValue("reason")
                 },
                 "selected" to selected.map { ids.getValue(it.numbers) }, "attempts" to attempt))
         }
@@ -574,7 +586,14 @@ object LottoNumberGenerator {
                 generationSeed = generationSeed,
                 featureSnapshotJson = (candidate.score.featureSnapshotJson ?: featureBuilder(candidate.numbers)).let { original ->
                     if (patternModel.throughRound == 0) original else org.json.JSONObject(original ?: "{}")
+                        .apply {
+                            if (strategy.name in patternModel.reducedScoreComponents) {
+                                optJSONObject("scoreCalibration")?.put("operatingWeightPolicy", LotteryPatternModel.SCORE_POLICY)
+                                    ?.put("learnedWeightsApplied", true)
+                            }
+                        }
                         .put("patternModel", org.json.JSONObject(patternModel.json()))
+                        .put("selectionDiversityStrength", effectiveStrength)
                         .put("patternAdjustment", patternModel.adjustment(candidate.numbers.joinToString(","), lotto = true))
                         .put("adjustedTotalScore", candidate.score.totalScore).toString()
                 },
@@ -587,6 +606,7 @@ object LottoNumberGenerator {
         gameCount: Int,
         strategy: CoverageStrategy,
         narrowingStrength: Double = 1.0,
+        trace: MutableMap<List<Int>, Map<String, Any?>>? = null,
     ): List<ScoredCandidate> {
         if (candidates.isEmpty()) return emptyList()
 
@@ -594,6 +614,10 @@ object LottoNumberGenerator {
         val remaining = candidates.toMutableList()
 
         selected += remaining.removeFirst()
+        if (gameCount == 1 && trace != null) {
+            for (candidate in remaining) trace[candidate.numbers] = mapOf("reason" to "TOTAL_SCORE",
+                "step" to 1, "baseGap" to candidate.score.totalScore - selected.first().score.totalScore)
+        }
 
         while (selected.size < gameCount && remaining.isNotEmpty()) {
             val pairwiseSelectable = strategy.maximumPairwiseOverlap?.let { maximumOverlap ->
@@ -609,11 +633,22 @@ object LottoNumberGenerator {
                 candidate.numbers.all { number -> (numberUsage[number] ?: 0) < maximumNumberUses }
             }
             val selectable = usageSelectable
+            if (trace != null) {
+                val pairwise = pairwiseSelectable.toHashSet()
+                val eligible = selectable.toHashSet()
+                for (candidate in remaining) {
+                    if (candidate in eligible || trace[candidate.numbers]?.containsKey("blockedAt") == true) continue
+                    trace[candidate.numbers] = trace[candidate.numbers].orEmpty() + mapOf(
+                        "blockedAt" to selected.size + 1,
+                        "reason" to if (candidate in pairwise) "NUMBER_REUSE" else "PAIR_OVERLAP")
+                }
+            }
             if (selectable.isEmpty()) break
 
             val coverage = selected.flatMap { it.numbers }.toSet()
             val selectedPairs = selected.flatMap { drawPairs(it.numbers) }.toSet()
-            val next = selectable.maxByOrNull { candidate ->
+            val adjustedScores = trace?.let { mutableMapOf<List<Int>, Double>() }
+            fun selectionScore(candidate: ScoredCandidate): Double {
                 val overlapPenalty = selected.sumOf { picked ->
                     val overlap = candidate.numbers.intersect(picked.numbers.toSet()).size
                     when {
@@ -633,9 +668,23 @@ object LottoNumberGenerator {
                 val repeatedPairPenalty = drawPairs(candidate.numbers).count { it in selectedPairs } * strategy.repeatedPairPenalty
                 val newCoverage = candidate.numbers.count { it !in coverage } * strategy.newCoverageWeight
                 val spacingBonus = decadeBucketCount(candidate.numbers) * strategy.bucketBonusWeight
-                candidate.score.totalScore +
+                return candidate.score.totalScore +
                     narrowingStrength * (newCoverage - overlapPenalty - repeatedNumberPenalty - repeatedPairPenalty + spacingBonus)
+            }
+            val next = selectable.maxByOrNull { candidate ->
+                selectionScore(candidate).also { adjustedScores?.put(candidate.numbers, it) }
             } ?: break
+            if (trace != null && adjustedScores != null && selectable.size > 1) {
+                val winningScore = adjustedScores.getValue(next.numbers)
+                for (other in selectable) {
+                    if (other == next) continue
+                    val rawGap = other.score.totalScore - next.score.totalScore
+                    val adjustedGap = adjustedScores.getValue(other.numbers) - winningScore
+                    trace[other.numbers] = mapOf("step" to selected.size + 1, "reason" to "DIVERSITY_ADJUSTED_SCORE",
+                        "comparedWith" to next.numbers,
+                        "baseGap" to rawGap, "diversityGap" to adjustedGap - rawGap, "adjustedGap" to adjustedGap)
+                }
+            }
             selected += next
             remaining.remove(next)
         }
@@ -817,6 +866,24 @@ object LottoNumberGenerator {
             pattern = strategy.patternWeight,
             distribution = strategy.distributionWeight,
         )
+
+    private fun effectiveScoreWeights(strategy: CoverageStrategy, model: LotteryPatternModel): ScoreWeights {
+        val component = model.reducedScoreComponents[strategy.name] ?: return baseScoreWeights(strategy)
+        val base = listOf(strategy.dataWeight, strategy.patternWeight, strategy.distributionWeight)
+        val adjusted = base.mapIndexed { index, weight ->
+            if (LotteryPatternModel.scoreComponents[index] == component) weight * (1.0 - maximumBacktestWeightAdjustment) else weight
+        }
+        val sum = adjusted.sum()
+        return ScoreWeights(adjusted[0] / sum, adjusted[1] / sum, adjusted[2] / sum)
+    }
+
+    private fun weightLabel(strategy: CoverageStrategy, model: LotteryPatternModel): String =
+        if (strategy.name in model.reducedScoreComponents || strategy.name in model.reducedFinalDiversity) "시험 적용 가중치" else "승인 기본 가중치"
+
+    internal fun rankingWeights(strategyName: String, model: LotteryPatternModel = LotteryPatternModel()): List<Double> = CoverageStrategy.valueOf(strategyName).let {
+        val weights = effectiveScoreWeights(it, model)
+        listOf(weights.data, weights.pattern, weights.distribution, it.avoidanceScoreWeight)
+    }
 
     private fun proposeBacktestScoreWeights(
         strategy: CoverageStrategy,
